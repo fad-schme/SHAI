@@ -20,6 +20,7 @@ from harness.boundaries._scan import run_scan, run_file_scan
 from harness.boundaries.check_tool_call import run as run_gate
 from harness.core.types import BoundaryName
 from harness.config.loader import load_yaml
+from harness.adapters.secrets.env import EnvVarProvider
 from harness.config.schema import HarnessConfig
 from harness.core.context import AgentContext
 from harness.core.types import Severity
@@ -88,8 +89,20 @@ class Harness:
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Harness":
-        """Load harness.yaml and construct a fully wired Harness instance."""
-        config = load_yaml(path)
+        """Load harness.yaml and construct a fully wired Harness instance.
+
+        Secret resolution order:
+          1. Build a SecretsProvider from config.secrets (default: EnvVarProvider).
+          2. Re-parse YAML with the provider so secret:// URIs are resolved.
+        """
+        # First pass: resolve ${ENV_VAR} only (no provider yet)
+        config_pre = load_yaml(path)
+
+        # Build the secrets provider from config
+        provider = _build_secrets_provider(config_pre.secrets)
+
+        # Second pass: resolve secret:// URIs with the provider
+        config = load_yaml(path, provider=provider)
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
         input_scanners  = _build_scanners(config.scan_input.scanners)
@@ -306,6 +319,32 @@ def _build_scanners(adapter_refs: list) -> list:
                 log.warning("scanner adapter not found — skipped",
                             extra={"name": ref.name, "error": str(e)})
     return scanners
+
+
+
+def _build_secrets_provider(adapter_ref: object) -> "EnvVarProvider":
+    """Build a SecretsProvider from an AdapterRef config entry.
+
+    Currently only EnvVarProvider is supported in core.
+    Enterprise providers (Vault, AWS, Azure, GCP) register via entry points.
+    """
+    name = getattr(adapter_ref, "name", "env")
+    cfg  = getattr(adapter_ref, "config", {})
+
+    if name == "env":
+        return EnvVarProvider(
+            prefix=cfg.get("prefix") or None,
+        )
+
+    # Enterprise provider via entry point
+    try:
+        from harness.adapters.discovery import resolve
+        cls = resolve("harness.secrets", name)
+        return cls(**cfg)
+    except Exception as e:
+        log.warning("secrets provider %r not found — falling back to EnvVarProvider: %s",
+                    name, e)
+        return EnvVarProvider()
 
 
 def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
