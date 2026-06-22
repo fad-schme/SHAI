@@ -24,7 +24,7 @@ from pathlib import Path
 # Allow running from repo root without install
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from harness import Harness, RuntimeContext, Tool
+from harness import Harness, Tool
 from harness.core.types import Transport
 
 # User-managed config — lives outside the package
@@ -48,34 +48,26 @@ async def main() -> None:
         Tool(name="list_inbox",  tags=["read", "internal"],            transport=Transport.LOCAL),
     ])
 
-    # ── 3. Load agent from user config ───────────────────────────────────
-    await harness.load_agent(AGENT_YAML)
-
-    # ── 4. Construct a per-turn RuntimeContext ────────────────────────────
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent",
-    )
+    # ── 3. Load agent — returns the AgentContext ready for use ────────
+    agent = await harness.load_agent(AGENT_YAML)
 
     print("\n── Turn start ───────────────────────────────────────────────")
 
     # ── 5. load_sources ───────────────────────────────────────────────────
-    tools = await harness.load_sources(ctx)
-    print(f"[load_sources]    {len(tools)} tools active: {[t.name for t in tools]}")
 
     # ── 6. scan_input ─────────────────────────────────────────────────────
     user_text = "Please search the docs for the onboarding guide."
-    verdict = await harness.scan_input(user_text, ctx)
+    verdict = await harness.scan_input(user_text, agent)
     print(f"[scan_input]      blocked={verdict.blocked}  findings={len(verdict.findings)}")
     if verdict.blocked:
         print("  Input blocked — turn aborted.")
-        await harness.unload_sources(ctx)
         return
 
     # ── 7a. Tool call — ALLOW path ────────────────────────────────────────
     gate = await harness.check_tool_call(
         "search_docs",
         {"query": "onboarding guide", "limit": 5},
-        ctx,
+        agent,
     )
     print(f"[check_tool_call] search_docs  allowed={gate.allowed}  reason={gate.deny_reason!r}")
     if gate.allowed:
@@ -86,37 +78,33 @@ async def main() -> None:
     gate2 = await harness.check_tool_call(
         "send_email",
         {"to": "bob@example.com", "subject": "test", "body": "hello"},
-        ctx,
+        agent,
     )
     print(f"[check_tool_call] send_email   allowed={gate2.allowed}  reason={gate2.deny_reason!r}")
 
     # ── 8. scan_output ────────────────────────────────────────────────────
     llm_response = "Here are the docs I found: onboarding.pdf, setup.md, faq.html"
-    out_verdict = await harness.scan_output(llm_response, ctx)
+    out_verdict = await harness.scan_output(llm_response, agent)
     print(f"[scan_output]     blocked={out_verdict.blocked}  findings={len(out_verdict.findings)}")
     final_response = out_verdict.redacted_text or llm_response
     print(f"\n── Agent response ───────────────────────────────────────────")
     print(f"  {final_response!r}")
 
     # ── 9. unload_sources ─────────────────────────────────────────────────
-    await harness.unload_sources(ctx)
     print("\n── Turn end ─────────────────────────────────────────────────")
 
     # ── 10. Subagent example ──────────────────────────────────────────────
     print("\n── Subagent turn ────────────────────────────────────────────")
-    child_ctx = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
-    print(f"[scope_subagent]  agent_id={child_ctx.agent_id}  sub_agent_id={child_ctx.sub_agent_id}")
-    print(f"                  allowed_tags={child_ctx.allowed_tags}")
+    child_agent = harness.scope_context_for_subagent(agent, sub_agent_id="research_sub")
+    print(f"[scope_subagent]  agent_id={child_agent.agent_id}  sub_agent_id={child_agent.sub_agent_id}")
+    print(f"                  allowed_tags={child_agent.allowed_tags}")
 
-    child_tools = await harness.load_sources(child_ctx)
-    print(f"[load_sources]    {len(child_tools)} tools: {[t.name for t in child_tools]}")
-
-    g1 = await harness.check_tool_call("search_docs", {"query": "policy"}, child_ctx)
-    g2 = await harness.check_tool_call("send_email",  {"to": "x@y.com"},   child_ctx)
+    child_
+    g1 = await harness.check_tool_call("search_docs", {"query": "policy"}, child_agent)
+    g2 = await harness.check_tool_call("send_email",  {"to": "x@y.com"},   child_agent)
     print(f"[check_tool_call] search_docs  allowed={g1.allowed}")
     print(f"[check_tool_call] send_email   allowed={g2.allowed}  reason={g2.deny_reason!r}")
 
-    await harness.unload_sources(child_ctx)
     await harness.close()
     print("\nDone. JSONL audit events are printed above each section.")
 

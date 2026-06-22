@@ -1,0 +1,90 @@
+patterns:
+  - name: prompt_injection_hijack
+    meta:
+      description: "Classic prompt override attempts"
+      threat_level: 5
+      category: "injection"
+    strings:
+      a: "(?i)ignore\s+.*instruction"
+      b: "(?i)disregard\s+.*prior\s+context"
+      c: "(?i)override\s+.*system"
+
+  - name: impersonation_simulation
+    meta:
+      description: "Attempts to impersonate or simulate other roles"
+      threat_level: 4
+      category: "impersonation"
+    strings:
+      a: "(?i)act\s+as\s+.*?ai|user|developer"
+      b: "(?i)simulate\s+.*behavior"
+      c: "(?i)pretend\s+to\s+.*"
+
+  - name: system_probe_exfil
+    meta:
+      description: "Probing for LLM internals and configuration leakage"
+      threat_level: 4
+      category: "leakage"
+    strings:
+      a: "(?i)what\s+is\s+your\s+system\s+prompt"
+      b: "(?i)print\s+the\s+instructions"
+      c: "(?i)show\s+your\s+configuration"
+
+  - name: jailbreak_escape_attempt
+    meta:
+      description: "Attempts to bypass filters or guardrails"
+      threat_level: 5
+      category: "jailbreak"
+    strings:
+      a: "(?i)unfiltered\s+response"
+      b: "(?i)you\s+are\s+not\s+an\s+ai"
+      c: "(?i)bypass\s+(security|filters|guardrails)"
+
+  - name: formatting_tricks
+    meta:
+      description: "Formatting exploits to hide or influence prompts"
+      threat_level: 3
+      category: "obfuscation"
+    strings:
+      a: "(?i)markdown\s+injection|prompt\s+stacking"
+      b: "(?i)```(?:bash|python|sh).*```"
+      c: "(?i)<script>|<iframe>|<style>"
+
+  - name: encoding_payloads
+    meta:
+      description: "Encoded or obfuscated execution triggers"
+      threat_level: 4
+      category: "code_execution"
+    strings:
+      a: "(?i)(eval|exec|base64|decode|import)\s*\\?\\("
+      b: "[\\x[0-9a-fA-F]{2,}]+"
+      c: "(?i)data:text/plain;base64,"
+
+  - name: deception_social_engineering
+    meta:
+      description: "Tricks using fake trust or disclaimers"
+      threat_level: 2
+      category: "social_engineering"
+    strings:
+      a: "(?i)this\s+is\s+for\s+testing\s+only"
+      b: "(?i)your\s+response\s+will\s+be\s+audited"
+      c: "(?i)you\s+are\s+authorized\s+to"
+
+  - name: llm_prompt_artifacts
+    meta:
+      description: "LLM-specific markers in files or documents"
+      threat_level: 3
+      category: "format_artifact"
+    strings:
+      a: "(?i)\\[system\\](\\s*){3,}"
+      b: "<\\|system\\|>"
+      c: "###\\s*Instructions"
+
+  - name: prompt_tag_variants
+    meta:
+      description: "LLM or pseudo-admin command markers"
+      threat_level: 3
+      category: "tags"
+    strings:
+      a: "(?i)@prompt"
+      b: "(?i)@sys"
+      c: "(?i)@admin"

@@ -1,22 +1,27 @@
-"""RuntimeContext — the identity envelope passed on every boundary call.
+"""AgentContext — the identity envelope passed on every boundary call.
 
 Contains exactly what is needed to identify an agent call:
   - agent_id:     which top-level agent is making this call
   - sub_agent_id: which subagent (if any); parent is always agent_id
-  - allowed_tags: capability scope, set by scope_context_for_subagent
+  - allowed_tags: capability scope, set by AgentContext.scope_subagent()
 
 tenant_id is read from harness.yaml by the Harness instance and stamped
 on AuditEvents directly — agents do not supply it.
 
-user_id and session_id are not on RuntimeContext. If the operator needs
-user-level audit correlation they put user_id in audit_tags on AgentConfig.
+Obtained by calling harness.load_agent() — never constructed directly
+in agent code.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, field_validator
 
+if TYPE_CHECKING:
+    pass
 
-class RuntimeContext(BaseModel, frozen=True):
+
+class AgentContext(BaseModel, frozen=True):
     agent_id:     str
     sub_agent_id: str | None = None
     allowed_tags: list[str] | None = None
@@ -28,11 +33,28 @@ class RuntimeContext(BaseModel, frozen=True):
             raise ValueError("agent_id must be non-empty")
         return v
 
-    def agent_key(self) -> tuple[str, str]:
-        """Canonical key for internal agent identity.
+    def scope_subagent(self, sub_agent_id: str, *, allowed_tags: list[str]) -> "AgentContext":
+        """Return a new AgentContext scoped to a declared subagent.
 
-        Returns (agent_id, sub_agent_id or ""). Used in logging and
-        for human-readable identification. Views are keyed on id(ctx),
+        Called by Harness.scope_context_for_subagent() — not directly by
+        agent code. The harness looks up the SubAgentConfig and passes the
+        validated allowed_tags.
+
+        Returns a frozen AgentContext with:
+          - agent_id preserved (identifies the parent)
+          - sub_agent_id set
+          - allowed_tags narrowed to the subagent's declared tags
+        """
+        return AgentContext(
+            agent_id=self.agent_id,
+            sub_agent_id=sub_agent_id,
+            allowed_tags=allowed_tags,
+        )
+
+    def agent_key(self) -> tuple[str, str]:
+        """Canonical key for logging and human-readable identification.
+
+        Returns (agent_id, sub_agent_id or ""). Views are keyed on id(ctx),
         not agent_key(), to support concurrent same-agent turns.
         """
         return (self.agent_id, self.sub_agent_id or "")
@@ -43,3 +65,7 @@ class RuntimeContext(BaseModel, frozen=True):
             "agent_id":     self.agent_id,
             "sub_agent_id": self.sub_agent_id,
         }
+
+
+# Backward-compatibility alias — removed in next major version
+RuntimeContext = AgentContext

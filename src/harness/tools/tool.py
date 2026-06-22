@@ -4,8 +4,6 @@ The harness gates; the agent dispatches. Tool is part of the public API.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, Field, field_validator
 
 from harness.core.types import Transport
@@ -14,15 +12,10 @@ from harness.core.types import Transport
 class Tool(BaseModel, frozen=True):
     """Describes one tool the agent may dispatch.
 
-    input_schema is opaque to the harness — pydantic model class, JSON schema
-    dict, or anything the registered toolkit uses. The harness stores and
-    surfaces it to PolicyEngine; it does not interpret or validate it.
-
-    transport is immutable after registration — raising ConfigError on any
+transport is immutable after registration — raising ConfigError on any
     attempt to re-register the same name with a different transport.
     """
     name:         str
-    input_schema: Any = Field(default=None)
     tags:         list[str] = Field(default_factory=list)
     transport:    Transport = Transport.LOCAL
     description:  str | None = None

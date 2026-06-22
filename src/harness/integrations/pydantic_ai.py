@@ -32,7 +32,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from harness.core.context import RuntimeContext
+    from harness.core.context import AgentContext
     from harness.core.harness import Harness
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 def harness_tool(
     *,
     harness: "Harness",
-    ctx: "RuntimeContext",
+    ctx: "AgentContext",
 ) -> Callable:
     """Decorator that gates a tool function through the harness.
 
@@ -78,7 +78,7 @@ def add_harness_middleware(
     agent: Any,
     *,
     harness: "Harness",
-    ctx: "RuntimeContext",
+    ctx: "AgentContext",
 ) -> None:
     """Patch a PydanticAI agent to gate all tool calls through the harness.
 
@@ -103,7 +103,7 @@ def _patch_pydantic_ai_tool(
     tool_obj: Any,
     *,
     harness: "Harness",
-    ctx: "RuntimeContext",
+    ctx: "AgentContext",
 ) -> None:
     """Wrap the run method of a PydanticAI Tool object."""
     original_fn = getattr(tool_obj, "function", None) or getattr(tool_obj, "_function", None)

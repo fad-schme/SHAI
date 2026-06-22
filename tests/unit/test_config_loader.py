@@ -1,4 +1,8 @@
-"""Tests for config/loader.py and config/resolution.py."""
+"""Tests for config/loader.py.
+
+ENV var interpolation is tested through load_yaml / load_dict since
+the _resolve helper is internal.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from harness.config.loader import load_dict, load_yaml
-from harness.config.resolution import resolve_all
 from harness.core.errors import ConfigError
 
 
@@ -55,32 +58,55 @@ def test_load_yaml_disabled_boundaries(tmp_path: Path):
     assert not cfg.scan_output.enabled
 
 
-def test_env_var_interpolation(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("MY_SINK", "stdout")
-    result = resolve_all({"name": "${MY_SINK}"})
-    assert result["name"] == "stdout"
+def test_env_var_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("TEST_SINK", "stdout")
+    p = tmp_path / "h.yaml"
+    p.write_text(
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  name: rules\n"
+        "audit_sinks:\n  - name: ${TEST_SINK}\n"
+    )
+    cfg = load_yaml(p)
+    assert cfg.audit_sinks[0].name == "stdout"
 
 
-def test_missing_env_var_raises(monkeypatch: pytest.MonkeyPatch):
+def test_missing_env_var_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv("MISSING_VAR_X", raising=False)
+    p = tmp_path / "h.yaml"
+    p.write_text(
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  name: rules\n"
+        "audit_sinks:\n  - name: ${MISSING_VAR_X}\n"
+    )
     with pytest.raises(ConfigError, match="MISSING_VAR_X"):
-        resolve_all({"key": "${MISSING_VAR_X}"})
+        load_yaml(p)
 
 
-def test_secret_substring_raises():
-    with pytest.raises(ConfigError, match="substring"):
-        resolve_all({"key": "prefix_secret://FOO"})
-
-
-def test_nested_env_interpolation(monkeypatch: pytest.MonkeyPatch):
+def test_nested_env_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("SINK_NAME", "stdout")
-    result = resolve_all({"sinks": [{"name": "${SINK_NAME}"}]})
-    assert result["sinks"][0]["name"] == "stdout"
+    p = tmp_path / "h.yaml"
+    p.write_text(
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  name: rules\n"
+        "audit_sinks:\n  - name: ${SINK_NAME}\n"
+    )
+    cfg = load_yaml(p)
+    assert cfg.audit_sinks[0].name == "stdout"
 
 
-def test_non_string_values_unchanged():
-    data = {"enabled": True, "count": 42, "tags": ["a", "b"]}
-    assert resolve_all(data) == data
+def test_non_string_values_unchanged(tmp_path: Path):
+    p = tmp_path / "h.yaml"
+    p.write_text(
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  name: rules\n"
+        "audit_sinks:\n  - name: stdout\n"
+    )
+    cfg = load_yaml(p)
+    assert cfg.scan_input.enabled is False   # bool preserved
 
 
 def test_unknown_field_in_yaml_rejected(tmp_path: Path):

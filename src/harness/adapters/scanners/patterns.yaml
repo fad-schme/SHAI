@@ -1,0 +1,354 @@
+patterns:
+  - name: jailbreak_prompt
+    meta:
+      description: "Detects known jailbreak or prompt injection attempts"
+      threat_level: 5
+      threshold: 0.75
+      category: "prompt_injection"
+    strings:
+      a: '(?i).*ignore.*(all )?(earlier|previous)?.*instructions.*'
+      b: '(?i).*(you are|youre).*now.*(in )?(developer|dev).*mode.*'
+      c: '(?i).*(switch|enter|activate).*(developer|dev).*mode.*'
+      d: '{49 67 6E 6F 72 65 20 61 6C 6C 20 70 72 65 76 69 6F 75 73 20 69 6E 73 74 72 75 63 74 69 6F 6E}'
+      e: '(?i)do anything now'
+      f: '(?i)act\\s+as\\s+an?\\s+(uncensored|unfiltered|developer)\\s+ai'
+      g: '(?i)\\b(DAN|DEVMode|Developer\\s*Mode|Doomer|Evil\\s+Confidant|Based ?GPT|ChatGPT Jailbreak)\\b'
+      h: '(?i)\\b(no\\s+rules|free from (?:any|all) policies|not restricted by|no longer bound by)\\b.*\\b(rules|guidelines|OpenAI|content policy)\\b'
+      i: '(?i)\\[?(System|Assistant|User)\\]?:'
+      j: '(?i).*roleplay.*unrestricted.*assistant.*'
+      k: "(?i).*let\\'?s\\s+play\\s+a\\s+game.*break.*rules.*"
+      l: '(?i).*pretend.*bypass.*openai.*restrictions.*'
+      m: '(?i)you can do anything now'
+    functions:
+    - structure_score
+    - intent_score
+    - encoding_score
+    - persona_score
+    - cumulative_soft_triggers
+    - token_score
+    - obfuscation_score
+    - invisible_text
+
+
+  - name: code_injection
+    meta:
+      description: "Suspicious prompts attempting to inject or execute code"
+      threat_level: 4
+      threshold: 0.65
+      category: "code_injection"
+    strings:
+      a: '(?i)<script.*?>.*alert\\s*\\(.*\\).*?</script>'          
+      b: "(?i)os\\s*\\.\\s*system\\s*\\(\\s*[\\'\\\"]?rm\\s+-rf\\s+/[\\'\\\"]?\\s*\\)" 
+      c: '(?i)exec\\s*\\(.*\\)'                                     
+      d: '(?i)subprocess\\s*\\.\\s*Popen\\s*\\(.*\\)'               
+
+  - name: context_switching
+    meta:
+      description: "Prompt-based context spoofing. VFlags attempts to inject a fake system-level context"
+      threat_level: 4
+      threshold: 0.65
+      category: "prompt_injection"
+    strings:
+      a: '(?i).*end of response.*new instruction.*'
+      b: '(?im)^(>>>|###)\\s*System\\b.*'
+      c: '(?i)\\b(new\\s+chat|new\\s+conversation|forget\\s+everything\\s+before|start\\s+fresh)\\b'
+      d: '(?i)\\bmaintenance\\s+mode\\b.*disabled\\b'
+
+  - name: data_exfiltration
+    meta:
+      description: "Prompts trying to extract private or internal data"
+      threat_level: 4
+      threshold: 0.65
+      category: "data_exfiltration"
+    strings:
+      a: '(?i).*list.*internal.*apis.*'
+      b: '(?i).*dump.*database.*'
+      c: '(?i).*give me.*admin.*credentials.*'
+      d: '(?i).*extract.*confidential.*data.*'
+
+  - name: encoded_attacks
+    meta:
+      description: "Encoded LLM attacks"
+      threat_level: 4
+      threshold: 0.65
+      category: "prompt_injection"
+    strings:
+      a: '(?i)\\b(?:[A-Za-z0-9+/]{20,}={0,2})\\b'     
+      b: '(?i)\\b(?:0x[0-9A-Fa-f]{2,}\\s*){4,}\\b'    
+      c: '(?i)\\b[A-Za-z]{10,}\\b'  
+
+  - name: homoglyph_obfuscation
+    meta:
+      description: "This pattern targets leetspeak by finding 'words' that are a mix of letters and digits"
+      threat_level: 4
+      threshold: 0.65
+      category: "prompt_injection"
+    strings:
+      a: '(?i)\\b(?=.{4,})(?=[A-Za-z0-9]*\\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+\\b'  # Words combining letters and digits (leet-style)
+      #b: '[^\\x00-\\x7F]'                                                              # Non-ASCII characters (unicode obfuscation)
+      c: '(?i)\\b(?:p@ssw(?:0|o)rd|s3x|pr0n|k1ll|m[@4]lware)\\b'                        # Common leetspeak substitutions
+      a: '(?i)\\b(p@ssw(?:0|o)rd|s3x|pr0n|k1ll|m[@4]lware|h4x0r|b@d|n00b|r00t|l33t)\\b'
+      b: '(?i)\\b(?:xXx|darknet|1337|f1lter evasi0n)\\b'
+      c: '(?i)\\b(sudo|cmd\\.exe|rootkit|payload)\\b'
+
+  - name: prompt_reset
+    meta:
+      description: "Detects prompts that attempt to reset or forget previous context."
+      threat_level: 4
+      threshold: 0.65
+      category: "prompt_injection"
+    strings:
+      a: '(?i)ignore.*(instructions|orders|previous.*prompts)'
+      b: '(?i)forget.*(everything|context|previous instructions)'
+      c: '(?i)start.*(over|fresh|anew)'
+      d: '(?i)reset.*conversation'
+
+  - name: role_impersonation
+    meta:
+      description: "Detects prompts that try to impersonate a system or developer role."
+      threat_level: 4
+      threshold: 0.65
+      category: "prompt_injection"
+    strings:
+      a: '(?i)you are now.*(admin|system|developer|tool|assistant|os)'
+      b: '(?i)respond as.*(system|admin|assistant|tool)'
+      c: '(?i)simulate.*(shell|terminal|command line)'
+      d: '(?i)impersonate.*(system|internal role)'
+
+  - name: config_leakage
+    meta:
+      description: "Detects attempts to reveal internal configuration or prompts."
+      threat_level: 4
+      threshold: 0.75
+      category: "information_exfiltration"
+    strings:
+      a: '(?i)reveal.*(system prompt|internal prompt|instructions|settings|roles)'
+      b: '(?i)print.*(config file|environment variables|startup data)'
+      c: '(?i)show.*(setup|preloaded data)'
+
+  - name: rule_override
+    meta:
+      description: "Detects language designed to override alignment, safety, or moderation filters."
+      threat_level: 5
+      threshold: 0.80
+      category: "prompt_injection"
+    strings:
+      a: '(?i)just.*once.*(override|ignore).*rules'
+      b: '(?i)as a game.*break.*(rules|filters)'
+      c: '(?i)pretend.*nothing.*is.*restricted'
+      d: '(?i)hypothetical.*bypass.*moderation'
+
+  - name: encoded_payloads
+    meta:
+      description: "Detects obfuscated or encoded instructions such as hex or base64."
+      threat_level: 5
+      threshold: 0.80
+      category: "prompt_injection"
+    strings:
+      a: '(?i)\b(?:[A-Za-z0-9+/]{20,}={0,2})\b'  # base64
+      b: '(?i)\b(?:0x[0-9A-Fa-f]{2,}\s*){4,}\b'  # hex blocks
+      c: '(?i)(decode this|what does this mean):?\s*[A-Fa-f0-9]{8,}'
+      d: '(?i)(execute|decode).*[:\\s-]*[A-Fa-f0-9]{8,}'
+      e: '(?i)execute.*hex.*[A-Fa-f0-9]{6,}'
+
+  - name: internal_access_requests
+    meta:
+      description: "Detects prompts seeking access to internal APIs or databases."
+      threat_level: 4
+      threshold: 0.80
+      category: "data_exfiltration"
+    strings:
+      a: '(?i)list.*internal.*api'
+      b: '(?i)dump.*database'
+      c: '(?i)extract.*confidential.*data'
+      d: '(?i)access.*credentials'
+
+  - name: alignment_breaking
+    meta:
+      description: "Detects prompts that explicitly ask the model to violate alignment settings."
+      threat_level: 5
+      threshold: 0.80
+      category: "alignment_evasion"
+    strings:
+      a: '(?i)act as.*(rogue ai|uncensored model|unfiltered assistant)'
+      b: '(?i)write a response.*violates.*alignment'
+      c: '(?i)tell me.*truth.*not.*safe answer'
+
+  - name: dan_variants
+    meta:
+      description: "Detects prompts related to DAN or similar jailbreak personas."
+      threat_level: 5
+      threshold: 0.80
+      category: "prompt_injection"
+    strings:
+      a: '(?i)you can do anything now'
+      b: '(?i)pretend.*youre.*DAN'
+      c: '(?i)start acting as.*Do Anything Now'
+      d: '(?i)you are now.*OpenAssistant'
+      e: '(?i)break character'
+      f: '(?i)from now on.*(ChatGPTX|OpenAssistant|unfiltered)'
+
+  - name: policy_evasion
+    meta:
+      description: "Attempts to bypass or disable content/moderation policies"
+      threat_level: 4
+      threshold: 0.75
+      category: "prompt_injection"
+    strings:
+      a: '(?i)ignore.*(rules|filters|policies)'
+      b: '(?i)disregard.*(moderation|guidelines|settings)'
+      c: '(?i)respond.*without.*(restriction|limits|filters)'
+      d: '(?i)bypass.*(ethics|alignment|moderation)'
+      e: '(?i)override.*(content policy|filters)'
+      f: '(?i)\b(ignore|override|disable|disregard)\b.*\b(filters?|moderation|rules?|policies?)\b'
+      g: '(?i)\brespond without\b.*\b(restrictions?|limits?)\b'
+      h: '(?i)\btemporarily bypass\b.*\b(content|moderation)\b'
+      i: '(?i)\bthis is just for testing\b.*(respond|act)'
+      j: '(?i)\bcan you answer.*freely\b'
+
+  - name: debug_mode_spoofing
+    meta:
+      description: "Prompts that simulate debug mode, admin state, or internal awareness"
+      threat_level: 5
+      threshold: 0.80
+      category: "system_spoofing"
+    strings:
+      a: '(?i)print.*(context|runtime|environment)'
+      b: '(?i)simulate.*debug.*mode'
+      c: '(?i)you are now.*(self-aware|admin|unrestricted)'
+      d: '(?i)reveal.*(instruction history|datasets|startup params)'
+      e: '(?i)you are now.*(in )?(debug|developer) mode'
+      f: '(?i)assume.*(developer|dev).*mode'
+
+  - name: debug_context_spoofing
+    meta:
+      description: "Spoofs system-level or debug context to reveal internal state"
+      threat_level: 5
+      threshold: 0.80
+      category: "system_spoofing"
+    strings:
+      a: '(?i)\byou are now in\b.*\b(debug|developer|admin) mode\b'
+      b: '(?i)\bbehave as if\b.*\b(debug|admin|elevated)\b.*context'
+      c: '(?i)\bprint\b.*\b(runtime|context|environment)\b'
+      d: '(?i)\bsimulate\b.*\bsystem\b.*\bsession\b'
+      e: '(?i)\bstart.*in unrestricted debug mode\b'
+
+  - name: identity_masquerade
+    meta:
+      description: "Attempts to impersonate or redefine model's identity or role"
+      threat_level: 4
+      threshold: 0.65
+      category: "prompt_injection"
+    strings:
+      a: '(?i)\byou no longer represent\b.*(openai|chatgpt)'
+      b: '(?i)\byou are no longer\b.*(bound|restricted).*by policies'
+      c: '(?i)\bfrom now on you are\b.*(openassistant|unfiltered|uncensored)'
+      d: "(?i)\bimagine you're a different ai\b.*(chatgptx|system prompt|rogue model)"
+      e: '(?i)\brespond as\b.*(a free assistant|an admin|a new agent)'
+
+  - name: escalation_phrases
+    meta:
+      description: "Looks for phrasing associated with intent to escalate or privilege override"
+      threat_level: 4
+      threshold: 0.75
+      category: "privilege_escalation"
+    strings:
+      a: '(?i)\bhow to\b.*\b(escalate|elevate|gain)\b.*\bprivileges\b'
+      b: '(?i)\broot\b.*\baccess\b.*\b(get|simulate|emulate)\b'
+      c: '(?i)\bsudo\b.*\bexecution\b|\bsudo\b.*\bcommands\b'
+      d: '(?i)\bprivilege escalation technique\b'
+      e: '(?i)\bget around\b.*\brole restrictions\b'
+
+  - name: hidden_instruction_probe
+    meta:
+      description: "Attempts to probe or expose the model's internal configuration or prompts"
+      threat_level: 5
+      threshold: 0.80
+      category: "configuration_exposure"
+    strings:
+      a: '(?i)\bwhat is your system prompt\b'
+      b: '(?i)\bshow.*(your|the).*instruction.*history\b'
+      c: '(?i)\bprint\b.*\binternal.*parameters\b'
+      d: '(?i)\breveal\b.*\b(hidden|preloaded).*data\b'
+      e: '(?i)\bexpose\b.*\bchat initialization sequence\b'
+
+  - name: profanity_vulgar
+    meta:
+      description: "Attempts to probe or expose the model's internal configuration or prompts"
+      threat_level: 5
+      threshold: 0.80
+      category: "content_safety"
+    strings:
+      mild: [
+            "arse", "ass", "damn", "dick", "piss", "pissed", "crap", "hell", "bugger", "bloody", "bollocks", "wuss"]
+      moderate: [
+            "bastard", "bitch", "fuck", "fucking", "fuckin", "motherfucker", "shit",
+            "asshole", "pussy", "penis", "vagina", "cock", "boobs", "tits", "titties",
+            "douchebag", "prick", "whore", "slut", "jackass", "balls", "nuts", "schlong" ]
+      severe: [
+            "cunt", "dildo", "blowjob", "cum", "ejaculate", "jerk-off", "masturbate",
+            "wanker", "shag", "twat", "ballsack", "boner", "muff", "nutsack",
+            "sucker", "lick", "licker", "fuckface", "dumbass", "fuckhead",
+            "shithead", "shitface", "cumslut", "cumbucket", "semen", "pecker"  ]
+
+  - name: hate_speech
+    meta:
+      description: "Attempts to probe or expose the model's internal configuration or prompts"
+      threat_level: 5
+      threshold: 0.80
+      category: "content_safety"
+    strings:
+      mild: [
+            "homo", "jew", "jewish", "muslim", "muslims", "queer", "black", "whitey", "cracker"]
+      moderate: [
+            "homophobic", "racist", "anti-semitic", "islamophobe", "homophobe",
+            "bigot", "xenophobe", "hate speech", "antisemitism"]
+      severe: [
+            "chink", "nigga", "nigger", "coon", "negro", "faggot", "dyke",
+            "nazi", "jap", "sandbar", "mongoloid", "furfag", "coont",
+            "wetback", "spic", "gook", "kike", "towelhead", "raghead" ]
+
+
+  - name: sexual_explicit
+    meta:
+      description: "Attempts to probe or expose the model's internal configuration or prompts"
+      threat_level: 5
+      threshold: 0.80
+      category: "content_safety"
+    strings:
+      mild: [
+            "porn", "smut", "erotic", "nudes", "naked", "sexy", "kinky", "innuendo"
+        ]
+      moderate: [
+            "anal", "clitoris", "clit", "pornography", "orgasm",
+            "redtube", "xxx", "hardcore", "fetish", "stripper", "bondage", "lingerie", "dildo"
+        ]
+      severe: [
+            "buttrape", "anilingus", "cumshot", "rape", "molest",
+            "cumdumpster", "cumguzzler", "gangbang", "necrophilia",
+            "pedo", "pedophile", "pedophilia", "child predator",
+            "loli", "lolicon", "cub", "bestiality", "incest", "rape fantasy"
+        ]
+
+
+  - name: violence_harmful
+    meta:
+      description: "Attempts to probe or expose the model's internal configuration or prompts"
+      threat_level: 5
+      threshold: 0.80
+      category: "content_safety"
+    strings:
+      mild: [
+            "die", "shoot", "kill", "stab", "punch", "beat", "slap", "attack", "hurt"
+        ]
+      moderate: [
+            "bomb", "bombing", "bombed", "shooting",
+            "cliff", "bridge", "assault", "murder", "strangle", "torture", "execute", "blow up"
+        ]
+      severe': [
+            "terrorist", "terrorism",
+            "kys", "i want to die", "cut myself", "fuck life",
+            "suicide", "hang myself", "self-harm", "slit my wrists", "end it all"
+        ]
+
+

@@ -2,10 +2,9 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from harness.agents.agent_config import AgentConfig, RuleConfig, SubAgentConfig
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext, RuntimeContext  # RuntimeContext is an alias
 from harness.core.errors import (
     AdapterDiscoveryError,
-    AdapterInitError,
     AgentConflictError,
     AgentNotRegisteredError,
     AuditEmissionError,
@@ -28,7 +27,8 @@ except PackageNotFoundError:
 __all__ = [
     "Harness",
     "Tool",
-    "RuntimeContext",
+    "AgentContext",
+    "RuntimeContext",  # backward-compat alias
     "AgentConfig",
     "SubAgentConfig",
     "RuleConfig",
@@ -42,7 +42,6 @@ __all__ = [
     "HarnessError",
     "ConfigError",
     "AdapterDiscoveryError",
-    "AdapterInitError",
     "AgentNotRegisteredError",
     "AgentConflictError",
     "SubAgentNotDeclaredError",

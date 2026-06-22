@@ -5,10 +5,10 @@ ScanResult is internal — boundaries aggregate Scanner results into ScanVerdict
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from harness.core.context import RuntimeContext
+    from harness.core.context import AgentContext
     from harness.core.verdicts import Finding
 
 
@@ -19,7 +19,6 @@ class ScanResult:
     redacted_text: str | None = None
 
 
-@runtime_checkable
 class Scanner(Protocol):
     """Inspect text and return findings. All async — production scanners are network-bound."""
 
@@ -28,7 +27,7 @@ class Scanner(Protocol):
     async def scan(
         self,
         text: str,
-        ctx: "RuntimeContext",
+        ctx: "AgentContext",
     ) -> ScanResult:
         """Inspect text. Return findings and optional redacted form.
 

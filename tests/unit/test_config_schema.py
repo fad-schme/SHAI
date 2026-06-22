@@ -5,9 +5,7 @@ from pydantic import ValidationError
 from harness.config.schema import (
     BoundaryConfig,
     HarnessConfig,
-    ToolSourceConfig,
 )
-from harness.core.types import Transport
 
 
 def _minimal() -> dict:
@@ -48,31 +46,6 @@ def test_unknown_field_rejected():
     data = {**_minimal(), "typo_field": "oops"}
     with pytest.raises(ValidationError):
         HarnessConfig.model_validate(data)
-
-
-def test_mcp_source_requires_url():
-    with pytest.raises(ValidationError):
-        ToolSourceConfig(name="s", transport=Transport.MCP)
-
-
-def test_skill_source_requires_tools():
-    with pytest.raises(ValidationError):
-        ToolSourceConfig(name="s", transport=Transport.SKILL)
-
-
-def test_valid_mcp_source():
-    s = ToolSourceConfig(
-        name="slack",
-        transport=Transport.MCP,
-        url="https://mcp.slack.com/sse",
-        credentials={"token": "secret://SLACK_TOKEN"},
-    )
-    assert s.url == "https://mcp.slack.com/sse"
-
-
-def test_valid_skill_source():
-    s = ToolSourceConfig(name="docs", transport=Transport.SKILL, tools=["search_docs"])
-    assert s.tools == ["search_docs"]
 
 
 def test_enabled_scan_with_scanners_ok():

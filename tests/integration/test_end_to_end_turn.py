@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.harness import Harness
 from harness.core.types import BoundaryName, Decision, Transport
 from harness.core.events import AuditEvent
@@ -64,11 +64,10 @@ async def _setup_harness(tmp_path: Path, *, scan_enabled: bool = False) -> Harne
 
 async def test_full_turn_allow_path(tmp_path: Path):
     h   = await _setup_harness(tmp_path)
-    ctx = RuntimeContext(
+    ctx = AgentContext(
         agent_id="orchestrator_agent")
     rec = _recording_sink(h)
 
-    tools = await h.load_sources(ctx)
 
     verdict_in = await h.scan_input("Please search the docs.", ctx)
     assert not verdict_in.blocked
@@ -79,7 +78,6 @@ async def test_full_turn_allow_path(tmp_path: Path):
     verdict_out = await h.scan_output("Here are the results.", ctx)
     assert not verdict_out.blocked
 
-    await h.unload_sources(ctx)
 
     # Three boundary events: input_scan, tool_call_gate, output_scan
     boundaries = [e.boundary for e in rec.events]
@@ -91,29 +89,25 @@ async def test_full_turn_allow_path(tmp_path: Path):
 async def test_full_turn_deny_path(tmp_path: Path):
     """send_email is blocked by orchestrator's default deny rule."""
     h   = await _setup_harness(tmp_path)
-    ctx = RuntimeContext(
+    ctx = AgentContext(
         agent_id="orchestrator_agent")
 
-    await h.load_sources(ctx)
     gate = await h.check_tool_call(
         "send_email", {"to": "x@y.com", "subject": "hi", "body": "test"}, ctx
     )
     assert not gate.allowed
-    await h.unload_sources(ctx)
 
 
 async def test_audit_events_carry_correct_identity(tmp_path: Path):
     h   = await _setup_harness(tmp_path)
-    ctx = RuntimeContext(
+    ctx = AgentContext(
         agent_id="orchestrator_agent",
     )
     rec = _recording_sink(h)
 
-    await h.load_sources(ctx)
     await h.scan_input("hello", ctx)
     await h.check_tool_call("search_docs", {}, ctx)
     await h.scan_output("result", ctx)
-    await h.unload_sources(ctx)
 
     for event in rec.events:
         # tenant_id is stamped from harness.yaml (default="default" in fixture)
@@ -126,13 +120,11 @@ async def test_audit_events_carry_correct_identity(tmp_path: Path):
 
 async def test_pii_in_input_blocked(tmp_path: Path):
     h   = await _setup_harness(tmp_path, scan_enabled=True)
-    ctx = RuntimeContext(
+    ctx = AgentContext(
         agent_id="orchestrator_agent")
     rec = _recording_sink(h)
 
-    await h.load_sources(ctx)
     verdict = await h.scan_input("My SSN is 123-45-6789.", ctx)
-    await h.unload_sources(ctx)
 
     assert verdict.blocked
     assert rec.events[0].decision == Decision.BLOCKED
@@ -142,17 +134,15 @@ async def test_pii_in_input_blocked(tmp_path: Path):
 
 async def test_subagent_full_turn(tmp_path: Path):
     h          = await _setup_harness(tmp_path)
-    parent_ctx = RuntimeContext(
+    parent_ctx = AgentContext(
         agent_id="orchestrator_agent")
     child_ctx  = h.scope_context_for_subagent(parent_ctx, "research_sub")
     rec        = _recording_sink(h)
 
-    tools = await h.load_sources(child_ctx)
 
     gate_allow = await h.check_tool_call("search_docs", {"query": "test"}, child_ctx)
     gate_deny  = await h.check_tool_call("send_email", {"to": "x@y.com"}, child_ctx)
 
-    await h.unload_sources(child_ctx)
 
     assert gate_allow.allowed
     assert not gate_deny.allowed
@@ -166,20 +156,15 @@ async def test_subagent_full_turn(tmp_path: Path):
 
 async def test_subagent_view_isolated_from_parent(tmp_path: Path):
     h          = await _setup_harness(tmp_path)
-    parent_ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+    parent_ctx = AgentContext(agent_id="orchestrator_agent")
     child_ctx  = h.scope_context_for_subagent(parent_ctx, "research_sub")
 
-    await h.load_sources(parent_ctx)
-    await h.load_sources(child_ctx)
+    # Tools resolved once at load_agent — same dict for all turns of same agent
+    tools = h._agent_tools.get("orchestrator_agent", {})
+    assert "search_docs" in tools
+    assert child_ctx.allowed_tags == ["read", "internal"]
 
-    parent_view = h._views.get(id(parent_ctx))
-    child_view  = h._views.get(id(child_ctx))
 
-    assert parent_view is not child_view
-
-    await h.unload_sources(parent_ctx)
-    await h.unload_sources(child_ctx)
 
 
 # ── Concurrent agents ─────────────────────────────────────────────────────
@@ -189,12 +174,10 @@ async def test_concurrent_agents_isolated(tmp_path: Path):
     h = await _setup_harness(tmp_path)
 
     async def agent_turn(user_id: str):
-        ctx = RuntimeContext(
+        ctx = AgentContext(
         agent_id="orchestrator_agent", user_id=user_id
         )
-        await h.load_sources(ctx)
         gate = await h.check_tool_call("search_docs", {"query": user_id}, ctx)
-        await h.unload_sources(ctx)
         return gate.allowed
 
     results = await asyncio.gather(*[agent_turn(i) for i in range(10)])

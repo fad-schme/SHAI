@@ -13,7 +13,6 @@ class Finding(BaseModel, frozen=True):
     scanner:  str
     category: str
     severity: Severity
-    span:     tuple[int, int] | None = None  # (start, end) byte offsets in source
     detail:   str | None = None              # short note — never the raw matched text
 
 

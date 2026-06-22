@@ -11,10 +11,11 @@ import pytest
 from harness.adapters.scanners.base import ScanResult, Scanner
 from harness.adapters.scanners.basic_injection import BasicInjectionScanner
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.types import Severity
 
-CTX = RuntimeContext(tenant_id="t1", agent_id="a1")
+CTX = AgentContext(
+        agent_id="a1")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -30,7 +31,10 @@ def all_scanners():
 
 @pytest.mark.parametrize("scanner", all_scanners())
 def test_implements_protocol(scanner):
-    assert isinstance(scanner, Scanner)
+    """Duck-type check — Scanner is a Protocol, not runtime_checkable."""
+    assert hasattr(scanner, "name")
+    assert hasattr(scanner, "scan")
+    assert callable(scanner.scan)
 
 
 @pytest.mark.parametrize("scanner", all_scanners())

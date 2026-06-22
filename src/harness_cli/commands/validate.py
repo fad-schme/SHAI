@@ -30,9 +30,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
     agents_dir: Path | None = None
     if args.agents_dir:
         agents_dir = Path(args.agents_dir)
-    elif config.agents.directory:
-        # Resolve relative to harness.yaml location
-        agents_dir = config_path.parent / config.agents.directory
 
     if agents_dir is None or not agents_dir.exists():
         print("\nNo agents directory configured or found — skipping agent validation.")

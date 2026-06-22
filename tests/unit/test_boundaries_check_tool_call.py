@@ -1,14 +1,19 @@
-"""Unit tests for check_tool_call boundary."""
+"""Unit tests for check_tool_call boundary.
+
+Tests the boundary directly with pre-resolved agent_config and tools dict
+— no registry lookup on the hot path.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from harness.adapters.tool_registry.memory import InMemoryRegistry
+from harness.tools.registry import ToolRegistry
+from harness.agents.agent_config import AgentConfig, RuleConfig, RuleMatchConfig, SubAgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.types import Decision, Transport
 from harness.policy.rules import RuleBasedPolicy
@@ -24,225 +29,161 @@ class RecordingSink:
     async def close(self): pass
 
 
-async def _setup():
-    """Return (registry, view, policy, emitter, sink) pre-populated with test tools."""
-    reg = InMemoryRegistry()
-    await reg.register_many([
-        Tool(name="search_docs", tags=["read", "internal"],            transport=Transport.LOCAL),
-        Tool(name="send_email",  tags=["external_write", "sensitive"], transport=Transport.LOCAL),
-        Tool(name="list_inbox",  tags=["read", "internal"],            transport=Transport.LOCAL),
-    ])
+def make_tool(name: str, tags: list[str] | None = None) -> Tool:
+    return Tool(name=name, tags=tags or ["read", "internal"], transport=Transport.LOCAL)
+
+
+def make_agent(
+    agent_id: str = "test_agent",
+    allowed_tool_names: list[str] | None = None,
+    allowed_tags: list[str] | None = None,
+    policy_rules: list | None = None,
+    sub_agents: list | None = None,
+) -> AgentConfig:
+    return AgentConfig(
+        id=agent_id,
+        allowed_tool_names=allowed_tool_names or ["search_docs"],
+        allowed_tags=allowed_tags or ["read", "internal"],
+        policy_rules=policy_rules or [],
+        sub_agents=sub_agents or [],
+    )
+
+
+def setup() -> tuple[dict[str, Tool], RecordingSink, AuditEmitter, RuleBasedPolicy]:
+    tools  = {"search_docs": make_tool("search_docs"),
+               "send_email":  make_tool("send_email", ["external_write", "sensitive"])}
     sink    = RecordingSink()
     emitter = AuditEmitter([sink])
     policy  = RuleBasedPolicy()
-    return reg, sink, emitter, policy
+    return tools, sink, emitter, policy
 
 
-async def _load_agent_registry(path: Path):
-    from harness.agents.registry import AgentRegistry
-    r = AgentRegistry()
-    await r.load(path)
-    return r
-
-
-# ── L1a: agent not registered ─────────────────────────────────────────────
-
-async def test_unregistered_agent_denied():
-    from harness.agents.registry import AgentRegistry
-    reg, sink, emitter, policy = await _setup()
-    view = reg.scoped_view(RuntimeContext(
-        agent_id="nobody"))
-    ctx  = RuntimeContext(
-        agent_id="nobody")
-
-    gate = await check_tool_call.run(
-        "search_docs", {}, ctx,
-        agent_registry=AgentRegistry(),
-        registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
+async def _run(name, args, ctx, *, agent_config, tools, policy=None, emitter=None, sink=None):
+    if policy is None:
+        policy = RuleBasedPolicy()
+    if emitter is None:
+        sink = RecordingSink()
+        emitter = AuditEmitter([sink])
+    return await check_tool_call.run(
+        name, args, ctx,
+        agent_config=agent_config,
+        tools=tools,
+        policy=policy,
+        arg_scanners=[],
+        emitter=emitter,
         tenant_id="test",
-    )
-    assert not gate.allowed
-    assert "not registered" in gate.deny_reason
-    assert sink.events[0].decision == Decision.DENY
+    ), sink
 
 
-# ── L1b: allowed_tool_names ────────────────────────────────────────────────
+# ── L1: allowed_tool_names ────────────────────────────────────────────────
 
-async def test_tool_not_in_allowed_tool_names_denied(tmp_path):
-    agent_yaml = tmp_path / "a.yaml"
-    agent_yaml.write_text(
-        "id: test_agent\n"
-        "allowed_tool_names: [search_docs]\n"  # send_email NOT allowed
-        "allowed_tags: [read, internal, external_write]\n"
-    )
-    agent_reg = await _load_agent_registry(agent_yaml)
-    reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(
-        agent_id="test_agent")
-    view = reg.scoped_view(ctx)
+async def test_tool_not_in_allowed_tool_names_denied():
+    agent = make_agent(allowed_tool_names=["search_docs"],
+                       allowed_tags=["read", "internal", "external_write"])
+    tools, sink, emitter, policy = setup()
+    ctx  = AgentContext(agent_id="test_agent")
 
-    gate = await check_tool_call.run(
-        "send_email", {"to": "x@y.com"}, ctx,
-        agent_registry=agent_reg, registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
-    )
+    gate, _ = await _run("send_email", {}, ctx,
+                         agent_config=agent, tools=tools, policy=policy, emitter=emitter, sink=sink)
     assert not gate.allowed
     assert "allowed_tool_names" in gate.deny_reason
     assert sink.events[0].decision == Decision.DENY
 
 
-# ── L1c: allowed_tags ─────────────────────────────────────────────────────
+async def test_unregistered_tool_denied():
+    agent = make_agent(allowed_tool_names=["phantom_tool"],
+                       allowed_tags=["read"])
+    tools = {}  # phantom_tool not in tools dict
+    ctx   = AgentContext(agent_id="test_agent")
+    gate, sink = await _run("phantom_tool", {}, ctx, agent_config=agent, tools=tools)
+    assert not gate.allowed
+    assert "not registered" in gate.deny_reason
 
-async def test_subagent_tag_gate_denies_external_write(tmp_path):
-    agent_yaml = tmp_path / "a.yaml"
-    agent_yaml.write_text(
-        "id: test_agent\n"
-        "allowed_tool_names: [search_docs, send_email]\n"
-        "allowed_tags: [read, internal, external_write]\n"
-        "sub_agents:\n"
-        "  - id: read_sub\n"
-        "    allowed_tool_names: [search_docs, send_email]\n"
-        "    allowed_tags: [read, internal]\n"  # no external_write
-    )
-    agent_reg = await _load_agent_registry(agent_yaml)
-    reg, sink, emitter, policy = await _setup()
-    ctx = RuntimeContext(
-        agent_id="test_agent",
-        sub_agent_id="read_sub", allowed_tags=["read", "internal"],
-    )
-    view = reg.scoped_view(ctx)
 
-    gate = await check_tool_call.run(
-        "send_email", {"to": "x@y.com"}, ctx,
-        agent_registry=agent_reg, registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
+# ── L2: allowed_tags subagent gate ────────────────────────────────────────
+
+async def test_subagent_tag_gate_denies_external_write():
+    sub = SubAgentConfig(
+        id="read_sub",
+        allowed_tool_names=["search_docs", "send_email"],
+        allowed_tags=["read", "internal"],  # no external_write
     )
+    agent = make_agent(
+        allowed_tool_names=["search_docs", "send_email"],
+        allowed_tags=["read", "internal", "external_write"],
+        sub_agents=[sub],
+    )
+    tools = {"search_docs": make_tool("search_docs"),
+             "send_email":  make_tool("send_email", ["external_write"])}
+    ctx   = AgentContext(agent_id="test_agent", sub_agent_id="read_sub",
+                         allowed_tags=["read", "internal"])
+
+    gate, _ = await _run("send_email", {}, ctx, agent_config=agent, tools=tools)
     assert not gate.allowed
     assert "capability set" in gate.deny_reason
 
 
-# ── L2: policy deny ───────────────────────────────────────────────────────
+# ── L3: policy deny ───────────────────────────────────────────────────────
 
-async def test_policy_deny_rule_fires(tmp_path):
-    agent_yaml = tmp_path / "a.yaml"
-    agent_yaml.write_text(
-        "id: test_agent\n"
-        "allowed_tool_names: [send_email]\n"
-        "allowed_tags: [read, internal, external_write]\n"
-        "policy_rules:\n"
-        "  - id: deny_email\n"
-        "    match:\n"
-        "      tool_names: [send_email]\n"
-        "    action: deny\n"
-        "    reason: email not allowed\n"
+async def test_policy_deny_rule_fires():
+    rule = RuleConfig(
+        id="deny_email",
+        match=RuleMatchConfig(tool_names=["send_email"]),
+        action="deny",
+        reason="email not allowed",
     )
-    agent_reg = await _load_agent_registry(agent_yaml)
-    reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(
-        agent_id="test_agent")
-    view = reg.scoped_view(ctx)
+    agent = make_agent(
+        allowed_tool_names=["send_email"],
+        allowed_tags=["read", "internal", "external_write"],
+        policy_rules=[rule],
+    )
+    tools = {"send_email": make_tool("send_email", ["external_write"])}
+    ctx   = AgentContext(agent_id="test_agent")
 
-    gate = await check_tool_call.run(
-        "send_email", {}, ctx,
-        agent_registry=agent_reg, registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
-    )
+    gate, _ = await _run("send_email", {}, ctx, agent_config=agent, tools=tools)
     assert not gate.allowed
     assert "email not allowed" in gate.deny_reason
 
 
 # ── Allow path ────────────────────────────────────────────────────────────
 
-async def test_allow_path_emits_allow_event(tmp_path):
-    agent_yaml = tmp_path / "a.yaml"
-    agent_yaml.write_text(
-        "id: test_agent\n"
-        "allowed_tool_names: [search_docs]\n"
-        "allowed_tags: [read, internal]\n"
-    )
-    agent_reg = await _load_agent_registry(agent_yaml)
-    reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(
-        agent_id="test_agent")
-    view = reg.scoped_view(ctx)
-    await view.add(Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL))
+async def test_allow_path_emits_allow_event():
+    agent = make_agent()
+    tools = {"search_docs": make_tool("search_docs")}
+    ctx   = AgentContext(agent_id="test_agent")
+    sink  = RecordingSink()
+    emitter = AuditEmitter([sink])
 
-    gate = await check_tool_call.run(
-        "search_docs", {"query": "test"}, ctx,
-        agent_registry=agent_reg, registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
-    )
+    gate, _ = await _run("search_docs", {"query": "test"}, ctx,
+                         agent_config=agent, tools=tools, emitter=emitter, sink=sink)
     assert gate.allowed
     assert sink.events[0].decision == Decision.ALLOW
 
 
-# ── Exactly one audit event every path ───────────────────────────────────
+# ── Exactly one audit event ───────────────────────────────────────────────
 
 async def test_exactly_one_event_on_deny():
-    from harness.agents.registry import AgentRegistry
-    reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(
-        agent_id="nobody")
-    view = reg.scoped_view(ctx)
-
-    await check_tool_call.run(
-        "search_docs", {}, ctx,
-        agent_registry=AgentRegistry(),
-        registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
-    )
+    agent = make_agent(allowed_tool_names=["missing"])
+    tools = {}
+    ctx   = AgentContext(agent_id="test_agent")
+    gate, sink = await _run("missing", {}, ctx, agent_config=agent, tools=tools)
     assert len(sink.events) == 1
 
 
-async def test_exactly_one_event_on_allow(tmp_path):
-    agent_yaml = tmp_path / "a.yaml"
-    agent_yaml.write_text(
-        "id: test_agent\n"
-        "allowed_tool_names: [search_docs]\n"
-        "allowed_tags: [read, internal]\n"
-    )
-    agent_reg = await _load_agent_registry(agent_yaml)
-    reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(
-        agent_id="test_agent")
-    view = reg.scoped_view(ctx)
-    await view.add(Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL))
-
-    await check_tool_call.run(
-        "search_docs", {}, ctx,
-        agent_registry=agent_reg, registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
-    )
+async def test_exactly_one_event_on_allow():
+    agent = make_agent()
+    tools = {"search_docs": make_tool("search_docs")}
+    ctx   = AgentContext(agent_id="test_agent")
+    gate, sink = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
     assert len(sink.events) == 1
 
 
-# ── Tool not in registry ──────────────────────────────────────────────────
+# ── Subagent resolution ───────────────────────────────────────────────────
 
-async def test_unknown_tool_denied(tmp_path):
-    agent_yaml = tmp_path / "a.yaml"
-    agent_yaml.write_text(
-        "id: test_agent\n"
-        "allowed_tool_names: [phantom_tool]\n"
-        "allowed_tags: [read]\n"
-    )
-    agent_reg = await _load_agent_registry(agent_yaml)
-    reg, sink, emitter, policy = await _setup()  # phantom_tool not registered
-    ctx  = RuntimeContext(
-        agent_id="test_agent")
-    view = reg.scoped_view(ctx)
-
-    gate = await check_tool_call.run(
-        "phantom_tool", {}, ctx,
-        agent_registry=agent_reg, registry_view=view, policy=policy,
-        arg_scanners=[], emitter=emitter,
-        tenant_id="test",
-    )
+async def test_unknown_subagent_denied():
+    agent = make_agent(sub_agents=[])  # no subagents declared
+    tools = {"search_docs": make_tool("search_docs")}
+    ctx   = AgentContext(agent_id="test_agent", sub_agent_id="ghost_sub",
+                         allowed_tags=["read"])
+    gate, _ = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
     assert not gate.allowed
-    assert "not found in registry" in gate.deny_reason

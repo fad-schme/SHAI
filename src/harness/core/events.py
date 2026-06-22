@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, model_validator
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.types import BoundaryName, Decision, Severity
 
 
@@ -25,7 +25,7 @@ class AuditEvent(BaseModel, frozen=True):
     disabled:    bool = False
     duration_ms: int
 
-    # Identity — tenant_id from HarnessConfig, agent fields from RuntimeContext
+    # Identity — tenant_id from HarnessConfig, agent fields from AgentContext
     tenant_id:    str
     agent_id:     str
     sub_agent_id: str | None = None
@@ -64,7 +64,7 @@ class AuditEvent(BaseModel, frozen=True):
         *,
         boundary: BoundaryName,
         decision: Decision,
-        ctx: RuntimeContext,
+        ctx: AgentContext,
         tenant_id: str,
         duration_ms: int,
         adapters: list[str] | None = None,

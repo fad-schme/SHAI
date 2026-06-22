@@ -144,16 +144,21 @@ async def test_reload_nonexistent_raises(tmp_path: Path):
 
 async def test_deregister_removes_agent(tmp_path: Path):
     reg = AgentRegistry()
-    await reg.load(_minimal(tmp_path))
-    await reg.deregister("test_agent")
+    cfg = await reg.load(_minimal(tmp_path))
+    removed = await reg.deregister(cfg)
+    assert removed is True
     with pytest.raises(AgentNotRegisteredError):
         reg.get("test_agent")
 
 
-async def test_deregister_nonexistent_raises(tmp_path: Path):
+async def test_deregister_not_registered_returns_false(tmp_path: Path):
+    """deregister returns False when item not registered — does not raise."""
     reg = AgentRegistry()
-    with pytest.raises(AgentNotRegisteredError):
-        await reg.deregister("nobody")
+    # Build a minimal AgentConfig to pass as the item
+    cfg = await reg.load(_minimal(tmp_path))
+    await reg.deregister(cfg)           # remove it
+    removed = await reg.deregister(cfg) # try again — already gone
+    assert removed is False
 
 
 # ── list ──────────────────────────────────────────────────────────────────

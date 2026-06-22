@@ -26,7 +26,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from harness import Harness, RuntimeContext, Tool
+from harness import Harness, Tool
 from harness.core.types import Transport
 from harness.integrations.anthropic_sdk import gated_dispatch
 
@@ -69,7 +69,7 @@ async def agent_turn(
     *,
     harness: Harness,
     uma: StubUMA,
-    ctx: RuntimeContext,
+    ctx: AgentContext,
 ) -> str:
     """One full turn: UMA retrieve → SHAI scan → LLM → SHAI gate → SHAI scan → UMA store."""
 
@@ -81,12 +81,10 @@ async def agent_turn(
     await uma.store(ctx.agent_id, "user", user_text)
 
     # 3. SHAI: load sources for this turn
-    tools = await harness.load_sources(ctx)
 
     # 4. SHAI: scan input
     input_verdict = await harness.scan_input(user_text, ctx)
     if input_verdict.blocked:
-        await harness.unload_sources(ctx)
         return "[blocked: input scan]"
 
     print(f"[SHAI scan_in]  blocked={input_verdict.blocked}")
@@ -122,7 +120,6 @@ async def agent_turn(
     final = output_verdict.redacted_text or llm_response
 
     # 9. SHAI: unload sources
-    await harness.unload_sources(ctx)
 
     # 10. UMA: store assistant turn (after SHAI — store the safe, possibly-redacted response)
     await uma.store(ctx.agent_id, "assistant", final)
@@ -147,9 +144,7 @@ async def main() -> None:
     await harness.register_tools([
         Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),
     ])
-    await harness.load_agent(AGENT_YAML)
-
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
+    agent = await harness.load_agent(AGENT_YAML)
 
     # Pre-populate some memory
     await uma.store("orchestrator_agent", "user", "Tell me about onboarding")
@@ -158,18 +153,18 @@ async def main() -> None:
     print("\n── Turn 1 ───────────────────────────────────────────────────")
     response = await agent_turn(
         "What is the onboarding process?",
-        harness=harness, uma=uma, ctx=ctx,
+        harness=harness, uma=uma, ctx=agent,
     )
     print(f"\n[Response] {response!r}")
 
     print("\n── Turn 2 (subagent) ────────────────────────────────────────")
-    child_ctx = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
-    print(f"[scope_subagent] sub_agent_id={child_ctx.sub_agent_id}")
-    print(f"                 allowed_tags={child_ctx.allowed_tags}")
+    child_agent = harness.scope_context_for_subagent(agent, sub_agent_id="research_sub")
+    print(f"[scope_subagent] sub_agent_id={child_agent.sub_agent_id}")
+    print(f"                 allowed_tags={child_agent.allowed_tags}")
 
     response2 = await agent_turn(
         "Find policy documents",
-        harness=harness, uma=uma, ctx=child_ctx,
+        harness=harness, uma=uma, ctx=child_agent,
     )
     print(f"\n[Response] {response2!r}")
 

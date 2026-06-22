@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.harness import Harness
 from harness.core.types import Transport
 from harness.tools.tool import Tool
@@ -37,105 +37,88 @@ async def wired_harness(harness: Harness) -> Harness:
     return harness
 
 
-# ── load_sources / unload_sources ─────────────────────────────────────────
+# ── Tools resolved at load_agent time ────────────────────────────────────
 
-async def test_load_sources_returns_tool_list(wired_harness: Harness):
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
-    tools = await wired_harness.load_sources(ctx)
-    assert isinstance(tools, list)
-    await wired_harness.unload_sources(ctx)
+async def test_agent_tools_resolved_at_load(wired_harness: Harness):
+    tools = wired_harness._agent_tools.get("orchestrator_agent", {})
+    assert "search_docs" in tools
+    assert "list_inbox"  in tools
 
 
-async def test_unload_sources_is_idempotent(wired_harness: Harness):
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
-    await wired_harness.load_sources(ctx)
-    await wired_harness.unload_sources(ctx)
-    await wired_harness.unload_sources(ctx)  # must not raise
+async def test_agent_tools_filtered_by_allowed_tool_names(wired_harness: Harness):
+    """Only tools whose name is in allowed_tool_names are resolved.
+    Tag filtering happens at gate time, not at resolution time.
+    """
+    tools = wired_harness._agent_tools.get("orchestrator_agent", {})
+    cfg   = wired_harness._agent_registry.get("orchestrator_agent")
+    # Every resolved tool must be in allowed_tool_names
+    for name in tools:
+        assert name in cfg.allowed_tool_names
+    # send_email is in allowed_tool_names and must be resolved even though
+    # it carries the 'sensitive' tag (a scanner hint, not a capability gate)
+    assert "send_email" in tools
 
 
 # ── scan_input ────────────────────────────────────────────────────────────
 
 async def test_scan_input_disabled_returns_allow(wired_harness: Harness):
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
-    verdict = await wired_harness.scan_input("hello", ctx)
+    agent = AgentContext(agent_id="orchestrator_agent")
+    verdict = await wired_harness.scan_input("hello", agent)
     assert not verdict.blocked  # boundary disabled in fixture config
 
 
 async def test_scan_output_disabled_returns_allow(wired_harness: Harness):
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
-    verdict = await wired_harness.scan_output("hello", ctx)
+    agent = AgentContext(agent_id="orchestrator_agent")
+    verdict = await wired_harness.scan_output("hello", agent)
     assert not verdict.blocked
 
 
 # ── check_tool_call ───────────────────────────────────────────────────────
 
 async def test_check_tool_call_allow(wired_harness: Harness):
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
-    await wired_harness.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
     gate = await wired_harness.check_tool_call("search_docs", {"query": "test"}, ctx)
     assert gate.allowed
-    await wired_harness.unload_sources(ctx)
 
 
 async def test_check_tool_call_deny_policy(wired_harness: Harness):
     """send_email has a deny rule in orchestrator_agent.yaml by default."""
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
-    await wired_harness.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
     # The orchestrator policy denies external_write by default
     gate = await wired_harness.check_tool_call(
         "send_email", {"to": "x@y.com", "subject": "hi", "body": "hello"}, ctx
     )
     # Expected: denied by policy rule deny_external_write_default
     assert not gate.allowed
-    await wired_harness.unload_sources(ctx)
 
 
 async def test_check_tool_call_unregistered_agent_denied(harness: Harness):
-    ctx = RuntimeContext(
-        agent_id="nobody")
-    gate = await harness.check_tool_call("search_docs", {}, ctx)
-    assert not gate.allowed
-    assert "not registered" in gate.deny_reason
+    from harness.core.errors import AgentNotRegisteredError
+    ctx = AgentContext(agent_id="nobody")
+    with pytest.raises(AgentNotRegisteredError):
+        await harness.check_tool_call("search_docs", {}, ctx)
 
 
 # ── Subagent isolation ────────────────────────────────────────────────────
 
 async def test_subagent_scope_restricts_tags(wired_harness: Harness):
-    parent_ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+    parent_ctx = AgentContext(agent_id="orchestrator_agent")
     child_ctx  = wired_harness.scope_context_for_subagent(parent_ctx, "research_sub")
     assert child_ctx.sub_agent_id == "research_sub"
     assert "external_write" not in child_ctx.allowed_tags
 
 
 async def test_subagent_send_email_denied(wired_harness: Harness):
-    parent_ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+    parent_ctx = AgentContext(agent_id="orchestrator_agent")
     child_ctx  = wired_harness.scope_context_for_subagent(parent_ctx, "research_sub")
-    await wired_harness.load_sources(child_ctx)
     gate = await wired_harness.check_tool_call("send_email", {}, child_ctx)
     assert not gate.allowed
-    await wired_harness.unload_sources(child_ctx)
 
 
-async def test_parent_and_child_views_isolated(wired_harness: Harness):
-    parent_ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+async def test_subagent_ctx_is_distinct_from_parent(wired_harness: Harness):
+    parent_ctx = AgentContext(agent_id="orchestrator_agent")
     child_ctx  = wired_harness.scope_context_for_subagent(parent_ctx, "research_sub")
+    assert child_ctx.sub_agent_id == "research_sub"
+    assert child_ctx.allowed_tags == ["read", "internal"]
+    assert parent_ctx.sub_agent_id is None
 
-    await wired_harness.load_sources(parent_ctx)
-    await wired_harness.load_sources(child_ctx)
-
-    # Keys are distinct because ctx objects are distinct (id-based keying)
-    assert id(parent_ctx) != id(child_ctx)
-    assert wired_harness._views.get(id(parent_ctx)) is not None
-    assert wired_harness._views.get(id(child_ctx)) is not None
-
-    await wired_harness.unload_sources(parent_ctx)
-    await wired_harness.unload_sources(child_ctx)

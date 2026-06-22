@@ -18,8 +18,6 @@ def cmd_agents_list(args: argparse.Namespace) -> int:
         return 1
 
     agents_dir: Path | None = None
-    if config.agents.directory:
-        agents_dir = config_path.parent / config.agents.directory
 
     if agents_dir is None or not agents_dir.exists():
         print("No agents directory configured.", file=sys.stderr)

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.harness import Harness
 from harness.core.types import Transport
 from harness.tools.tool import Tool
@@ -59,7 +59,7 @@ async def _measure(coro_factory, n: int = 100) -> float:
 
 async def test_scan_input_disabled_overhead(tmp_path: Path):
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     mean_ms = await _measure(lambda: h.scan_input("hello world", ctx), n=200)
     print(f"\n  scan_input (disabled):    {mean_ms:.3f} ms/call")
@@ -68,7 +68,7 @@ async def test_scan_input_disabled_overhead(tmp_path: Path):
 
 async def test_scan_output_disabled_overhead(tmp_path: Path):
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     mean_ms = await _measure(lambda: h.scan_output("hello world", ctx), n=200)
     print(f"\n  scan_output (disabled):   {mean_ms:.3f} ms/call")
@@ -77,29 +77,25 @@ async def test_scan_output_disabled_overhead(tmp_path: Path):
 
 async def test_check_tool_call_allow_overhead(tmp_path: Path):
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     mean_ms = await _measure(
         lambda: h.check_tool_call("search_docs", {"query": "test"}, ctx),
         n=200,
     )
     print(f"\n  check_tool_call (allow):  {mean_ms:.3f} ms/call")
-    await h.unload_sources(ctx)
     assert mean_ms < 20, f"check_tool_call overhead too high: {mean_ms:.1f} ms"
 
 
 async def test_full_turn_overhead(tmp_path: Path):
-    """Measure load_sources + scan_input + check_tool_call + scan_output + unload."""
+    """Measure scan_input + check_tool_call + scan_output (tools pre-resolved at startup)."""
     h = await _build_harness(tmp_path)
 
     async def one_turn():
-        ctx = RuntimeContext(agent_id="orchestrator_agent")
-        await h.load_sources(ctx)
+        ctx = AgentContext(agent_id="orchestrator_agent")
         await h.scan_input("test input", ctx)
         await h.check_tool_call("search_docs", {}, ctx)
         await h.scan_output("test output", ctx)
-        await h.unload_sources(ctx)
 
     mean_ms = await _measure(one_turn, n=100)
     print(f"\n  full turn (all disabled): {mean_ms:.3f} ms/turn")
@@ -113,12 +109,10 @@ async def test_50_concurrent_turns(tmp_path: Path):
     h = await _build_harness(tmp_path)
 
     async def one_turn(i: int):
-        ctx = RuntimeContext(agent_id="orchestrator_agent")
-        await h.load_sources(ctx)
+        ctx = AgentContext(agent_id="orchestrator_agent")
         await h.scan_input(f"input {i}", ctx)
         await h.check_tool_call("search_docs", {"query": f"q{i}"}, ctx)
         await h.scan_output(f"output {i}", ctx)
-        await h.unload_sources(ctx)
 
     start = time.perf_counter()
     await asyncio.gather(*[one_turn(i) for i in range(50)])
@@ -132,10 +126,10 @@ async def test_50_concurrent_turns(tmp_path: Path):
 async def test_regex_pii_scanner_overhead(tmp_path: Path):
     """Measure the cost of running regex_pii on a typical input."""
     from harness.adapters.scanners.regex_pii import RegexPIIScanner
-    from harness.core.context import RuntimeContext
+    from harness.core.context import AgentContext
 
     scanner = RegexPIIScanner()
-    ctx     = RuntimeContext(agent_id="a1")
+    ctx     = AgentContext(agent_id="a1")
     text    = "Please help me find documents related to the Q3 report for the platform team."
 
     mean_ms = await _measure(lambda: scanner.scan(text, ctx), n=500)

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 
 from harness.adapters.scanners.base import ScanResult
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 
@@ -93,7 +93,7 @@ class BasicInjectionScanner:
             patterns.extend(_PATTERNS_HIGH)
         self._patterns = patterns
 
-    async def scan(self, text: str, ctx: RuntimeContext) -> ScanResult:
+    async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
         findings: list[Finding] = []
 
         for category, severity, compiled_list in self._patterns:

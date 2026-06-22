@@ -49,8 +49,6 @@ class ConfigError(HarnessError):
 class AdapterDiscoveryError(HarnessError):
     """Adapter name cannot be resolved to a registered entry point."""
 
-class AdapterInitError(HarnessError):
-    """Adapter constructor failed (bad credentials, unreachable backend)."""
 
 class AgentNotRegisteredError(HarnessError):
     """agent_id not in AgentRegistry. check_tool_call maps this to a deny decision."""

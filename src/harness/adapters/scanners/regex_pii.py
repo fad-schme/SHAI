@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 
 from harness.adapters.scanners.base import ScanResult
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 
@@ -82,7 +82,7 @@ class RegexPIIScanner:
         else:
             self._patterns = list(_PATTERNS)
 
-    async def scan(self, text: str, ctx: RuntimeContext) -> ScanResult:
+    async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
         findings: list[Finding] = []
         redacted = text
 

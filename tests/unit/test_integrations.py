@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.harness import Harness
 from harness.core.types import Transport
 from harness.core.verdicts import GateDecision
@@ -46,8 +46,7 @@ async def test_gated_dispatch_allow(tmp_path: Path):
     from harness.integrations.anthropic_sdk import gated_dispatch
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     dispatched = []
 
@@ -57,7 +56,6 @@ async def test_gated_dispatch_allow(tmp_path: Path):
 
     result = await gated_dispatch("search_docs", {"query": "test"}, ctx,
                                    harness=h, dispatch=dispatch)
-    await h.unload_sources(ctx)
 
     assert result == "result"
     assert dispatched == [("search_docs", {"query": "test"})]
@@ -68,8 +66,7 @@ async def test_gated_dispatch_deny(tmp_path: Path):
     from harness.integrations.anthropic_sdk import gated_dispatch
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     dispatched = []
 
@@ -79,7 +76,6 @@ async def test_gated_dispatch_deny(tmp_path: Path):
 
     result = await gated_dispatch("send_email", {"to": "x@y.com"}, ctx,
                                    harness=h, dispatch=dispatch)
-    await h.unload_sources(ctx)
 
     assert isinstance(result, GateDecision)
     assert not result.allowed
@@ -102,7 +98,7 @@ async def test_run_turn_allow(tmp_path: Path):
     from harness.integrations.anthropic_sdk import run_turn
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     async def llm_fn(text, tools, ctx):
         return f"Response to: {text}"
@@ -132,7 +128,7 @@ async def test_run_turn_input_blocked(tmp_path: Path):
         Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),
     ])
 
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     async def llm_fn(text, tools, ctx):
         return "should not reach"
@@ -148,8 +144,7 @@ async def test_harness_tool_node_allow(tmp_path: Path):
     from harness.integrations.langgraph import HarnessToolNode
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     calls: list[str] = []
 
@@ -173,7 +168,6 @@ async def test_harness_tool_node_allow(tmp_path: Path):
         node = m.HarnessToolNode(tools=[_Tool()], harness=h, ctx=ctx)
         result = await node({"messages": [_AIMsg()]})
 
-    await h.unload_sources(ctx)
     assert calls == ["search_docs"]
 
 
@@ -182,8 +176,7 @@ async def test_harness_tool_node_deny(tmp_path: Path):
     from harness.integrations.langgraph import HarnessToolNode
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     calls: list[str] = []
 
@@ -208,7 +201,6 @@ async def test_harness_tool_node_deny(tmp_path: Path):
         node = m.HarnessToolNode(tools=[_EmailTool()], harness=h, ctx=ctx)
         await node({"messages": [_AIMsg()]})
 
-    await h.unload_sources(ctx)
     assert not calls, "send_email should not have been dispatched"
     assert tool_msgs and tool_msgs[0].get("status") == "error"
 
@@ -219,15 +211,13 @@ async def test_harness_tool_decorator_allow(tmp_path: Path):
     from harness.integrations.pydantic_ai import harness_tool
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     @harness_tool(harness=h, ctx=ctx)
     async def search_docs(query: str) -> str:
         return f"results for {query}"
 
     result = await search_docs(query="test")
-    await h.unload_sources(ctx)
     assert result == "results for test"
 
 
@@ -235,15 +225,13 @@ async def test_harness_tool_decorator_deny(tmp_path: Path):
     from harness.integrations.pydantic_ai import harness_tool
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     @harness_tool(harness=h, ctx=ctx)
     async def send_email(to: str, subject: str, body: str) -> str:
         return "sent"
 
     result = await send_email(to="x@y.com", subject="hi", body="hello")
-    await h.unload_sources(ctx)
     assert "denied" in result.lower()
 
 
@@ -253,8 +241,7 @@ async def test_make_before_tool_hook_allow(tmp_path: Path):
     from harness.integrations.openai_agents import make_before_tool_hook
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     hook = make_before_tool_hook(harness=h, ctx=ctx)
 
@@ -262,7 +249,6 @@ async def test_make_before_tool_hook_allow(tmp_path: Path):
         name = "search_docs"
 
     result = await hook(_Tool(), {"query": "test"})
-    await h.unload_sources(ctx)
     # None means proceed — search_docs is allowed
     assert result is None
 
@@ -271,8 +257,7 @@ async def test_make_before_tool_hook_deny(tmp_path: Path):
     from harness.integrations.openai_agents import make_before_tool_hook
 
     h   = await _build_harness(tmp_path)
-    ctx = RuntimeContext(agent_id="orchestrator_agent")
-    await h.load_sources(ctx)
+    ctx = AgentContext(agent_id="orchestrator_agent")
 
     hook = make_before_tool_hook(harness=h, ctx=ctx)
 
@@ -280,7 +265,6 @@ async def test_make_before_tool_hook_deny(tmp_path: Path):
         name = "send_email"
 
     result = await hook(_Tool(), {"to": "x@y.com"})
-    await h.unload_sources(ctx)
     assert "denied" in str(result).lower()
 
 
@@ -291,17 +275,15 @@ async def test_gated_dispatch_subagent_cannot_send_email(tmp_path: Path):
     from harness.integrations.anthropic_sdk import gated_dispatch
 
     h          = await _build_harness(tmp_path)
-    parent_ctx = RuntimeContext(agent_id="orchestrator_agent")
+    parent_ctx = AgentContext(agent_id="orchestrator_agent")
     child_ctx  = h.scope_context_for_subagent(parent_ctx, "research_sub")
 
-    await h.load_sources(child_ctx)
 
     dispatched = []
     async def dispatch(name, args): dispatched.append(name); return "ok"
 
     result = await gated_dispatch("send_email", {"to": "x@y.com"}, child_ctx,
                                    harness=h, dispatch=dispatch)
-    await h.unload_sources(child_ctx)
 
     assert isinstance(result, GateDecision)
     assert not result.allowed

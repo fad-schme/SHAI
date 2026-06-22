@@ -1,37 +1,37 @@
-"""Tests for core/context.py."""
+"""Tests for core/context.py — AgentContext."""
 import pytest
 from pydantic import ValidationError
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 
 
 def test_basic_construction():
-    ctx = RuntimeContext(agent_id="a1")
+    ctx = AgentContext(agent_id="a1")
     assert ctx.agent_id == "a1"
     assert ctx.sub_agent_id is None
     assert ctx.allowed_tags is None
 
 
 def test_agent_key_top_level():
-    ctx = RuntimeContext(agent_id="a1")
+    ctx = AgentContext(agent_id="a1")
     assert ctx.agent_key() == ("a1", "")
 
 
 def test_agent_key_subagent():
-    ctx = RuntimeContext(agent_id="a1", sub_agent_id="s1")
+    ctx = AgentContext(agent_id="a1", sub_agent_id="s1")
     assert ctx.agent_key() == ("a1", "s1")
 
 
 def test_to_log_fields():
-    ctx = RuntimeContext(agent_id="a1", sub_agent_id="sub1")
+    ctx = AgentContext(agent_id="a1", sub_agent_id="sub1")
     fields = ctx.to_log_fields()
     assert fields["agent_id"] == "a1"
     assert fields["sub_agent_id"] == "sub1"
 
 
 def test_to_log_fields_no_tenant_or_user():
-    """RuntimeContext carries only agent identity — no tenant_id or user_id."""
-    ctx = RuntimeContext(agent_id="a1")
+    """AgentContext carries only agent identity — no tenant_id or user_id."""
+    ctx = AgentContext(agent_id="a1")
     fields = ctx.to_log_fields()
     assert "tenant_id" not in fields
     assert "user_id" not in fields
@@ -40,27 +40,48 @@ def test_to_log_fields_no_tenant_or_user():
 
 def test_empty_agent_id_rejected():
     with pytest.raises(ValidationError):
-        RuntimeContext(agent_id="")
+        AgentContext(agent_id="")
 
 
 def test_whitespace_agent_id_rejected():
     with pytest.raises(ValidationError):
-        RuntimeContext(agent_id="   ")
+        AgentContext(agent_id="   ")
 
 
 def test_frozen():
-    ctx = RuntimeContext(agent_id="a1")
+    ctx = AgentContext(agent_id="a1")
     with pytest.raises(Exception):
         ctx.agent_id = "changed"  # type: ignore
 
 
 def test_no_tenant_id_field():
-    """tenant_id is on HarnessConfig, not RuntimeContext."""
-    ctx = RuntimeContext(agent_id="a1")
+    """tenant_id is on HarnessConfig, not AgentContext."""
+    ctx = AgentContext(agent_id="a1")
     assert not hasattr(ctx, "tenant_id")
 
 
 def test_no_user_id_field():
-    """user_id is not on RuntimeContext — use audit_tags on AgentConfig."""
-    ctx = RuntimeContext(agent_id="a1")
+    """user_id is not on AgentContext — use audit_tags on AgentConfig."""
+    ctx = AgentContext(agent_id="a1")
     assert not hasattr(ctx, "user_id")
+
+
+def test_scope_subagent_returns_child():
+    ctx   = AgentContext(agent_id="orchestrator")
+    child = ctx.scope_subagent("research_sub", allowed_tags=["read", "internal"])
+    assert child.agent_id     == "orchestrator"
+    assert child.sub_agent_id == "research_sub"
+    assert child.allowed_tags == ["read", "internal"]
+
+
+def test_scope_subagent_parent_unchanged():
+    ctx   = AgentContext(agent_id="orchestrator")
+    child = ctx.scope_subagent("research_sub", allowed_tags=["read"])
+    assert ctx.sub_agent_id is None   # parent not mutated
+
+
+def test_scope_subagent_key_distinct_from_parent():
+    ctx   = AgentContext(agent_id="orchestrator")
+    child = ctx.scope_subagent("research_sub", allowed_tags=["read"])
+    assert ctx.agent_key()   == ("orchestrator", "")
+    assert child.agent_key() == ("orchestrator", "research_sub")

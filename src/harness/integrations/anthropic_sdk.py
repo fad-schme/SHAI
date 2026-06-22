@@ -9,8 +9,7 @@ Two public helpers:
       Use this inside a hand-rolled agent loop.
 
   run_turn(user_text, ctx, *, harness, llm_fn, tools)
-      Full turn wrapper: load_sources → scan_input → llm_fn loop →
-      scan_output → unload_sources.
+      Full turn wrapper: scan_input → llm_fn loop → scan_output.
       llm_fn receives (user_text, tools, ctx) and returns the LLM response
       string. It is responsible for calling gated_dispatch for each tool
       call the model requests.
@@ -28,7 +27,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
-    from harness.core.context import RuntimeContext
+    from harness.core.context import AgentContext
     from harness.core.harness import Harness
     from harness.core.verdicts import GateDecision, ScanVerdict
     from harness.tools.tool import Tool
@@ -39,7 +38,7 @@ log = logging.getLogger(__name__)
 async def gated_dispatch(
     tool_name: str,
     tool_args: dict[str, Any],
-    ctx: "RuntimeContext",
+    ctx: "AgentContext",
     *,
     harness: "Harness",
     dispatch: Callable[[str, dict[str, Any]], Awaitable[Any]],
@@ -49,7 +48,7 @@ async def gated_dispatch(
     Args:
         tool_name:  the tool name from the model's tool_use block
         tool_args:  the tool input dict from the model's tool_use block
-        ctx:        the RuntimeContext for this turn
+        ctx:        the AgentContext for this turn
         harness:    the Harness instance
         dispatch:   async callable(tool_name, args) → tool result
 
@@ -71,15 +70,15 @@ async def gated_dispatch(
 
 async def run_turn(
     user_text: str,
-    ctx: "RuntimeContext",
+    ctx: "AgentContext",
     *,
     harness: "Harness",
     llm_fn: Callable[
-        [str, list["Tool"], "RuntimeContext"],
+        [str, list["Tool"], "AgentContext"],
         Awaitable[str],
     ],
 ) -> "ScanVerdict | str":
-    """Full turn: load_sources → scan_input → llm_fn → scan_output → unload.
+    """Full turn: scan_input → llm_fn → scan_output.
 
     llm_fn(user_text, tools, ctx) → str
         The agent's LLM loop. It receives the active tool list and is
@@ -91,19 +90,16 @@ async def run_turn(
         str (the final response) if the turn completed normally.
         The response may have been redacted by scan_output.
     """
-    tools = await harness.load_sources(ctx)
 
     input_verdict = await harness.scan_input(user_text, ctx)
     if input_verdict.blocked:
-        await harness.unload_sources(ctx)
         return input_verdict
 
-    try:
-        response = await llm_fn(user_text, tools, ctx)
-        output_verdict = await harness.scan_output(response, ctx)
-        return output_verdict.redacted_text or response
-    finally:
-        await harness.unload_sources(ctx)
+    # Tools are resolved at load_agent() time — read from the harness directly
+    agent_tools = list(harness._agent_tools.get(ctx.agent_id, {}).values())
+    response = await llm_fn(user_text, agent_tools, ctx)
+    output_verdict = await harness.scan_output(response, ctx)
+    return output_verdict.redacted_text or response
 
 
 def make_tool_result_from_denial(gate: "GateDecision", tool_use_id: str) -> dict:

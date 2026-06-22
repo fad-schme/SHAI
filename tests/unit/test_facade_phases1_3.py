@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.errors import AgentNotRegisteredError, ConfigError, SubAgentNotDeclaredError
 from harness.core.harness import Harness
 
@@ -40,7 +40,10 @@ async def test_reload_agent(harness, orchestrator_yaml, tmp_path):
         "allowed_tool_names: [search_docs]\n"
         "allowed_tags: [read]\n"
     )
-    cfg = await harness.reload_agent(updated)
+    agent = await harness.reload_agent(updated)
+    # reload_agent returns AgentContext — verify via registry that config updated
+    assert agent.agent_id == "orchestrator_agent"
+    cfg = harness._agent_registry.get("orchestrator_agent")
     assert cfg.display_name == "Updated"
 
 
@@ -52,44 +55,44 @@ async def test_deregister_agent(harness, orchestrator_yaml):
 
 
 async def test_scope_context_for_subagent(harness, orchestrator_yaml):
-    await harness.load_agent(orchestrator_yaml)
-    parent_ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+    agent = await harness.load_agent(orchestrator_yaml)
+    assert agent.agent_id == "orchestrator_agent"   # load_agent returns AgentContext
 
-    child_ctx = harness.scope_context_for_subagent(parent_ctx, sub_agent_id="research_sub")
+    child = harness.scope_context_for_subagent(agent, sub_agent_id="research_sub")
+    assert child.agent_id     == "orchestrator_agent"
+    assert child.sub_agent_id == "research_sub"
+    assert set(child.allowed_tags) == {"read", "internal"}
 
-    assert child_ctx.agent_id == "orchestrator_agent"   # parent identity preserved
-    assert child_ctx.sub_agent_id == "research_sub"
-    assert set(child_ctx.allowed_tags) == {"read", "internal"}
-    # tenant_id is on HarnessConfig, not RuntimeContext
+    # Also works via agent.scope_subagent() directly
+    child2 = agent.scope_subagent(
+        "research_sub",
+        allowed_tags=list(child.allowed_tags),
+    )
+    assert child2.sub_agent_id == "research_sub"
 
 
 async def test_scope_context_unknown_subagent(harness, orchestrator_yaml):
-    await harness.load_agent(orchestrator_yaml)
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+    agent = await harness.load_agent(orchestrator_yaml)
     with pytest.raises(SubAgentNotDeclaredError):
-        harness.scope_context_for_subagent(ctx, sub_agent_id="nonexistent_sub")
+        harness.scope_context_for_subagent(agent, sub_agent_id="nonexistent_sub")
 
 
 async def test_scope_context_unregistered_agent(harness):
-    ctx = RuntimeContext(
+    ctx = AgentContext(
         agent_id="nobody")
     with pytest.raises(AgentNotRegisteredError):
         harness.scope_context_for_subagent(ctx, sub_agent_id="sub")
 
 
 async def test_scope_context_child_tags_are_subset(harness, orchestrator_yaml):
-    await harness.load_agent(orchestrator_yaml)
-    ctx = RuntimeContext(
-        agent_id="orchestrator_agent")
+    agent = await harness.load_agent(orchestrator_yaml)
 
     # research_sub has read + internal (subset of parent's read + internal + external_write)
-    child = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
+    child = harness.scope_context_for_subagent(agent, sub_agent_id="research_sub")
     assert "external_write" not in child.allowed_tags
 
     # email_sub has all three
-    child2 = harness.scope_context_for_subagent(ctx, sub_agent_id="email_sub")
+    child2 = harness.scope_context_for_subagent(agent, sub_agent_id="email_sub")
     assert "external_write" in child2.allowed_tags
 
 
@@ -97,17 +100,16 @@ async def test_boundaries_are_wired_in_phase5(harness):
     # Phase 5 wired all boundary methods — they no longer raise
     # NotImplementedError. scan_input/scan_output are callable on any ctx
     # (disabled in fixture config → always return allow).
-    # load_sources raises AgentNotRegisteredError on unknown agent.
+    # check_tool_call raises AgentNotRegisteredError on unknown agent.
     from harness.core.errors import AgentNotRegisteredError
-    ctx = RuntimeContext(
+    ctx = AgentContext(
         agent_id="a1")
     # scan_input disabled in fixture → allow verdict, no error
     verdict = await harness.scan_input("hello", ctx)
     assert not verdict.blocked
-    # load_sources requires a registered agent
+    # check_tool_call requires a registered agent
     with pytest.raises(AgentNotRegisteredError):
-        await harness.load_sources(ctx)
-
+        await harness.check_tool_call("search_docs", {}, ctx)
 
 async def test_from_yaml_missing_file():
     with pytest.raises(ConfigError):

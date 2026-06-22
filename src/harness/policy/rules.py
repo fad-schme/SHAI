@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.errors import ConfigError, PolicyEvaluationError
 from harness.policy.engine import PolicyDecision, SourceDecision
 from harness.tools.tool import Tool
@@ -55,7 +55,7 @@ class RuleBasedPolicy:
         self,
         tool: Tool,
         args: dict[str, Any],
-        ctx: RuntimeContext,
+        ctx: AgentContext,
         *,
         rules: list[RuleConfig] | None = None,
     ) -> PolicyDecision:
@@ -87,7 +87,7 @@ class RuleBasedPolicy:
     async def evaluate_source(
         self,
         source: Any,  # ToolSource — avoid circular import
-        ctx: RuntimeContext,
+        ctx: AgentContext,
     ) -> SourceDecision:
         """Check source-activation rules. Default: active=True."""
         try:
@@ -121,7 +121,7 @@ class RuleBasedPolicy:
         self,
         rules: list[RuleConfig],
         tool: Tool,
-        ctx: RuntimeContext,
+        ctx: AgentContext,
     ) -> PolicyDecision | None:
         """Return first matching PolicyDecision, or None if no rule matches."""
         for rule in rules:
@@ -154,7 +154,7 @@ class RuleBasedPolicy:
         return None
 
     def _match_tool(
-        self, match: RuleMatchConfig, tool: Tool, ctx: RuntimeContext
+        self, match: RuleMatchConfig, tool: Tool, ctx: AgentContext
     ) -> bool:
         """Return True if all declared match conditions are satisfied."""
         if match.tool_names and tool.name not in match.tool_names:
@@ -183,7 +183,7 @@ class RuleBasedPolicy:
         return True
 
     def _match_source(
-        self, match: RuleMatchConfig, source: Any, ctx: RuntimeContext
+        self, match: RuleMatchConfig, source: Any, ctx: AgentContext
     ) -> bool:
         if match.source_tags and not set(match.source_tags) & set(source.tags):
             return False

@@ -6,15 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from harness.adapters.tool_sources.base import ToolSource
+from harness.tools.source import ToolSource
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.types import Transport
 from harness.policy.engine import PolicyDecision, SourceDecision
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import Tool
 
-_CTX = RuntimeContext(tenant_id="t1", agent_id="a1")
+_CTX = AgentContext(
+        agent_id="a1")
 
 
 def make_tool(name: str = "search_docs", tags: list[str] | None = None) -> Tool:

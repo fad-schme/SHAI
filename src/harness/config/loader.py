@@ -1,15 +1,37 @@
 """Load and validate harness.yaml into a HarnessConfig."""
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import ValidationError
 
-from harness.config.resolution import resolve_all
 from harness.config.schema import HarnessConfig
 from harness.core.errors import ConfigError
+
+_ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _resolve(data: Any) -> Any:
+    """Recursively interpolate ${ENV_VAR} in string values."""
+    if isinstance(data, dict):
+        return {k: _resolve(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_resolve(item) for item in data]
+    if isinstance(data, str):
+        def _replace(m: re.Match) -> str:
+            val = os.environ.get(m.group(1))
+            if val is None:
+                raise ConfigError(
+                    f"environment variable ${{{m.group(1)}}} is not set",
+                    op="load_yaml",
+                )
+            return val
+        return _ENV_RE.sub(_replace, data)
+    return data
 
 
 def load_yaml(path: str | Path) -> HarnessConfig:
@@ -31,10 +53,7 @@ def load_yaml(path: str | Path) -> HarnessConfig:
             op="load_yaml",
         )
 
-    # Resolve ${ENV_VAR} substitutions. Secret refs resolved later in
-    # Harness.from_yaml() after the SecretsProvider is instantiated.
-    resolved = resolve_all(data, secrets=None)
-    return _validate(resolved, source=str(path))
+    return _validate(_resolve(data), source=str(path))
 
 
 def load_dict(data: dict[str, Any]) -> HarnessConfig:
@@ -48,8 +67,7 @@ def _validate(data: dict[str, Any], *, source: str) -> HarnessConfig:
     except ValidationError as e:
         first = e.errors()[0]
         loc = " → ".join(str(x) for x in first["loc"])
-        msg = first["msg"]
         raise ConfigError(
-            f"config validation failed [{source}]: {loc}: {msg}",
+            f"config validation failed [{source}]: {loc}: {first['msg']}",
             op="load_yaml",
         ) from e

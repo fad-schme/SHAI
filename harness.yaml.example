@@ -17,6 +17,14 @@ scan_output:
   scanners:
     - name: regex_pii
 
+scan_file:
+  enabled: true
+  block_at: high
+  max_size_mb: 50
+  allowed_extensions: [".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv"]
+  scanners:
+    - name: file_scanner    # structural + content pass (always included)
+
 check_tool_call:
   arg_scanners:
     - name: regex_pii

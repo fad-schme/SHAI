@@ -41,11 +41,11 @@ stdout = "harness.adapters.audit_sinks.stdout:StdoutSink"
 file   = "harness.adapters.audit_sinks.file:FileSink"
 
 [project.entry-points."harness.tool_registry"]
-memory = "harness.adapters.tool_registry.memory:InMemoryRegistry"
+memory = "harness.tools.registry:InMemoryRegistry"
 
 [project.entry-points."harness.tool_sources"]
-local = "harness.adapters.tool_sources.local:LocalSource"
-skill = "harness.adapters.tool_sources.skill:SkillSource"
+local = "harness.tools.source:LocalSource"
+skill = "harness.tools.source:SkillSource"
 
 [project.entry-points."harness.secrets"]
 env = "harness.adapters.secrets.env:EnvSecrets"

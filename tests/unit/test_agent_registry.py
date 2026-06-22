@@ -70,15 +70,19 @@ async def test_reload_invalid_keeps_old(registry, orchestrator_yaml, tmp_path):
 
 
 async def test_deregister(registry, orchestrator_yaml):
-    await registry.load(orchestrator_yaml)
-    await registry.deregister("orchestrator_agent")
+    cfg = await registry.load(orchestrator_yaml)
+    removed = await registry.deregister(cfg)
+    assert removed is True
     with pytest.raises(AgentNotRegisteredError):
         registry.get("orchestrator_agent")
 
 
-async def test_deregister_unknown_raises(registry):
-    with pytest.raises(AgentNotRegisteredError):
-        await registry.deregister("nobody")
+async def test_deregister_unknown_returns_false(registry, orchestrator_yaml):
+    """deregister returns False when item not registered — does not raise."""
+    cfg    = await registry.load(orchestrator_yaml)
+    await registry.deregister(cfg)          # remove it
+    result = await registry.deregister(cfg) # try again — already gone
+    assert result is False
 
 
 async def test_list_all(registry, orchestrator_yaml, research_yaml):

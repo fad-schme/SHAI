@@ -6,6 +6,7 @@ class BoundaryName(StrEnum):
     INPUT_SCAN     = "input_scan"
     TOOL_CALL_GATE = "tool_call_gate"
     OUTPUT_SCAN    = "output_scan"
+    FILE_SCAN      = "file_scan"
 
 
 class Decision(StrEnum):

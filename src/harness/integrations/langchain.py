@@ -22,13 +22,13 @@ import logging
 from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
-    from harness.core.context import RuntimeContext
+    from harness.core.context import AgentContext
     from harness.core.harness import Harness
 
 log = logging.getLogger(__name__)
 
 
-def wrap_tool(tool: Any, *, harness: "Harness", ctx: "RuntimeContext") -> Any:
+def wrap_tool(tool: Any, *, harness: "Harness", ctx: "AgentContext") -> Any:
     """Return a gated version of a LangChain tool.
 
     The returned tool has the same name, description, and schema as the
@@ -81,7 +81,7 @@ def wrap_tools(
     tools: Sequence[Any],
     *,
     harness: "Harness",
-    ctx: "RuntimeContext",
+    ctx: "AgentContext",
 ) -> list[Any]:
     """Wrap a list of LangChain tools. Convenience wrapper around wrap_tool."""
     return [wrap_tool(t, harness=harness, ctx=ctx) for t in tools]
