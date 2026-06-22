@@ -67,7 +67,7 @@ class AgentsConfig(BaseModel, frozen=True, extra="forbid"):
 
 class LoggingConfig(BaseModel, frozen=True, extra="forbid"):
     level: str = "INFO"
-    json:  bool = True
+    json_format: bool = True
 
     @field_validator("level")
     @classmethod

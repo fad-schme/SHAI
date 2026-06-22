@@ -14,18 +14,18 @@ from harness.core.types import Transport
 class Tool(BaseModel, frozen=True):
     """Describes one tool the agent may dispatch.
 
-    schema is opaque to the harness — pydantic model class, JSON schema dict,
-    or anything the registered toolkit uses. The harness stores and surfaces
-    it to PolicyEngine; it does not interpret or validate it.
+    input_schema is opaque to the harness — pydantic model class, JSON schema
+    dict, or anything the registered toolkit uses. The harness stores and
+    surfaces it to PolicyEngine; it does not interpret or validate it.
 
     transport is immutable after registration — raising ConfigError on any
     attempt to re-register the same name with a different transport.
     """
-    name:        str
-    schema:      Any = Field(default=None)
-    tags:        list[str] = Field(default_factory=list)
-    transport:   Transport = Transport.LOCAL
-    description: str | None = None
+    name:         str
+    input_schema: Any = Field(default=None)
+    tags:         list[str] = Field(default_factory=list)
+    transport:    Transport = Transport.LOCAL
+    description:  str | None = None
 
     @field_validator("name")
     @classmethod
@@ -34,7 +34,7 @@ class Tool(BaseModel, frozen=True):
             raise ValueError("tool name must be non-empty")
         return v
 
-    def __hash__(self) -> int:  # required for use in sets / dict keys
+    def __hash__(self) -> int:
         return hash((self.name, self.transport, tuple(sorted(self.tags))))
 
     def __eq__(self, other: object) -> bool:

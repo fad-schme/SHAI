@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.adapters.scanners.base import ToolSource
+from harness.adapters.tool_sources.base import ToolSource
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
 from harness.core.context import RuntimeContext
 from harness.core.types import Transport

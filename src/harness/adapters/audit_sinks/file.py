@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
 
 from harness.adapters.audit_sinks.stdout import _serialize
 from harness.core.events import AuditEvent
@@ -52,9 +50,12 @@ class FileSink:
         handler = self._ensure_handler()
         handler.stream.write(line)
         handler.stream.flush()
-        # Check rotation
-        if handler.shouldRollover(None):  # type: ignore[arg-type]
-            handler.doRollover()
+        # Check rotation by file size — avoids shouldRollover() which
+        # requires a LogRecord argument and raises AttributeError on None.
+        if handler.maxBytes > 0:
+            handler.stream.seek(0, 2)           # seek to end
+            if handler.stream.tell() >= handler.maxBytes:
+                handler.doRollover()
 
     async def emit(self, event: AuditEvent) -> None:
         line = _serialize(event) + "\n"

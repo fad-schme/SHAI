@@ -90,11 +90,18 @@ async def test_scope_context_child_tags_are_subset(harness, orchestrator_yaml):
     assert "external_write" in child2.allowed_tags
 
 
-async def test_boundary_raises_not_implemented(harness):
+async def test_boundaries_are_wired_in_phase5(harness):
+    # Phase 5 wired all boundary methods — they no longer raise
+    # NotImplementedError. scan_input/scan_output are callable on any ctx
+    # (disabled in fixture config → always return allow).
+    # load_sources raises AgentNotRegisteredError on unknown agent.
+    from harness.core.errors import AgentNotRegisteredError
     ctx = RuntimeContext(tenant_id="t1", agent_id="a1")
-    with pytest.raises(NotImplementedError):
-        await harness.scan_input("hello", ctx)
-    with pytest.raises(NotImplementedError):
+    # scan_input disabled in fixture → allow verdict, no error
+    verdict = await harness.scan_input("hello", ctx)
+    assert not verdict.blocked
+    # load_sources requires a registered agent
+    with pytest.raises(AgentNotRegisteredError):
         await harness.load_sources(ctx)
 
 

@@ -1,3 +1,5 @@
+# tests/fixtures/harness.yaml — test-only config.
+# Boundaries disabled; no policy rules file needed.
 version: 1
 
 scan_input:
@@ -8,8 +10,6 @@ scan_output:
 
 policy:
   name: rules
-  config:
-    rules_path: ./tests/fixtures/policy.yaml
 
 audit_sinks:
   - name: stdout
@@ -35,4 +35,4 @@ agents:
 
 logging:
   level: DEBUG
-  json: true
+  json_format: true

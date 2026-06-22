@@ -1,5 +1,6 @@
-# harness.yaml.example — canonical reference configuration.
-# Uses only reference adapters (pip install harness).
+# config/harness.yaml
+# Managed by the operator. Edit this file to configure SHAI for your deployment.
+# Reference: harness.yaml.example at the repo root for all available options.
 
 version: 1
 
@@ -25,7 +26,7 @@ check_tool_call:
 policy:
   name: rules
   config:
-    rules_path: ./policies/rules.yaml
+    rules_path: ./config/policies/rules.yaml
 
 audit_sinks:
   - name: stdout
@@ -47,18 +48,8 @@ tool_sources:
       - read
       - internal
 
-  - name: slack_mcp
-    transport: mcp
-    url: "https://mcp.slack.com/sse"
-    credentials:
-      token: "secret://SLACK_MCP_TOKEN"
-    tags:
-      - external_mcp
-      - messaging
-      - external_write
-
 agents:
-  directory: ./agents
+  directory: ./config/agents
 
 logging:
   level: INFO
