@@ -1,7 +1,7 @@
 """Harness facade — the only public entry point of the SDK.
 
 Phase 5: all boundary methods fully wired.
-_views: dict keyed on (agent_id, sub_agent_id or "").
+_views: dict[int, InMemoryRegistryView] keyed on id(ctx).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class Harness:
 
     One instance serves N concurrent agents. Isolation is structural:
     each agent/subagent pair gets its own ScopedRegistryView keyed on
-    (agent_id, sub_agent_id or "") stored in _views dict.
+    id(ctx) stored in _views for per-turn isolation.
     """
 
     def __init__(
@@ -56,6 +56,7 @@ class Harness:
         scan_args_for_tags: frozenset[str],
     ) -> None:
         self._config              = config
+        self._tenant_id           = config.tenant_id
         self._agent_registry      = agent_registry
         self._tool_registry       = tool_registry
         self._source_registry     = source_registry
@@ -69,10 +70,12 @@ class Harness:
         self._block_at            = block_at
         self._scan_args_for_tags  = scan_args_for_tags
         # Per-turn scoped views — keyed on ctx.agent_key()
-        # Regular dict — views live until explicit unload_sources() call.
-        # WeakValueDictionary was wrong here: views would be GC-collected
-        # immediately because no other strong reference holds them.
-        self._views: dict[tuple[str, str], InMemoryRegistryView] = {}
+        # Per-turn view store. Key = id(ctx) — the Python object identity of the
+        # RuntimeContext passed to load_sources(). This gives each turn its own
+        # view even when multiple concurrent turns run under the same agent_id.
+        # The agent holds ctx for the turn's duration, so id(ctx) is stable.
+        # unload_sources(ctx) is the explicit cleanup signal.
+        self._views: dict[int, InMemoryRegistryView] = {}
 
     # ── Construction ──────────────────────────────────────────────────────
 
@@ -156,12 +159,9 @@ class Harness:
         agent_config = self._agent_registry.get(ctx.agent_id)
         sub_config   = agent_config.get_sub_agent(sub_agent_id)
         return RuntimeContext(
-            tenant_id=ctx.tenant_id,
             agent_id=ctx.agent_id,
             sub_agent_id=sub_agent_id,
             allowed_tags=sub_config.allowed_tags,
-            user_id=ctx.user_id,
-            session_id=ctx.session_id,
         )
 
     # ── Per-turn boundaries ───────────────────────────────────────────────
@@ -181,7 +181,7 @@ class Harness:
             source_names = agent_config.sources
 
         view = self._tool_registry.scoped_view(ctx)
-        self._views[ctx.agent_key()] = view
+        self._views[id(ctx)] = view
 
         tools = await self._source_registry.activate(ctx, source_names, view)
         log.debug(
@@ -196,7 +196,7 @@ class Harness:
 
     async def unload_sources(self, ctx: RuntimeContext) -> None:
         """Discard this turn's ScopedRegistryView. Call at turn end."""
-        self._views.pop(ctx.agent_key(), None)
+        self._views.pop(id(ctx), None)
         log.debug("sources unloaded", extra={**ctx.to_log_fields()})
 
     async def scan_input(self, text: str, ctx: RuntimeContext) -> ScanVerdict:
@@ -205,6 +205,7 @@ class Harness:
             text, ctx,
             scanners=self._input_scanners,
             emitter=self._emitter,
+            tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
             audit_tags=audit_tags,
@@ -213,8 +214,7 @@ class Harness:
     async def check_tool_call(
         self, name: str, args: dict[str, Any], ctx: RuntimeContext
     ) -> GateDecision:
-        key = ctx.agent_key()
-        view = self._views.get(key)
+        view = self._views.get(id(ctx))
         if view is None:
             # Fall back to base registry if load_sources was not called
             view = self._tool_registry.scoped_view(ctx)
@@ -227,6 +227,7 @@ class Harness:
             policy=self._policy,
             arg_scanners=self._arg_scanners,
             emitter=self._emitter,
+            tenant_id=self._tenant_id,
             scan_args_for_tags=self._scan_args_for_tags,
         )
 
@@ -236,6 +237,7 @@ class Harness:
             text, ctx,
             scanners=self._output_scanners,
             emitter=self._emitter,
+            tenant_id=self._tenant_id,
             enabled=self._scan_output_enabled,
             block_at=self._block_at,
             audit_tags=audit_tags,

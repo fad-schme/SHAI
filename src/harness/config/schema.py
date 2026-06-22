@@ -79,6 +79,7 @@ class LoggingConfig(BaseModel, frozen=True, extra="forbid"):
 
 class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     version:         int = 1
+    tenant_id:       str = "default"
     scan_input:      BoundaryConfig
     check_tool_call: ToolCallGateConfig = Field(default_factory=ToolCallGateConfig)
     scan_output:     BoundaryConfig

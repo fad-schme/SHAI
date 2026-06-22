@@ -2,6 +2,7 @@
 # Uses only reference adapters (pip install harness).
 
 version: 1
+tenant_id: "my-deployment"  # unique name for this harness instance
 
 scan_input:
   enabled: true

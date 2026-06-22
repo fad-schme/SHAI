@@ -60,12 +60,12 @@ class FileSink:
     async def emit(self, event: AuditEvent) -> None:
         line = _serialize(event) + "\n"
         async with self._lock:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._write, line)
 
     async def close(self) -> None:
         async with self._lock:
             if self._handler is not None:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._handler.close)
                 self._handler = None

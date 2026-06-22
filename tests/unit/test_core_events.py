@@ -8,7 +8,7 @@ from harness.core.types import BoundaryName, Decision, Severity
 
 
 def _ctx(**kw) -> RuntimeContext:
-    return RuntimeContext(tenant_id="t1", agent_id="a1", **kw)
+    return RuntimeContext(agent_id="a1", **kw)
 
 
 def _build(**kw) -> AuditEvent:
@@ -16,6 +16,7 @@ def _build(**kw) -> AuditEvent:
         boundary=BoundaryName.INPUT_SCAN,
         decision=Decision.ALLOW,
         ctx=_ctx(),
+        tenant_id="tenant_test",
         duration_ms=5,
     )
     defaults.update(kw)
@@ -25,7 +26,7 @@ def _build(**kw) -> AuditEvent:
 def test_build_allow_defaults():
     e = _build()
     assert e.decision == Decision.ALLOW
-    assert e.tenant_id == "t1"
+    assert e.tenant_id == "tenant_test"
     assert e.agent_id == "a1"
     assert e.finding_count == 0
     assert e.disabled is False
@@ -69,6 +70,7 @@ def test_sub_agent_id_carried():
         boundary=BoundaryName.INPUT_SCAN,
         decision=Decision.ALLOW,
         ctx=ctx,
+        tenant_id="t1",
         duration_ms=1,
     )
     assert e.sub_agent_id == "research_sub"
@@ -79,16 +81,14 @@ def test_audit_tags_carried():
     assert e.audit_tags == {"team": "platform"}
 
 
-def test_user_id_session_id_are_audit_only():
-    ctx = _ctx(user_id="u99", session_id="s99")
-    e = AuditEvent.build(
-        boundary=BoundaryName.INPUT_SCAN,
-        decision=Decision.ALLOW,
-        ctx=ctx,
-        duration_ms=1,
-    )
-    assert e.user_id == "u99"
-    assert e.session_id == "s99"
-    # They are on the event for audit trail — verify they're present and correct
-    assert e.tenant_id == "t1"
-    assert e.agent_id == "a1"
+def test_tenant_id_from_harness_config():
+    """tenant_id comes from harness.yaml (HarnessConfig), not from the caller."""
+    e = _build(tenant_id="prod-platform")
+    assert e.tenant_id == "prod-platform"
+
+
+def test_no_user_id_on_event():
+    """user_id is not on AuditEvent — operators use audit_tags for correlation."""
+    e = _build()
+    assert not hasattr(e, "user_id")
+    assert not hasattr(e, "session_id")

@@ -1,6 +1,9 @@
 """AuditEvent — the structured event every boundary emits exactly once per call.
 
 No raw user input, LLM output, tool args, or scanner matches in any field.
+
+tenant_id is stamped by the Harness instance from harness.yaml — not supplied
+by the agent. user_id is not on AuditEvent; operators use audit_tags for that.
 """
 from __future__ import annotations
 
@@ -22,12 +25,10 @@ class AuditEvent(BaseModel, frozen=True):
     disabled:    bool = False
     duration_ms: int
 
-    # Identity (from RuntimeContext)
+    # Identity — tenant_id from HarnessConfig, agent fields from RuntimeContext
     tenant_id:    str
     agent_id:     str
     sub_agent_id: str | None = None
-    user_id:      str | None = None   # audit-trail only
-    session_id:   str | None = None   # audit-trail only
 
     # Tool call gate fields
     tool_name:  str | None = None
@@ -64,6 +65,7 @@ class AuditEvent(BaseModel, frozen=True):
         boundary: BoundaryName,
         decision: Decision,
         ctx: RuntimeContext,
+        tenant_id: str,
         duration_ms: int,
         adapters: list[str] | None = None,
         finding_count: int = 0,
@@ -75,18 +77,20 @@ class AuditEvent(BaseModel, frozen=True):
         audit_tags: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> "AuditEvent":
-        """Canonical builder — boundaries always use this, never construct directly."""
+        """Canonical builder. Boundaries always use this, never construct directly.
+
+        tenant_id is passed explicitly from the Harness instance — not read
+        from ctx (which no longer carries it).
+        """
         return cls(
             timestamp=datetime.now(timezone.utc),
             boundary=boundary,
             decision=decision,
             disabled=disabled,
             duration_ms=duration_ms,
-            tenant_id=ctx.tenant_id,
+            tenant_id=tenant_id,
             agent_id=ctx.agent_id,
             sub_agent_id=ctx.sub_agent_id,
-            user_id=ctx.user_id,
-            session_id=ctx.session_id,
             tool_name=tool_name,
             transport=transport,
             adapters=adapters or [],

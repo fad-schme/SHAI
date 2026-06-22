@@ -12,13 +12,13 @@ from harness.core.types import BoundaryName, Decision
 
 @pytest.fixture
 def ctx() -> RuntimeContext:
-    return RuntimeContext(tenant_id="t1", agent_id="test_agent")
+    return RuntimeContext(
+        agent_id="test_agent")
 
 
 @pytest.fixture
 def sub_ctx() -> RuntimeContext:
     return RuntimeContext(
-        tenant_id="t1",
         agent_id="test_agent",
         sub_agent_id="test_sub",
         allowed_tags=["read"],
@@ -29,7 +29,8 @@ def make_event(**kwargs) -> AuditEvent:
     defaults = dict(
         boundary=BoundaryName.INPUT_SCAN,
         decision=Decision.ALLOW,
-        ctx=RuntimeContext(tenant_id="t1", agent_id="a1"),
+        ctx=RuntimeContext(agent_id="a1"),
+        tenant_id="test",
         duration_ms=1,
     )
     defaults.update(kwargs)

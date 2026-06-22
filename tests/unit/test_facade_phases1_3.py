@@ -53,33 +53,36 @@ async def test_deregister_agent(harness, orchestrator_yaml):
 
 async def test_scope_context_for_subagent(harness, orchestrator_yaml):
     await harness.load_agent(orchestrator_yaml)
-    parent_ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent", user_id="u1")
+    parent_ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
 
     child_ctx = harness.scope_context_for_subagent(parent_ctx, sub_agent_id="research_sub")
 
     assert child_ctx.agent_id == "orchestrator_agent"   # parent identity preserved
     assert child_ctx.sub_agent_id == "research_sub"
     assert set(child_ctx.allowed_tags) == {"read", "internal"}
-    assert child_ctx.user_id == "u1"                    # audit field inherited
-    assert child_ctx.tenant_id == "t1"
+    # tenant_id is on HarnessConfig, not RuntimeContext
 
 
 async def test_scope_context_unknown_subagent(harness, orchestrator_yaml):
     await harness.load_agent(orchestrator_yaml)
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     with pytest.raises(SubAgentNotDeclaredError):
         harness.scope_context_for_subagent(ctx, sub_agent_id="nonexistent_sub")
 
 
 async def test_scope_context_unregistered_agent(harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="nobody")
+    ctx = RuntimeContext(
+        agent_id="nobody")
     with pytest.raises(AgentNotRegisteredError):
         harness.scope_context_for_subagent(ctx, sub_agent_id="sub")
 
 
 async def test_scope_context_child_tags_are_subset(harness, orchestrator_yaml):
     await harness.load_agent(orchestrator_yaml)
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
 
     # research_sub has read + internal (subset of parent's read + internal + external_write)
     child = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
@@ -96,7 +99,8 @@ async def test_boundaries_are_wired_in_phase5(harness):
     # (disabled in fixture config → always return allow).
     # load_sources raises AgentNotRegisteredError on unknown agent.
     from harness.core.errors import AgentNotRegisteredError
-    ctx = RuntimeContext(tenant_id="t1", agent_id="a1")
+    ctx = RuntimeContext(
+        agent_id="a1")
     # scan_input disabled in fixture → allow verdict, no error
     verdict = await harness.scan_input("hello", ctx)
     assert not verdict.blocked

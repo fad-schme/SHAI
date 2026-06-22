@@ -28,7 +28,6 @@ from harness.core.verdicts import GateDecision
 if TYPE_CHECKING:
     from harness.adapters.scanners.base import Scanner
     from harness.adapters.tool_registry.memory import InMemoryRegistryView
-    from harness.agents.agent_config import AgentConfig, SubAgentConfig
     from harness.agents.registry import AgentRegistry
     from harness.audit.emitter import AuditEmitter
     from harness.core.context import RuntimeContext
@@ -48,9 +47,9 @@ async def run(
     policy: "PolicyEngine",
     arg_scanners: list["Scanner"],
     emitter: "AuditEmitter",
+    tenant_id: str,
     scan_args_for_tags: frozenset[str] = frozenset({"sensitive"}),
 ) -> GateDecision:
-    """Gate one tool call. Returns GateDecision. Never raises (emits deny on error)."""
     start = now_ms()
 
     # ── Layer 1a: agent/subagent registered ──────────────────────────────
@@ -59,17 +58,16 @@ async def run(
     except AgentNotRegisteredError:
         return await _deny(
             f"agent '{ctx.agent_id}' not registered",
-            name, None, ctx, emitter, start,
+            name, None, ctx, emitter, start, tenant_id,
         )
 
-    # Resolve effective profile (parent or subagent)
     if ctx.sub_agent_id is not None:
         try:
             effective = agent_config.get_sub_agent(ctx.sub_agent_id)
         except SubAgentNotDeclaredError:
             return await _deny(
                 f"sub_agent '{ctx.sub_agent_id}' not declared under '{ctx.agent_id}'",
-                name, None, ctx, emitter, start,
+                name, None, ctx, emitter, start, tenant_id,
             )
     else:
         effective = agent_config
@@ -78,7 +76,7 @@ async def run(
     if name not in effective.allowed_tool_names:
         return await _deny(
             f"tool '{name}' not in agent allowed_tool_names",
-            name, None, ctx, emitter, start,
+            name, None, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
 
@@ -88,7 +86,7 @@ async def run(
     except ToolNotRegisteredError:
         return await _deny(
             f"tool '{name}' not found in registry",
-            name, None, ctx, emitter, start,
+            name, None, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
 
@@ -99,12 +97,11 @@ async def run(
             return await _deny(
                 f"tool '{name}' requires tags {sorted(extra_tags)} "
                 f"not in agent capability set",
-                name, tool, ctx, emitter, start,
+                name, tool, ctx, emitter, start, tenant_id,
                 audit_tags=agent_config.audit_tags,
             )
 
     # ── Layer 2: intersection policy ─────────────────────────────────────
-    # Combine subagent rules + parent rules; global rules evaluated inside engine
     combined_rules = list(effective.policy_rules)
     if ctx.sub_agent_id is not None:
         combined_rules = list(effective.policy_rules) + list(agent_config.policy_rules)
@@ -120,18 +117,17 @@ async def run(
         )
         return await _deny(
             f"policy evaluation failed: {e}",
-            name, tool, ctx, emitter, start,
+            name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
 
     if policy_decision.action == "deny":
         return await _deny(
             policy_decision.reason or f"denied by rule '{policy_decision.rule_id}'",
-            name, tool, ctx, emitter, start,
+            name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
 
-    # Determine effective args after potential redaction
     effective_args = (
         policy_decision.redacted_args
         if policy_decision.action == "redact" and policy_decision.redacted_args is not None
@@ -156,7 +152,7 @@ async def run(
             if blocking:
                 return await _deny(
                     f"arg scan blocked: {blocking[0].category}",
-                    name, tool, ctx, emitter, start,
+                    name, tool, ctx, emitter, start, tenant_id,
                     audit_tags=agent_config.audit_tags,
                 )
 
@@ -166,6 +162,7 @@ async def run(
         boundary=BoundaryName.TOOL_CALL_GATE,
         decision=Decision.REDACT if policy_decision.action == "redact" else Decision.ALLOW,
         ctx=ctx,
+        tenant_id=tenant_id,
         duration_ms=duration,
         tool_name=name,
         transport=tool.transport,
@@ -180,8 +177,6 @@ async def run(
     )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
-
 async def _deny(
     reason: str,
     tool_name: str,
@@ -189,6 +184,7 @@ async def _deny(
     ctx: "RuntimeContext",
     emitter: "AuditEmitter",
     start: int,
+    tenant_id: str,
     *,
     audit_tags: dict[str, str] | None = None,
 ) -> GateDecision:
@@ -197,6 +193,7 @@ async def _deny(
         boundary=BoundaryName.TOOL_CALL_GATE,
         decision=Decision.DENY,
         ctx=ctx,
+        tenant_id=tenant_id,
         duration_ms=duration,
         tool_name=tool_name,
         transport=str(tool.transport) if tool else None,
@@ -208,8 +205,4 @@ async def _deny(
 
 
 def _args_to_text(args: dict[str, Any]) -> str:
-    """Flatten args dict to a single string for scanner input."""
-    parts = []
-    for k, v in args.items():
-        parts.append(f"{k}: {v}")
-    return "\n".join(parts)
+    return "\n".join(f"{k}: {v}" for k, v in args.items())

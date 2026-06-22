@@ -40,14 +40,16 @@ async def wired_harness(harness: Harness) -> Harness:
 # ── load_sources / unload_sources ─────────────────────────────────────────
 
 async def test_load_sources_returns_tool_list(wired_harness: Harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     tools = await wired_harness.load_sources(ctx)
     assert isinstance(tools, list)
     await wired_harness.unload_sources(ctx)
 
 
 async def test_unload_sources_is_idempotent(wired_harness: Harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     await wired_harness.load_sources(ctx)
     await wired_harness.unload_sources(ctx)
     await wired_harness.unload_sources(ctx)  # must not raise
@@ -56,13 +58,15 @@ async def test_unload_sources_is_idempotent(wired_harness: Harness):
 # ── scan_input ────────────────────────────────────────────────────────────
 
 async def test_scan_input_disabled_returns_allow(wired_harness: Harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     verdict = await wired_harness.scan_input("hello", ctx)
     assert not verdict.blocked  # boundary disabled in fixture config
 
 
 async def test_scan_output_disabled_returns_allow(wired_harness: Harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     verdict = await wired_harness.scan_output("hello", ctx)
     assert not verdict.blocked
 
@@ -70,7 +74,8 @@ async def test_scan_output_disabled_returns_allow(wired_harness: Harness):
 # ── check_tool_call ───────────────────────────────────────────────────────
 
 async def test_check_tool_call_allow(wired_harness: Harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     await wired_harness.load_sources(ctx)
     gate = await wired_harness.check_tool_call("search_docs", {"query": "test"}, ctx)
     assert gate.allowed
@@ -79,7 +84,8 @@ async def test_check_tool_call_allow(wired_harness: Harness):
 
 async def test_check_tool_call_deny_policy(wired_harness: Harness):
     """send_email has a deny rule in orchestrator_agent.yaml by default."""
-    ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     await wired_harness.load_sources(ctx)
     # The orchestrator policy denies external_write by default
     gate = await wired_harness.check_tool_call(
@@ -91,7 +97,8 @@ async def test_check_tool_call_deny_policy(wired_harness: Harness):
 
 
 async def test_check_tool_call_unregistered_agent_denied(harness: Harness):
-    ctx = RuntimeContext(tenant_id="t1", agent_id="nobody")
+    ctx = RuntimeContext(
+        agent_id="nobody")
     gate = await harness.check_tool_call("search_docs", {}, ctx)
     assert not gate.allowed
     assert "not registered" in gate.deny_reason
@@ -100,14 +107,16 @@ async def test_check_tool_call_unregistered_agent_denied(harness: Harness):
 # ── Subagent isolation ────────────────────────────────────────────────────
 
 async def test_subagent_scope_restricts_tags(wired_harness: Harness):
-    parent_ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    parent_ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     child_ctx  = wired_harness.scope_context_for_subagent(parent_ctx, "research_sub")
     assert child_ctx.sub_agent_id == "research_sub"
     assert "external_write" not in child_ctx.allowed_tags
 
 
 async def test_subagent_send_email_denied(wired_harness: Harness):
-    parent_ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    parent_ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     child_ctx  = wired_harness.scope_context_for_subagent(parent_ctx, "research_sub")
     await wired_harness.load_sources(child_ctx)
     gate = await wired_harness.check_tool_call("send_email", {}, child_ctx)
@@ -116,15 +125,17 @@ async def test_subagent_send_email_denied(wired_harness: Harness):
 
 
 async def test_parent_and_child_views_isolated(wired_harness: Harness):
-    parent_ctx = RuntimeContext(tenant_id="t1", agent_id="orchestrator_agent")
+    parent_ctx = RuntimeContext(
+        agent_id="orchestrator_agent")
     child_ctx  = wired_harness.scope_context_for_subagent(parent_ctx, "research_sub")
 
     await wired_harness.load_sources(parent_ctx)
     await wired_harness.load_sources(child_ctx)
 
-    assert parent_ctx.agent_key() != child_ctx.agent_key()
-    assert wired_harness._views.get(parent_ctx.agent_key()) is not None
-    assert wired_harness._views.get(child_ctx.agent_key()) is not None
+    # Keys are distinct because ctx objects are distinct (id-based keying)
+    assert id(parent_ctx) != id(child_ctx)
+    assert wired_harness._views.get(id(parent_ctx)) is not None
+    assert wired_harness._views.get(id(child_ctx)) is not None
 
     await wired_harness.unload_sources(parent_ctx)
     await wired_harness.unload_sources(child_ctx)

@@ -50,14 +50,17 @@ async def _load_agent_registry(path: Path):
 async def test_unregistered_agent_denied():
     from harness.agents.registry import AgentRegistry
     reg, sink, emitter, policy = await _setup()
-    view = reg.scoped_view(RuntimeContext(tenant_id="t1", agent_id="nobody"))
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="nobody")
+    view = reg.scoped_view(RuntimeContext(
+        agent_id="nobody"))
+    ctx  = RuntimeContext(
+        agent_id="nobody")
 
     gate = await check_tool_call.run(
         "search_docs", {}, ctx,
         agent_registry=AgentRegistry(),
         registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert not gate.allowed
     assert "not registered" in gate.deny_reason
@@ -75,13 +78,15 @@ async def test_tool_not_in_allowed_tool_names_denied(tmp_path):
     )
     agent_reg = await _load_agent_registry(agent_yaml)
     reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="test_agent")
+    ctx  = RuntimeContext(
+        agent_id="test_agent")
     view = reg.scoped_view(ctx)
 
     gate = await check_tool_call.run(
         "send_email", {"to": "x@y.com"}, ctx,
         agent_registry=agent_reg, registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert not gate.allowed
     assert "allowed_tool_names" in gate.deny_reason
@@ -104,7 +109,7 @@ async def test_subagent_tag_gate_denies_external_write(tmp_path):
     agent_reg = await _load_agent_registry(agent_yaml)
     reg, sink, emitter, policy = await _setup()
     ctx = RuntimeContext(
-        tenant_id="t1", agent_id="test_agent",
+        agent_id="test_agent",
         sub_agent_id="read_sub", allowed_tags=["read", "internal"],
     )
     view = reg.scoped_view(ctx)
@@ -113,6 +118,7 @@ async def test_subagent_tag_gate_denies_external_write(tmp_path):
         "send_email", {"to": "x@y.com"}, ctx,
         agent_registry=agent_reg, registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert not gate.allowed
     assert "capability set" in gate.deny_reason
@@ -135,13 +141,15 @@ async def test_policy_deny_rule_fires(tmp_path):
     )
     agent_reg = await _load_agent_registry(agent_yaml)
     reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="test_agent")
+    ctx  = RuntimeContext(
+        agent_id="test_agent")
     view = reg.scoped_view(ctx)
 
     gate = await check_tool_call.run(
         "send_email", {}, ctx,
         agent_registry=agent_reg, registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert not gate.allowed
     assert "email not allowed" in gate.deny_reason
@@ -158,7 +166,8 @@ async def test_allow_path_emits_allow_event(tmp_path):
     )
     agent_reg = await _load_agent_registry(agent_yaml)
     reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="test_agent")
+    ctx  = RuntimeContext(
+        agent_id="test_agent")
     view = reg.scoped_view(ctx)
     await view.add(Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL))
 
@@ -166,6 +175,7 @@ async def test_allow_path_emits_allow_event(tmp_path):
         "search_docs", {"query": "test"}, ctx,
         agent_registry=agent_reg, registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert gate.allowed
     assert sink.events[0].decision == Decision.ALLOW
@@ -176,7 +186,8 @@ async def test_allow_path_emits_allow_event(tmp_path):
 async def test_exactly_one_event_on_deny():
     from harness.agents.registry import AgentRegistry
     reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="nobody")
+    ctx  = RuntimeContext(
+        agent_id="nobody")
     view = reg.scoped_view(ctx)
 
     await check_tool_call.run(
@@ -184,6 +195,7 @@ async def test_exactly_one_event_on_deny():
         agent_registry=AgentRegistry(),
         registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert len(sink.events) == 1
 
@@ -197,7 +209,8 @@ async def test_exactly_one_event_on_allow(tmp_path):
     )
     agent_reg = await _load_agent_registry(agent_yaml)
     reg, sink, emitter, policy = await _setup()
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="test_agent")
+    ctx  = RuntimeContext(
+        agent_id="test_agent")
     view = reg.scoped_view(ctx)
     await view.add(Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL))
 
@@ -205,6 +218,7 @@ async def test_exactly_one_event_on_allow(tmp_path):
         "search_docs", {}, ctx,
         agent_registry=agent_reg, registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert len(sink.events) == 1
 
@@ -220,13 +234,15 @@ async def test_unknown_tool_denied(tmp_path):
     )
     agent_reg = await _load_agent_registry(agent_yaml)
     reg, sink, emitter, policy = await _setup()  # phantom_tool not registered
-    ctx  = RuntimeContext(tenant_id="t1", agent_id="test_agent")
+    ctx  = RuntimeContext(
+        agent_id="test_agent")
     view = reg.scoped_view(ctx)
 
     gate = await check_tool_call.run(
         "phantom_tool", {}, ctx,
         agent_registry=agent_reg, registry_view=view, policy=policy,
         arg_scanners=[], emitter=emitter,
+        tenant_id="test",
     )
     assert not gate.allowed
     assert "not found in registry" in gate.deny_reason

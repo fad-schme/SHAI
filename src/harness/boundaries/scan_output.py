@@ -19,6 +19,7 @@ async def run(
     *,
     scanners: list["Scanner"],
     emitter: "AuditEmitter",
+    tenant_id: str,
     enabled: bool,
     block_at: Severity = Severity.HIGH,
     audit_tags: dict[str, str] | None = None,
@@ -26,6 +27,7 @@ async def run(
     return await run_scan(
         text,
         ctx,
+        tenant_id=tenant_id,
         boundary=BoundaryName.OUTPUT_SCAN,
         scanners=scanners,
         emitter=emitter,

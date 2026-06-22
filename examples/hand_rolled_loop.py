@@ -53,10 +53,7 @@ async def main() -> None:
 
     # ── 4. Construct a per-turn RuntimeContext ────────────────────────────
     ctx = RuntimeContext(
-        tenant_id="demo",
         agent_id="orchestrator_agent",
-        user_id="alice",
-        session_id="sess-001",
     )
 
     print("\n── Turn start ───────────────────────────────────────────────")
