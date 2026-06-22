@@ -1,58 +1,72 @@
-# harness/tools/registry.py — ToolRegistry Protocol and ScopedRegistryView.
-#
-# RESPONSIBILITY
-#   Define two tightly coupled abstractions:
-#   1. ToolRegistry Protocol — the shared base, written only at startup.
-#   2. ScopedRegistryView — a per-turn, per-agent overlay used by
-#      load_sources and check_tool_call. Never shared between agents.
-#
-# TOOLREGISTRY PROTOCOL
-#
-#   class ToolRegistry(Protocol):
-#       name: str
-#
-#       def register(self, tool: Tool) -> None:
-#           """Idempotent on identical (name, schema, tags, transport).
-#           Raises ConfigError on conflicting schema for same name.
-#           STARTUP ONLY — never called during a turn."""
-#
-#       def register_many(self, tools: Iterable[Tool]) -> None:
-#           """Convenience; loops register()."""
-#
-#       def get(self, name: str) -> Tool:
-#           """Raises ToolNotRegisteredError on miss. Thread-safe."""
-#
-#       def list(self) -> list[Tool]:
-#           """All registered tools. CLI / debug use only."""
-#
-#       def scoped_view(self, ctx: RuntimeContext) -> "ScopedRegistryView":
-#           """Return a fresh per-call view for this ctx. Reads fall
-#           through to the shared base; writes go to an in-call overlay
-#           invisible to other agents. Never store the view on the
-#           registry — the caller holds it."""
-#
-# SCOPED REGISTRY VIEW
-#
-#   class ScopedRegistryView:
-#       ctx: RuntimeContext
-#
-#       def add(self, tool: Tool) -> None:
-#           """Add to the per-call overlay. Never touches shared base."""
-#
-#       def get(self, name: str) -> Tool:
-#           """Overlay first, then shared base.
-#           Raises ToolNotRegisteredError on miss."""
-#
-#       def list(self) -> list[Tool]:
-#           """Base tools + overlay tools for this turn."""
-#
-#   ScopedRegistryView is INTERNAL — not exported from harness/__init__.py.
-#   It is passed explicitly through the call chain from load_sources to
-#   check_tool_call and discarded after the turn. It is never stored on
-#   the Harness instance.
-#
-# DO NOT
-#   - Add unregister() to the Protocol.
-#   - Add policy or scanning logic here.
-#   - Let ScopedRegistryView write to the shared base.
-#   - Reuse a ScopedRegistryView across turns or across agents.
+"""ToolRegistry Protocol and ScopedRegistryView.
+
+ToolRegistry: the shared base, written only at startup via register_tools().
+ScopedRegistryView: per-turn, per-agent overlay — never touches the shared base.
+
+Both are internal. The public API surface for tools is Tool (tools/tool.py)
+and Harness.register_tools() on the facade.
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Iterable, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from harness.core.context import RuntimeContext
+    from harness.tools.tool import Tool
+
+
+@runtime_checkable
+class ToolRegistry(Protocol):
+    """Shared base registry. Writes happen only at startup."""
+
+    name: str
+
+    async def register(self, tool: "Tool") -> None:
+        """Idempotent on identical (name, tags, transport).
+        Raises ConfigError on conflicting definition for the same name.
+        STARTUP ONLY — must not be called during a turn.
+        """
+        ...
+
+    async def register_many(self, tools: Iterable["Tool"]) -> None:
+        """Convenience wrapper around register(). Loops in order."""
+        ...
+
+    async def get(self, name: str) -> "Tool":
+        """Raises ToolNotRegisteredError on miss. Thread-safe (GIL-safe read)."""
+        ...
+
+    async def list(self) -> list["Tool"]:
+        """All registered tools in insertion order. CLI / debug use only."""
+        ...
+
+    def scoped_view(self, ctx: "RuntimeContext") -> "ScopedRegistryView":
+        """Return a fresh per-call overlay for this context.
+
+        The view reads from the shared base; writes go to an in-call overlay
+        invisible to other agents. The caller holds the view and passes it
+        through the call chain. Never stored on the registry instance.
+        """
+        ...
+
+
+class ScopedRegistryView(Protocol):
+    """Per-turn, per-agent overlay over the shared ToolRegistry base.
+
+    NEVER writes to the shared base. Discarded after unload_sources().
+    Not part of the public API — agents never hold a ScopedRegistryView directly.
+    """
+
+    ctx: "RuntimeContext"
+
+    async def add(self, tool: "Tool") -> None:
+        """Add a source-loaded tool to this turn's overlay only."""
+        ...
+
+    async def get(self, name: str) -> "Tool":
+        """Overlay first, then shared base. Raises ToolNotRegisteredError on miss."""
+        ...
+
+    async def list(self) -> list["Tool"]:
+        """Overlay tools + base tools, overlay wins on name conflict."""
+        ...

@@ -1,30 +1,43 @@
-# harness/core/verdicts.py — wire types returned by the three boundaries.
-#
-# RESPONSIBILITY
-#   Define the immutable result objects the agent receives from each
-#   boundary. These are PART OF THE PUBLIC API — changing their shape is
-#   a breaking change for every customer.
-#
-# WHAT TO IMPLEMENT
-#   - Finding: one match from one scanner. Frozen pydantic model. Fields:
-#       scanner:   str                    (adapter name)
-#       category:  str                    (e.g. "pii.email", "secret.aws_key",
-#                                          "injection.prompt_override")
-#       severity:  Severity               (from core.types)
-#       span:      tuple[int, int] | None (start, end offsets in source text)
-#       detail:    str | None             (short note; never the raw match text)
-#
-#   - ScanVerdict: aggregate result of scan_input or scan_output. Frozen.
-#       blocked:        bool
-#       findings:       list[Finding]
-#       redacted_text:  str | None
-#
-#   - GateDecision: result of check_tool_call. Frozen.
-#       allowed:        bool
-#       deny_reason:    str | None        (required when allowed=False)
-#       redacted_args:  dict[str, Any] | None
-#
-# DO NOT
-#   - Include raw matched text in Finding.detail.
-#   - Add mutation methods. Verdicts are produced once and consumed once.
-#   - Add a VerifyResult type — verify_output is not part of core.
+"""Wire types returned by the three boundaries. Part of the public API."""
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, model_validator
+
+from harness.core.types import Severity
+
+
+class Finding(BaseModel, frozen=True):
+    """One match returned by a Scanner."""
+    scanner:  str
+    category: str
+    severity: Severity
+    span:     tuple[int, int] | None = None  # (start, end) byte offsets in source
+    detail:   str | None = None              # short note — never the raw matched text
+
+
+class ScanVerdict(BaseModel, frozen=True):
+    """Aggregate result of scan_input or scan_output."""
+    blocked:       bool
+    findings:      list[Finding] = []
+    redacted_text: str | None = None
+
+    @property
+    def max_severity(self) -> Severity | None:
+        if not self.findings:
+            return None
+        return max(self.findings, key=lambda f: f.severity._index()).severity
+
+
+class GateDecision(BaseModel, frozen=True):
+    """Result of check_tool_call."""
+    allowed:       bool
+    deny_reason:   str | None = None
+    redacted_args: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _deny_requires_reason(self) -> "GateDecision":
+        if not self.allowed and not self.deny_reason:
+            raise ValueError("deny_reason is required when allowed=False")
+        return self

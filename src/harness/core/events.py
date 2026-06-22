@@ -1,43 +1,103 @@
-# harness/core/events.py — the AuditEvent schema.
-#
-# RESPONSIBILITY
-#   Define the structured event every boundary emits exactly once per call.
-#   Consumed by every AuditSink and seen by every customer's CISO.
-#   See docs/audit-schema.md for the field-by-field spec.
-#
-# WHAT TO IMPLEMENT
-#   - AuditEvent as a frozen pydantic model. Fields (canonical names —
-#     match CLAUDE.md §6 logging field names exactly):
-#       timestamp:       datetime          (UTC)
-#       boundary:        BoundaryName      (input_scan | tool_call_gate | output_scan)
-#       decision:        Decision          (allow | deny | redact | blocked)
-#       disabled:        bool              (true when boundary disabled by config)
-#       tenant_id:       str
-#       agent_id:        str
-#       user_id:         str | None
-#       session_id:      str | None
-#       request_id:      str | None
-#       adapters:        list[str]         (adapter names that ran)
-#       tool_name:       str | None        (tool_call_gate only)
-#       transport:       str | None        (tool_call_gate only)
-#       finding_count:   int
-#       max_severity:    Severity | None
-#       deny_reason:     str | None        (deny / blocked decisions only)
-#       duration_ms:     int
-#       extra:           dict[str, Any]    (small adapter-specific context)
-#
-#     Constraints enforced at model level:
-#       - decision="deny" → deny_reason non-empty, boundary="tool_call_gate"
-#       - decision="blocked" → boundary is a scan boundary
-#       - disabled=True → decision="allow", finding_count=0
-#       - tool_name and transport populated only for tool_call_gate
-#
-#   - AuditEvent.build(...) — canonical builder called by boundaries.
-#     Boundaries never construct AuditEvent by hand.
-#
-# DO NOT
-#   - Include raw user input, raw LLM output, raw tool args, or raw
-#     scanner matches in any field, including extra.
-#   - Add source_names — load_sources does not emit audit events.
-#   - Add sink-specific transport fields (Splunk index, OTel trace id).
-#   - Make AuditEvent mutable.
+"""AuditEvent — the structured event every boundary emits exactly once per call.
+
+No raw user input, LLM output, tool args, or scanner matches in any field.
+"""
+from __future__ import annotations
+
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from pydantic import BaseModel, model_validator
+
+from harness.core.context import RuntimeContext
+from harness.core.types import BoundaryName, Decision, Severity
+
+
+class AuditEvent(BaseModel, frozen=True):
+    # When + boundary
+    timestamp:   datetime
+    boundary:    BoundaryName
+    decision:    Decision
+    disabled:    bool = False
+    duration_ms: int
+
+    # Identity (from RuntimeContext)
+    tenant_id:    str
+    agent_id:     str
+    sub_agent_id: str | None = None
+    user_id:      str | None = None   # audit-trail only
+    session_id:   str | None = None   # audit-trail only
+
+    # Tool call gate fields
+    tool_name:  str | None = None
+    transport:  str | None = None
+
+    # Scan results
+    adapters:      list[str] = []
+    finding_count: int = 0
+    max_severity:  Severity | None = None
+    deny_reason:   str | None = None
+
+    # Agent context
+    audit_tags: dict[str, str] = {}
+    extra:      dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def _cross_field_constraints(self) -> "AuditEvent":
+        if self.decision == Decision.DENY and not self.deny_reason:
+            raise ValueError("deny_reason required when decision=deny")
+        if (self.decision == Decision.BLOCKED
+                and self.boundary == BoundaryName.TOOL_CALL_GATE):
+            raise ValueError("tool_call_gate uses deny, not blocked")
+        if self.disabled:
+            if self.decision != Decision.ALLOW:
+                raise ValueError("disabled boundary must have decision=allow")
+            if self.finding_count != 0:
+                raise ValueError("disabled boundary must have finding_count=0")
+        return self
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        boundary: BoundaryName,
+        decision: Decision,
+        ctx: RuntimeContext,
+        duration_ms: int,
+        adapters: list[str] | None = None,
+        finding_count: int = 0,
+        max_severity: Severity | None = None,
+        deny_reason: str | None = None,
+        tool_name: str | None = None,
+        transport: str | None = None,
+        disabled: bool = False,
+        audit_tags: dict[str, str] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> "AuditEvent":
+        """Canonical builder — boundaries always use this, never construct directly."""
+        return cls(
+            timestamp=datetime.now(timezone.utc),
+            boundary=boundary,
+            decision=decision,
+            disabled=disabled,
+            duration_ms=duration_ms,
+            tenant_id=ctx.tenant_id,
+            agent_id=ctx.agent_id,
+            sub_agent_id=ctx.sub_agent_id,
+            user_id=ctx.user_id,
+            session_id=ctx.session_id,
+            tool_name=tool_name,
+            transport=transport,
+            adapters=adapters or [],
+            finding_count=finding_count,
+            max_severity=max_severity,
+            deny_reason=deny_reason,
+            audit_tags=audit_tags or {},
+            extra=extra or {},
+        )
+
+
+def now_ms() -> int:
+    """Current monotonic time in milliseconds — used to measure boundary duration."""
+    return int(time.monotonic() * 1000)

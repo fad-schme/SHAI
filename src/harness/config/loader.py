@@ -1,34 +1,55 @@
-# harness/config/loader.py — parse harness.yaml into a HarnessConfig.
-#
-# RESPONSIBILITY
-#   Read a YAML file from disk, run env/secret resolution over its raw
-#   string values, and validate the result against the pydantic schema.
-#
-# WHAT TO IMPLEMENT
-#   - load_yaml(path: str | Path) -> HarnessConfig
-#       1. Read the file. IOError → ConfigError with path context.
-#       2. yaml.safe_load it. yaml.YAMLError → ConfigError.
-#       3. Pass the raw dict to config.resolution.resolve_all to
-#          interpolate ${ENV_VAR} and secret://name references in
-#          string values. Raise ConfigError on missing references.
-#       4. Construct HarnessConfig(**resolved). pydantic ValidationError
-#          is wrapped in ConfigError with the offending field path.
-#       5. Return the validated HarnessConfig.
-#
-#   - load_dict(data: dict, *, secrets: SecretsProvider | None = None) -> HarnessConfig
-#       Same flow without the file read. Used by tests and by
-#       programmatic configuration.
-#
-# WHAT load_yaml DOES NOT DO
-#   - Instantiate adapters. Adapter construction happens in
-#     core.harness.Harness.from_yaml after the config is loaded. Keep
-#     these stages separate so config errors surface before adapter
-#     init errors.
-#   - Cache results. Each call reads the file. Tests and the CLI's
-#     `harness validate` rely on this.
-#
-# DO NOT
-#   - Use yaml.load (unsafe). Always yaml.safe_load.
-#   - Log the raw config dict — it may contain ${SECRET_FOO} markers
-#     pre-resolution. Log only the path being loaded and the validation
-#     outcome.
+"""Load and validate harness.yaml into a HarnessConfig."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import ValidationError
+
+from harness.config.resolution import resolve_all
+from harness.config.schema import HarnessConfig
+from harness.core.errors import ConfigError
+
+
+def load_yaml(path: str | Path) -> HarnessConfig:
+    """Read harness.yaml, resolve ${ENV_VAR} refs, validate. Raises ConfigError."""
+    path = Path(path)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"cannot read harness.yaml at {path}: {e}", op="load_yaml") from e
+
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        raise ConfigError(f"invalid YAML in {path}: {e}", op="load_yaml") from e
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"{path} must be a YAML mapping, got {type(data).__name__}",
+            op="load_yaml",
+        )
+
+    # Resolve ${ENV_VAR} substitutions. Secret refs resolved later in
+    # Harness.from_yaml() after the SecretsProvider is instantiated.
+    resolved = resolve_all(data, secrets=None)
+    return _validate(resolved, source=str(path))
+
+
+def load_dict(data: dict[str, Any]) -> HarnessConfig:
+    """Construct HarnessConfig from an already-parsed dict. Used in tests."""
+    return _validate(data, source="<dict>")
+
+
+def _validate(data: dict[str, Any], *, source: str) -> HarnessConfig:
+    try:
+        return HarnessConfig.model_validate(data)
+    except ValidationError as e:
+        first = e.errors()[0]
+        loc = " → ".join(str(x) for x in first["loc"])
+        msg = first["msg"]
+        raise ConfigError(
+            f"config validation failed [{source}]: {loc}: {msg}",
+            op="load_yaml",
+        ) from e

@@ -1,41 +1,65 @@
-# harness/config/resolution.py — env-var and secret interpolation.
-#
-# RESPONSIBILITY
-#   Walk a parsed YAML dict and replace two reference forms in STRING
-#   VALUES (never in keys):
-#     ${ENV_VAR}        →  os.environ["ENV_VAR"]
-#     secret://<name>   →  SecretsProvider.resolve("secret://<name>")
-#
-#   Resolution happens AFTER yaml.safe_load and BEFORE pydantic
-#   validation in config/loader.py. Validators then see fully resolved
-#   strings.
-#
-# WHAT TO IMPLEMENT
-#   - resolve_all(data: Any, *, secrets: SecretsProvider | None) -> Any
-#       Recurse over dict / list / scalar. On strings:
-#         1. Substitute every ${NAME} with os.environ[NAME]. Missing
-#            env vars → ConfigError naming the missing variable.
-#         2. If the remaining string equals exactly "secret://<name>",
-#            resolve via the SecretsProvider. The result REPLACES the
-#            string in place.
-#         3. If the string contains "secret://" but is not exactly a
-#            secret URI → ConfigError. Refuse to substring-replace
-#            secret references — that path leads to accidental
-#            concatenation bugs and leaked values.
-#       Return the transformed structure (new dict/list, not mutated
-#       in place — keeps the original for diagnostics).
-#
-#   - The SecretsProvider used here is the one configured in
-#     harness.yaml itself. Bootstrap order: load YAML → resolve env
-#     vars only → pydantic-validate the secrets section enough to
-#     instantiate the SecretsProvider → re-resolve with secrets enabled.
-#     OR: require the SecretsProvider class to be resolvable without
-#     secrets in its own constructor args. PICK ONE. Document the
-#     decision in docs/architecture.md.
-#
-# DO NOT
-#   - Allow ${VAR:-default} or other shell-style fallbacks. Missing
-#     references must fail. The whole point is no silent defaults.
-#   - Interpolate in dict keys. Keys come from the schema, not the
-#     environment.
-#   - Log resolved secret values. Log the reference and outcome only.
+"""Config value interpolation — ${ENV_VAR} and secret:// refs."""
+from __future__ import annotations
+
+import os
+import re
+from typing import Any, Protocol
+
+from harness.core.errors import ConfigError
+
+_ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_SECRET_PREFIX = "secret://"
+
+
+class _SecretsProvider(Protocol):
+    def resolve(self, ref: str) -> str: ...
+
+
+def resolve_all(
+    data: Any,
+    *,
+    secrets: _SecretsProvider | None = None,
+) -> Any:
+    """Recursively interpolate env vars and secret refs in string values.
+
+    Operates on values only — never on dict keys.
+    Missing env vars → ConfigError naming the variable.
+    Substring secret references → ConfigError (prevents accidental concat).
+    """
+    if isinstance(data, dict):
+        return {k: resolve_all(v, secrets=secrets) for k, v in data.items()}
+    if isinstance(data, list):
+        return [resolve_all(item, secrets=secrets) for item in data]
+    if isinstance(data, str):
+        return _resolve_string(data, secrets=secrets)
+    return data
+
+
+def _resolve_string(s: str, *, secrets: _SecretsProvider | None) -> str:
+    def _replace_env(m: re.Match) -> str:
+        name = m.group(1)
+        val = os.environ.get(name)
+        if val is None:
+            raise ConfigError(
+                f"environment variable ${{{name}}} is not set",
+                op="config_resolution",
+            )
+        return val
+
+    s = _ENV_RE.sub(_replace_env, s)
+
+    if _SECRET_PREFIX in s:
+        if not s.startswith(_SECRET_PREFIX) or s != s.strip():
+            raise ConfigError(
+                f"secret:// reference must be the entire string value, "
+                f"not a substring: {s!r}",
+                op="config_resolution",
+            )
+        if secrets is None:
+            raise ConfigError(
+                f"secret reference {s!r} found but no SecretsProvider configured",
+                op="config_resolution",
+            )
+        return secrets.resolve(s)
+
+    return s

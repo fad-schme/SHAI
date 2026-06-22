@@ -1,0 +1,65 @@
+id: orchestrator_agent
+display_name: "Orchestrator"
+version: "1.0.0"
+
+allowed_tool_names:
+  - search_docs
+  - send_email
+  - list_inbox
+
+allowed_tags:
+  - read
+  - internal
+  - external_write
+
+sources:
+  - docs_skill
+  - outlook_mcp
+
+policy_rules:
+  - id: deny_external_write_default
+    match:
+      tool_tags:
+        - external_write
+    action: deny
+    reason: "external_write requires explicit agent permission"
+  - id: allow_email_tools
+    match:
+      tool_names:
+        - send_email
+        - list_inbox
+    action: allow
+
+log_level: DEBUG
+audit_tags:
+  team: test
+  env: ci
+
+sub_agents:
+  - id: research_sub
+    allowed_tool_names:
+      - search_docs
+    allowed_tags:
+      - read
+      - internal
+    sources:
+      - docs_skill
+    policy_rules:
+      - id: research_deny_write
+        match:
+          tool_tags:
+            - external_write
+        action: deny
+        reason: "research_sub is read-only"
+
+  - id: email_sub
+    allowed_tool_names:
+      - send_email
+      - list_inbox
+    allowed_tags:
+      - read
+      - internal
+      - external_write
+    sources:
+      - outlook_mcp
+    policy_rules: []

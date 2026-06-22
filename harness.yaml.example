@@ -1,26 +1,65 @@
 # harness.yaml.example — canonical reference configuration.
-#
-# This file is the SOURCE OF TRUTH for what a valid harness.yaml looks like.
-# If a new feature can't be expressed here, reconsider whether it belongs in
-# the harness at all (see CLAUDE.md §7).
-#
-# CONTENTS
-#   - One section per pluggable concern: scanners, policy, audit_sinks,
-#     tool_registry, secrets.
-#   - Each adapter is referenced by NAME (the entry-point name), not by
-#     import path. The discovery layer (adapters/discovery.py) resolves
-#     names to classes at startup.
-#   - Boundary-level toggles: scan_input.enabled, scan_output.enabled.
-#     check_tool_call has no toggle — it is mandatory.
-#
-# WHAT THE CODING AGENT SHOULD DO HERE
-#   Fill in concrete YAML demonstrating every reference adapter. Use
-#   ${ENV_VAR} interpolation in at least one place to show config/resolution
-#   is wired. Use a secret reference (secret://name) in at least one place
-#   to show SecretsProvider is wired.
-#
-# DO NOT
-#   - Reference enterprise adapter names (purview, opa, splunk) here. The
-#     example must work with only `pip install harness`.
-#   - Add settings that have no consumer in the codebase. Every key must
-#     map to a field in config/schema.py.
+# Uses only reference adapters (pip install harness).
+
+version: 1
+
+scan_input:
+  enabled: true
+  block_at: high
+  scanners:
+    - name: regex_pii
+    - name: basic_injection
+
+scan_output:
+  enabled: true
+  block_at: high
+  scanners:
+    - name: regex_pii
+
+check_tool_call:
+  arg_scanners:
+    - name: regex_pii
+  scan_args_for_tags:
+    - sensitive
+
+policy:
+  name: rules
+  config:
+    rules_path: ./policies/rules.yaml
+
+audit_sinks:
+  - name: stdout
+
+tool_registry:
+  name: memory
+
+secrets:
+  name: env
+
+tool_sources:
+  - name: docs_skill
+    transport: skill
+    tools:
+      - search_docs
+      - fetch_doc
+    tags:
+      - skill
+      - read
+      - internal
+
+  - name: slack_mcp
+    transport: mcp
+    url: "https://mcp.slack.com/sse"
+    credentials:
+      token: "secret://SLACK_MCP_TOKEN"
+    tags:
+      - external_mcp
+      - messaging
+      - external_write
+
+agents:
+  directory: ./agents
+
+logging:
+  level: INFO
+  json: true

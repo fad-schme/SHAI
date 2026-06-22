@@ -1,30 +1,48 @@
-# pyproject.toml — packaging and adapter entry-point declarations.
-#
-# RESPONSIBILITY
-#   Single source of truth for the `harness` distribution: dependencies,
-#   tooling config, and the entry-point groups that make adapter discovery
-#   work.
-#
-# WHAT TO IMPLEMENT
-#   - Build backend: hatchling or setuptools, pick one and stick to it.
-#   - Project metadata: name = "harness", license, Python >=3.10.
-#   - Runtime deps: pydantic (config schema), PyYAML (config loader).
-#     Nothing else in core. If you reach for a 4th dep, justify it first.
-#   - Optional extras keyed by integration name: langgraph, langchain,
-#     crewai, pydantic-ai, openai-agents, anthropic. Each pulls only that
-#     framework's SDK.
-#   - Entry-point groups for adapter discovery — these are LOAD-BEARING.
-#     Adapter packages (harness-enterprise, third-party) register under
-#     the same group names:
-#       harness.scanners       → Scanner implementations
-#       harness.policy         → PolicyEngine implementations
-#       harness.audit_sinks    → AuditSink implementations
-#       harness.tool_registry  → ToolRegistry implementations
-#       harness.secrets        → SecretsProvider implementations
-#     Register every reference adapter shipped in this package under the
-#     correct group.
-#
-# DO NOT
-#   - Add a console-script entry point. The CLI lives in harness-cli.
-#   - Pin upper bounds on deps without a concrete compat reason.
-#   - Add framework SDKs to runtime deps. They are extras, not runtime.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "harness"
+version = "0.1.0"
+description = "Control-plane SDK for production agents"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harness"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[project.entry-points."harness.scanners"]
+regex_pii       = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
+basic_injection = "harness.adapters.scanners.basic_injection:BasicInjectionScanner"
+
+[project.entry-points."harness.policy"]
+rules = "harness.policy.rules:RuleBasedPolicy"
+
+[project.entry-points."harness.audit_sinks"]
+stdout = "harness.adapters.audit_sinks.stdout:StdoutSink"
+file   = "harness.adapters.audit_sinks.file:FileSink"
+
+[project.entry-points."harness.tool_registry"]
+memory = "harness.adapters.tool_registry.memory:InMemoryRegistry"
+
+[project.entry-points."harness.tool_sources"]
+local = "harness.adapters.tool_sources.local:LocalSource"
+skill = "harness.adapters.tool_sources.skill:SkillSource"
+
+[project.entry-points."harness.secrets"]
+env = "harness.adapters.secrets.env:EnvSecrets"

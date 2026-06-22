@@ -1,28 +1,43 @@
-# harness/core/context.py — RuntimeContext, the identity envelope.
-#
-# RESPONSIBILITY
-#   Define the identity scope every boundary call carries: who is calling,
-#   on behalf of whom, in what tenant, in what session. This is the
-#   envelope — it is NOT memory context, NOT prompt context, NOT user
-#   message content. Just identity.
-#
-# WHAT TO IMPLEMENT
-#   - RuntimeContext as a frozen pydantic model (or frozen dataclass +
-#     pydantic validator if a dataclass is enough). Fields:
-#       tenant_id: str       (required, non-empty)
-#       agent_id:  str       (required, non-empty)
-#       user_id:   str | None
-#       session_id: str | None
-#       request_id: str | None   (optional, useful for tracing)
-#     All other context — memory, prompt, retrieval — belongs to the
-#     agent, not here. Resist adding fields.
-#   - A `to_log_fields()` method that returns the canonical logging dict
-#     using the exact field names listed in CLAUDE.md §6 (`tenant_id`,
-#     `agent_id`, `user_id`, `session_id`). Every logger in the codebase
-#     uses this — never hand-build the dict elsewhere.
-#
-# DO NOT
-#   - Add memory, prompt, retrieved-document, or LLM-related fields.
-#   - Make RuntimeContext mutable. Boundaries should not mutate scope.
-#   - Add a `from_request()` factory specific to any web framework —
-#     construction is the agent's job.
+"""RuntimeContext — the identity envelope passed on every boundary call."""
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, field_validator
+
+
+class RuntimeContext(BaseModel, frozen=True):
+    # Agent identity — used internally for keying, policy, source activation
+    tenant_id:    str
+    agent_id:     str
+    sub_agent_id: str | None = None
+    allowed_tags: list[str] | None = None
+
+    # Audit-only — never used for keying or policy decisions
+    user_id:    str | None = None
+    session_id: str | None = None
+
+    @field_validator("tenant_id", "agent_id")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be non-empty")
+        return v
+
+    def agent_key(self) -> tuple[str, str]:
+        """Canonical key for ScopedRegistryView storage.
+
+        Always (agent_id, sub_agent_id or ""). Never user_id or session_id —
+        those are audit-only fields and must never influence internal keying.
+        """
+        return (self.agent_id, self.sub_agent_id or "")
+
+    def to_log_fields(self) -> dict[str, Any]:
+        """Canonical logging dict. Every logger calls this — never hand-build."""
+        return {
+            "tenant_id":    self.tenant_id,
+            "agent_id":     self.agent_id,
+            "sub_agent_id": self.sub_agent_id,
+            "user_id":      self.user_id,
+            "session_id":   self.session_id,
+        }

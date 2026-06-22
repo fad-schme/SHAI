@@ -1,11 +1,20 @@
-# tests/fixtures/agents/research_agent.yaml
-# Read-only agent fixture — no external_write capability.
-# Used to test capability gate denial (research_agent cannot send_email).
-#
-# WHAT TO IMPLEMENT
-#   - id: research_agent
-#   - allowed_tags: [read, internal] only
-#   - No allowed_tool_names restriction (all read/internal tools accessible)
-#   - No external sources
-#   - No policy_rules (relies entirely on global rules)
-#   - log_level: INFO
+id: research_agent
+display_name: "Research Agent"
+
+allowed_tool_names:
+  - search_docs
+  - fetch_doc
+
+allowed_tags:
+  - read
+  - internal
+
+sources:
+  - docs_skill
+
+policy_rules: []
+sub_agents: []
+
+log_level: INFO
+audit_tags:
+  team: test

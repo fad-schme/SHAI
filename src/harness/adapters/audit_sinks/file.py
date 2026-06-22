@@ -1,39 +1,70 @@
-# harness/adapters/audit_sinks/file.py — rotating file audit sink.
-#
-# RESPONSIBILITY
-#   Write one JSON object per line to a file on disk, rotating by size.
-#   Suitable for single-host deployments and as a defence-in-depth sink
-#   alongside a remote sink (Splunk, Sentinel) so audit isn't lost on
-#   network failure.
-#
-# WHAT TO IMPLEMENT
-#   - FileSink class implementing AuditSink:
-#       name = "file"
-#       Constructor parameters (all from harness.yaml):
-#         path:           str                 (file path, required)
-#         max_bytes:      int = 100_000_000   (rotate at ~100MB by default)
-#         backup_count:   int = 10
-#         encoding:       str = "utf-8"
-#
-#       Implementation uses logging.handlers.RotatingFileHandler under
-#       the hood, OR a hand-written rotator if the stdlib handler's
-#       behavior doesn't match (e.g. we want atomic rename, no logging
-#       framework overhead). Pick one approach and stick to it.
-#
-#       emit(event):
-#         - Serialize to JSON (one line, no pretty-print).
-#         - Write + flush.
-#         - On IOError, propagate to the emitter.
-#
-#       close():
-#         - Flush + close the file handle.
-#
-# DO NOT
-#   - Add gzip / compression. The CLI's `audit replay` reads plain JSONL;
-#     compression is for downstream archival, not the live sink.
-#   - Use the logging module's logger NAME for routing. This is a sink,
-#     not a logger — it owns its file directly.
-#   - Buffer asynchronously. Per-event flush is the contract.
-#
-# ENTRY POINT
-#   Registered under `harness.audit_sinks` as `file`.
+"""FileSink — JSONL rotating file sink.
+
+asyncio.Lock serialises concurrent async emit() calls.
+run_in_executor offloads the blocking write to a thread pool.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any
+
+from harness.adapters.audit_sinks.stdout import _serialize
+from harness.core.events import AuditEvent
+
+log = logging.getLogger(__name__)
+
+
+class FileSink:
+    """Reference AuditSink — JSONL rotating file."""
+
+    name = "file"
+
+    def __init__(
+        self,
+        path: str | Path,
+        max_bytes: int = 100_000_000,   # 100 MB
+        backup_count: int = 10,
+        encoding: str = "utf-8",
+    ) -> None:
+        self._path = Path(path)
+        self._max_bytes = max_bytes
+        self._backup_count = backup_count
+        self._encoding = encoding
+        self._lock = asyncio.Lock()
+        self._handler: RotatingFileHandler | None = None
+
+    def _ensure_handler(self) -> RotatingFileHandler:
+        if self._handler is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._handler = RotatingFileHandler(
+                filename=self._path,
+                maxBytes=self._max_bytes,
+                backupCount=self._backup_count,
+                encoding=self._encoding,
+            )
+        return self._handler
+
+    def _write(self, line: str) -> None:
+        handler = self._ensure_handler()
+        handler.stream.write(line)
+        handler.stream.flush()
+        # Check rotation
+        if handler.shouldRollover(None):  # type: ignore[arg-type]
+            handler.doRollover()
+
+    async def emit(self, event: AuditEvent) -> None:
+        line = _serialize(event) + "\n"
+        async with self._lock:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._write, line)
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._handler is not None:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._handler.close)
+                self._handler = None

@@ -1,27 +1,53 @@
-# harness/__init__.py — the entire public API surface of the SDK.
-#
-# RESPONSIBILITY
-#   Re-export the small, stable set of names that agent code is allowed to
-#   import. Nothing else in this package is public.
-#
-# PUBLIC SURFACE (do not extend without a design discussion)
-#   Harness          — the facade class (core.harness.Harness)
-#   Tool             — tool descriptor (tools.tool.Tool)
-#   ToolSource       — tool source descriptor (adapters.tool_sources.base.ToolSource)
-#   AgentConfig      — agent profile model (agents.agent_config.AgentConfig)
-#   RuntimeContext   — identity envelope (core.context.RuntimeContext)
-#   ScanVerdict      — scan_input / scan_output return type (core.verdicts)
-#   GateDecision     — check_tool_call return type (core.verdicts)
-#   Finding          — individual scanner finding (core.verdicts)
-#   HarnessError     — base exception (core.errors)
-#
-# WHAT TO IMPLEMENT
-#   - Import the names above from their canonical modules and list them in
-#     __all__. Re-exports only — no logic, no aliasing, no renaming.
-#   - Set __version__ from package metadata (importlib.metadata).
-#
-# DO NOT
-#   - Re-export adapter classes, boundary functions, internal types, or
-#     pydantic config models. Those are internal and refactorable.
-#   - Add convenience helpers, factories, or shortcut functions here.
-#     The facade is Harness. There is no second way in.
+"""harness — control-plane SDK for production agents."""
+from importlib.metadata import PackageNotFoundError, version
+
+from harness.agents.agent_config import AgentConfig, RuleConfig, SubAgentConfig
+from harness.core.context import RuntimeContext
+from harness.core.errors import (
+    AdapterDiscoveryError,
+    AdapterInitError,
+    AgentConflictError,
+    AgentNotRegisteredError,
+    AuditEmissionError,
+    ConfigError,
+    HarnessError,
+    PolicyEvaluationError,
+    SubAgentNotDeclaredError,
+    ToolNotRegisteredError,
+)
+from harness.core.harness import Harness
+from harness.core.types import BoundaryName, Decision, Severity, Transport
+from harness.core.verdicts import Finding, GateDecision, ScanVerdict
+from harness.tools.tool import Tool
+
+try:
+    __version__ = version("harness")
+except PackageNotFoundError:
+    __version__ = "0.0.0+dev"
+
+__all__ = [
+    "Harness",
+    "Tool",
+    "RuntimeContext",
+    "AgentConfig",
+    "SubAgentConfig",
+    "RuleConfig",
+    "ScanVerdict",
+    "GateDecision",
+    "Finding",
+    "BoundaryName",
+    "Decision",
+    "Severity",
+    "Transport",
+    "HarnessError",
+    "ConfigError",
+    "AdapterDiscoveryError",
+    "AdapterInitError",
+    "AgentNotRegisteredError",
+    "AgentConflictError",
+    "SubAgentNotDeclaredError",
+    "ToolNotRegisteredError",
+    "PolicyEvaluationError",
+    "AuditEmissionError",
+    "__version__",
+]

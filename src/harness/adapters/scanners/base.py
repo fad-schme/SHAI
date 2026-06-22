@@ -1,39 +1,42 @@
-# harness/adapters/scanners/base.py — the Scanner Protocol.
-#
-# RESPONSIBILITY
-#   Define the single Protocol every text scanner implements. Reference
-#   scanners live in this directory (regex_pii.py, basic_injection.py);
-#   production scanners (Purview, Nightfall, Lakera, Forcepoint) live in
-#   harness-enterprise/scanners/.
-#
-# WHAT TO IMPLEMENT
-#   - Scanner as a typing.Protocol:
-#
-#       class Scanner(Protocol):
-#           name: str  # adapter name, matches entry-point name
-#
-#           def scan(
-#               self,
-#               text: str,
-#               ctx: RuntimeContext,
-#           ) -> ScanResult:
-#               """Inspect text. Return findings (possibly empty) and
-#               optionally a redacted form of the input. Pure function
-#               from inputs to result — no side effects, no audit
-#               emission, no logging beyond errors."""
-#
-#   - ScanResult is a small internal type local to this module:
-#       findings:       list[Finding]
-#       redacted_text:  str | None
-#
-#     ScanResult is NOT the public ScanVerdict — the boundary aggregates
-#     ScanResults from multiple scanners into one ScanVerdict.
-#
-# DO NOT
-#   - Add a `severity_threshold` parameter. Scanners report what they
-#     find; the boundary decides what to block on (see scan_input.run
-#     block_at parameter).
-#   - Make scan() async unless every adapter and boundary is async.
-#   - Add per-scanner configuration to the Protocol. Configuration is
-#     constructor-injected from harness.yaml; the runtime contract is
-#     just scan(text, ctx).
+"""Scanner Protocol and ScanResult.
+
+ScanResult is internal — boundaries aggregate Scanner results into ScanVerdict.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from harness.core.context import RuntimeContext
+    from harness.core.verdicts import Finding
+
+
+@dataclass
+class ScanResult:
+    """Output of one scanner on one text. Internal — not part of public API."""
+    findings:      list["Finding"] = field(default_factory=list)
+    redacted_text: str | None = None
+
+
+@runtime_checkable
+class Scanner(Protocol):
+    """Inspect text and return findings. All async — production scanners are network-bound."""
+
+    name: str
+
+    async def scan(
+        self,
+        text: str,
+        ctx: "RuntimeContext",
+    ) -> ScanResult:
+        """Inspect text. Return findings and optional redacted form.
+
+        Pure from the boundary's perspective — no side effects, no audit emission.
+        Async because production scanners (Purview, Nightfall, Lakera) make
+        HTTP calls. Reference scanners (regex) return immediately.
+
+        Never include raw matched text in Finding.detail — category + severity
+        is what audit consumers act on.
+        """
+        ...

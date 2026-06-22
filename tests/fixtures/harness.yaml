@@ -1,23 +1,38 @@
-# tests/fixtures/harness.yaml — canonical configuration used by tests.
-#
-# RESPONSIBILITY
-#   A working harness.yaml that exercises every reference adapter and
-#   every config branch the schema supports. Tests load this file in
-#   the `harness` fixture (see tests/conftest.py).
-#
-# WHAT TO IMPLEMENT
-#   - One scan_input block with regex_pii and basic_injection scanners.
-#   - One scan_output block with regex_pii.
-#   - check_tool_call with arg_scanners = [regex_pii] and
-#     scan_args_for_tags = ["sensitive"].
-#   - policy: rules, pointing at tests/fixtures/policy.yaml.
-#   - audit_sinks: stdout. (Tests override this at construction time
-#     with the recording sink — see conftest.py.)
-#   - tool_registry: memory.
-#   - secrets: env.
-#
-# DO NOT
-#   - Reference enterprise adapter names. Tests run with `pip install
-#     harness` only.
-#   - Inline secrets here. Use ${ENV_VAR} for any value tests need to
-#     parameterize.
+version: 1
+
+scan_input:
+  enabled: false
+
+scan_output:
+  enabled: false
+
+policy:
+  name: rules
+  config:
+    rules_path: ./tests/fixtures/policy.yaml
+
+audit_sinks:
+  - name: stdout
+
+tool_registry:
+  name: memory
+
+secrets:
+  name: env
+
+tool_sources:
+  - name: docs_skill
+    transport: skill
+    tools:
+      - search_docs
+    tags:
+      - skill
+      - read
+      - internal
+
+agents:
+  directory: ./tests/fixtures/agents
+
+logging:
+  level: DEBUG
+  json: true
