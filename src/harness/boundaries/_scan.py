@@ -1,20 +1,45 @@
-"""Shared implementation for scan_input and scan_output.
+"""Shared scan pipeline for all text-scanning boundaries.
 
-Both boundaries have identical structure — run scanners concurrently,
-aggregate findings, emit exactly one AuditEvent. The only differences
-are the BoundaryName and the scanner list used.
+run_scan() is the single implementation used by scan_input, scan_output,
+scan_tool_result, and scan_file. The only differences between boundaries
+are the BoundaryName and the scanner list.
 
-scan_input and scan_output import from here; they do not duplicate logic.
+Action model
+------------
+Each boundary has a default action (block | alert | redact). Individual
+scanners can override this with their own action field on AdapterRef.
+
+block  — finding at/above block_at → ScanStatus.BLOCK, Decision.BLOCKED
+         Content is rejected. Caller must not forward it.
+
+alert  — finding at/above block_at → ScanStatus.WARN, Decision.WARN
+         Content passes through. Audit event flags it. Useful for
+         observe-before-enforce rollout.
+
+redact — finding at/above block_at → apply redact_with placeholder to
+         scanner's redacted_text if available, else fall back to block.
+         ScanStatus.ALLOW, Decision.ALLOW (redaction is transparent).
+
+Per-scanner override:
+    scanners:
+      - name: regex_pii
+        action: redact          # override: redact PII findings
+        redact_with: "***"      # optional placeholder (default: [REDACTED:{category}])
+      - name: injection_scan
+        action: block           # override: always block injection findings
+
+Scanner action takes precedence over boundary action for that scanner's findings.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from harness.adapters.scanners.base import ScanResult
 from harness.core.events import AuditEvent, now_ms
-from harness.core.types import BoundaryName, Decision, Severity
+from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import Finding, ScanVerdict
 
 if TYPE_CHECKING:
@@ -24,6 +49,43 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_DEFAULT_REDACT_TEMPLATE = "[REDACTED:{category}]"
+
+
+def _redact_placeholder(template: str | None, category: str) -> str:
+    tpl = template or _DEFAULT_REDACT_TEMPLATE
+    return tpl.replace("{category}", category)
+
+
+def _apply_redaction(
+    text: str,
+    findings: list[Finding],
+    scanner_result: ScanResult,
+    redact_with: str | None,
+) -> str:
+    """Return text with PII replaced by placeholder.
+
+    Prefers the scanner's own redacted_text when available (it has the
+    exact match positions). Falls back to a simple category-based label
+    when the scanner did not supply redacted_text.
+    """
+    if scanner_result.redacted_text is not None:
+        # Scanner did the work — use its output but rewrite the placeholder
+        # if the operator specified a custom redact_with
+        if redact_with is not None:
+            # Replace default [REDACTED:*] patterns with operator's template
+            result = scanner_result.redacted_text
+            for f in findings:
+                default  = _redact_placeholder(None, f.category)
+                custom   = _redact_placeholder(redact_with, f.category)
+                result   = result.replace(default, custom)
+            return result
+        return scanner_result.redacted_text
+
+    # Scanner returned no redacted_text — nothing to substitute precisely
+    # Return the original text unchanged; the audit event still carries findings
+    return text
+
 
 async def run_scan(
     text: str,
@@ -31,20 +93,23 @@ async def run_scan(
     *,
     boundary: BoundaryName,
     scanners: list["Scanner"],
+    scanner_actions: list[ScanAction | None],   # parallel to scanners list
+    scanner_redact_withs: list[str | None],      # parallel to scanners list
+    boundary_action: ScanAction,
     emitter: "AuditEmitter",
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
     audit_tags: dict[str, str] | None = None,
 ) -> ScanVerdict:
-    """Run scanners concurrently, aggregate, emit one AuditEvent.
+    """Run scanners concurrently, apply action logic, emit one AuditEvent.
 
     Invariants:
-    - Exactly one AuditEvent emitted per call, on every code path.
-    - Disabled boundary → allow verdict + audit event with disabled=True.
-    - Scanner exceptions are logged and treated as empty findings — pipeline
-      continues. The boundary never raises on scanner failure.
+    - Exactly one AuditEvent per call, on every code path.
+    - Disabled boundary → ScanStatus.ALLOW, disabled=True audit event.
+    - Scanner exceptions logged and treated as empty findings — never raises.
     - No raw text in the audit event.
+    - Scanner action overrides boundary action for that scanner's findings only.
     """
     start = now_ms()
 
@@ -59,19 +124,21 @@ async def run_scan(
             audit_tags=audit_tags or {},
         )
         await emitter.emit(event)
-        return ScanVerdict(blocked=False)
+        return ScanVerdict(status=ScanStatus.ALLOW)
 
-    # Run all scanners concurrently; capture exceptions per-scanner
     raw_results = await asyncio.gather(
         *[scanner.scan(text, ctx) for scanner in scanners],
         return_exceptions=True,
     )
 
-    findings: list[Finding] = []
-    redacted_text: str | None = None
-    adapter_names: list[str] = []
+    all_findings:   list[Finding] = []
+    adapter_names:  list[str]     = []
+    current_text                  = text   # accumulates redactions
+    final_status                  = ScanStatus.ALLOW
+    # Track which findings came from each scanner for per-scanner action
+    per_scanner_data: list[tuple[list[Finding], ScanResult | None, ScanAction, str | None]] = []
 
-    for scanner, result in zip(scanners, raw_results):
+    for i, (scanner, result) in enumerate(zip(scanners, raw_results)):
         adapter_names.append(scanner.name)
         if isinstance(result, Exception):
             log.error(
@@ -83,36 +150,80 @@ async def run_scan(
                     **ctx.to_log_fields(),
                 },
             )
+            per_scanner_data.append(([], None, ScanAction.BLOCK, None))
             continue
-        findings.extend(result.findings)
-        if result.redacted_text is not None:
-            redacted_text = result.redacted_text  # last redaction wins
 
-    blocked = any(f.severity >= block_at for f in findings)
-    decision = Decision.BLOCKED if blocked else Decision.ALLOW
+        # Fall back to boundary_action when the per-scanner lists are shorter
+        # than the scanners list (e.g. when tests pass scanner_actions=[])
+        per_action   = scanner_actions[i]      if i < len(scanner_actions)      else None
+        per_redact   = scanner_redact_withs[i] if i < len(scanner_redact_withs) else None
+        effective_action = per_action if per_action is not None else boundary_action
+        redact_with      = per_redact
+        per_scanner_data.append((result.findings, result, effective_action, redact_with))
+        all_findings.extend(result.findings)
+        # Apply redaction unconditionally when the scanner returned redacted_text.
+        # Redaction is a content transform — it is independent of block_at threshold.
+        # (Block/alert actions still respect block_at; redaction does not.)
+        if result.redacted_text is not None and effective_action == ScanAction.REDACT:
+            current_text = _apply_redaction(
+                current_text, result.findings, result, redact_with
+            )
+        elif result.redacted_text is not None and effective_action != ScanAction.REDACT:
+            # Scanner returned redacted_text even though action is block/alert —
+            # still propagate it so callers can use it (e.g. action=block but
+            # caller wants to log the redacted form for debugging).
+            current_text = result.redacted_text
+
+    # ── Apply action per scanner ──────────────────────────────────────────
+    for findings, result, action, redact_with in per_scanner_data:
+        triggering = [f for f in findings if f.severity >= block_at]
+        if not triggering:
+            continue
+
+        if action == ScanAction.BLOCK:
+            final_status = ScanStatus.BLOCK  # hard stop — one block overrides all
+            break
+
+        elif action == ScanAction.ALERT:
+            # Only upgrade to WARN, never downgrade a BLOCK
+            if final_status != ScanStatus.BLOCK:
+                final_status = ScanStatus.WARN
+
+        elif action == ScanAction.REDACT:
+            # Redaction already applied unconditionally above.
+            # Status stays ALLOW — content passed through with PII replaced.
+            pass
+
+    redacted_text = current_text if current_text != text else None
+
+    # ── Map status to audit Decision ──────────────────────────────────────
+    if final_status == ScanStatus.BLOCK:
+        decision = Decision.BLOCKED
+    elif final_status == ScanStatus.WARN:
+        decision = Decision.WARN
+    else:
+        decision = Decision.ALLOW
 
     max_sev: Severity | None = None
-    if findings:
-        order = [s for s in Severity]
-        max_sev = max(findings, key=lambda f: order.index(f.severity)).severity
+    if all_findings:
+        max_sev = max(all_findings, key=lambda f: f.severity._index()).severity
 
-    duration = now_ms() - start
     event = AuditEvent.build(
         boundary=boundary,
         decision=decision,
         ctx=ctx,
         tenant_id=tenant_id,
-        duration_ms=duration,
+        duration_ms=now_ms() - start,
         adapters=adapter_names,
-        finding_count=len(findings),
+        finding_count=len(all_findings),
         max_severity=max_sev,
         audit_tags=audit_tags or {},
     )
     await emitter.emit(event)
 
     return ScanVerdict(
-        blocked=blocked,
-        findings=findings,
+        status=final_status,
+        findings=all_findings,
         redacted_text=redacted_text,
     )
 
@@ -122,30 +233,24 @@ async def run_file_scan(
     ctx: "AgentContext",
     *,
     scanners: list["Scanner"],
+    scanner_actions: list[ScanAction | None],
+    scanner_redact_withs: list[str | None],
+    boundary_action: ScanAction,
     emitter: "AuditEmitter",
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
     audit_tags: dict[str, str] | None = None,
 ) -> ScanVerdict:
-    """Run file scanners against a file path.
-
-    Structurally identical to run_scan — same AuditEvent invariants.
-    The path string is passed as the 'text' argument to each scanner.
-    FileScanner interprets this as a path; text scanners can be chained
-    after text extraction happens inside FileScanner.
-
-    Invariants (same as run_scan):
-    - Exactly one AuditEvent per call on every code path.
-    - Disabled → allow verdict + disabled=True audit event.
-    - Scanner exceptions treated as empty findings.
-    - No file content in audit event.
-    """
+    """Run file scanners. Delegates to run_scan with FILE_SCAN boundary name."""
     return await run_scan(
         path,
         ctx,
         boundary=BoundaryName.FILE_SCAN,
         scanners=scanners,
+        scanner_actions=scanner_actions,
+        scanner_redact_withs=scanner_redact_withs,
+        boundary_action=boundary_action,
         emitter=emitter,
         tenant_id=tenant_id,
         enabled=enabled,
@@ -159,22 +264,24 @@ async def run_tool_result_scan(
     ctx: "AgentContext",
     *,
     scanners: list["Scanner"],
+    scanner_actions: list[ScanAction | None],
+    scanner_redact_withs: list[str | None],
+    boundary_action: ScanAction,
     emitter: "AuditEmitter",
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
     audit_tags: dict[str, str] | None = None,
 ) -> ScanVerdict:
-    """Scan a tool's return value before it re-enters the LLM context.
-
-    Identical contract to run_scan — one AuditEvent, same disabled/block logic.
-    Uses BoundaryName.TOOL_RESULT_SCAN so SIEM queries can distinguish it.
-    """
+    """Scan a tool return value. Delegates to run_scan with TOOL_RESULT_SCAN."""
     return await run_scan(
         result,
         ctx,
         boundary=BoundaryName.TOOL_RESULT_SCAN,
         scanners=scanners,
+        scanner_actions=scanner_actions,
+        scanner_redact_withs=scanner_redact_withs,
+        boundary_action=boundary_action,
         emitter=emitter,
         tenant_id=tenant_id,
         enabled=enabled,

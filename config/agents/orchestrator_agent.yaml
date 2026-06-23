@@ -4,62 +4,46 @@ version: "1.0.0"
 
 allowed_tool_names:
   - search_docs
-  - send_email
-  - list_inbox
+  - get_weather
+  - send_alert
+  - read_file
+  - write_file
 
 allowed_tags:
   - read
   - internal
-  - external_write
-
-sources:
-  - docs_skill
-  - outlook_mcp
+  - external_read
 
 policy_rules:
-  - id: deny_external_write_default
+  - id: deny_write_default
     match:
       tool_tags:
-        - external_write
+        - write
     action: deny
-    reason: "external_write requires explicit agent permission"
-  - id: allow_email_tools
+    reason: "write tools require explicit allow rule"
+  - id: allow_read_tools
     match:
-      tool_names:
-        - send_email
-        - list_inbox
+      tool_tags:
+        - read
     action: allow
 
-log_level: DEBUG
+log_level: INFO
 audit_tags:
-  team: test
-  env: ci
+  team: platform
+  env: demo
 
 sub_agents:
   - id: research_sub
     allowed_tool_names:
       - search_docs
+      - get_weather
     allowed_tags:
       - read
       - internal
-    sources:
-      - docs_skill
     policy_rules:
-      - id: research_deny_write
+      - id: research_read_only
         match:
           tool_tags:
-            - external_write
+            - write
         action: deny
         reason: "research_sub is read-only"
-
-  - id: email_sub
-    allowed_tool_names:
-      - send_email
-      - list_inbox
-    allowed_tags:
-      - read
-      - internal
-      - external_write
-    sources:
-      - outlook_mcp
-    policy_rules: []

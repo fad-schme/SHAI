@@ -1,57 +1,54 @@
-# config/harness.yaml
-# Managed by the operator. Edit this file to configure SHAI for your deployment.
-# Reference: harness.yaml.example at the repo root for all available options.
-
+# config/harness.yaml — operator config for the examples.
 version: 1
-tenant_id: "my-deployment"  # unique name for this harness instance
+tenant_id: "shai-demo"
 
 scan_input:
   enabled: true
   block_at: high
+  action: block               # block | alert | redact
   scanners:
     - name: regex_pii
-    - name: basic_injection
+      action: redact          # redact PII instead of blocking
+      redact_with: "***"      # placeholder (use {category} for category name)
+    - name: injection_scan
+      action: block           # always hard-block injection attempts
 
 scan_output:
   enabled: true
   block_at: high
+  action: block
   scanners:
     - name: regex_pii
+      action: redact
+      redact_with: "[REDACTED:{category}]"
+
+scan_tool_result:
+  enabled: true
+  block_at: high
+  action: block
 
 check_tool_call:
+  rate_limit:
+    enabled: true
+    window_seconds: 60
+    max_calls_per_window: 30
+    max_calls_per_tool: 10
   arg_scanners:
     - name: regex_pii
   scan_args_for_tags:
     - sensitive
 
 policy:
-  name: rules
-  config:
-    rules_path: ./config/policies/rules.yaml
+  rules:
+    - id: allow_local_tools
+      match:
+        transport: [local, skill]
+      action: allow
+    - id: deny_mcp_by_default
+      match:
+        transport: [mcp]
+      action: deny
+      reason: "MCP tools require explicit agent-level allow rule"
 
 audit_sinks:
   - name: stdout
-
-tool_registry:
-  name: memory
-
-secrets:
-  name: env
-
-tool_sources:
-  - name: docs_skill
-    transport: skill
-    tools:
-      - search_docs
-      - fetch_doc
-    tags:
-      - skill
-      - read
-      - internal
-
-agents:
-  directory: ./config/agents
-
-logging:
-  level: INFO
-  json_format: true

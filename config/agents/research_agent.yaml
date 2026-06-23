@@ -3,18 +3,16 @@ display_name: "Research Agent"
 
 allowed_tool_names:
   - search_docs
-  - fetch_doc
+  - get_weather
 
 allowed_tags:
   - read
   - internal
-
-sources:
-  - docs_skill
 
 policy_rules: []
 sub_agents: []
 
 log_level: INFO
 audit_tags:
-  team: test
+  team: platform
+  env: demo
