@@ -1,7 +1,9 @@
 """SHAI integration for LangGraph.
 
 Provides a HarnessToolNode that replaces LangGraph's standard ToolNode.
-It gates every tool call through harness.check_tool_call before executing.
+It gates every tool call through harness.check_tool_call before executing,
+and scans every tool result through harness.scan_tool_result before the
+result re-enters the LLM context.
 
 Usage::
 
@@ -38,8 +40,15 @@ class HarnessToolNode:
     """LangGraph node that gates tool calls through the harness.
 
     Drop-in replacement for langgraph.prebuilt.ToolNode.
-    Denied tool calls are returned as ToolMessage errors so the agent
-    can continue the conversation rather than raising an exception.
+
+    Per tool call:
+      1. check_tool_call  — gate (policy, capability, rate limit, arg scan)
+      2. invoke tool      — only if gate allows
+      3. scan_tool_result — scan result for indirect injection before LLM sees it
+      4. return ToolMessage — allowed result or denial/block reason as error
+
+    Denied gate decisions and blocked tool results are both surfaced as
+    ToolMessage errors so the agent can continue the conversation.
     """
 
     def __init__(
@@ -48,9 +57,9 @@ class HarnessToolNode:
         harness: "SHAI",
         ctx: "AgentContext",
     ) -> None:
-        self._tools = {self._tool_name(t): t for t in tools}
+        self._tools   = {self._tool_name(t): t for t in tools}
         self._harness = harness
-        self._ctx = ctx
+        self._ctx     = ctx
 
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         """LangGraph node entrypoint. Receives graph state, returns updated state."""
@@ -69,10 +78,11 @@ class HarnessToolNode:
 
         results: list[ToolMessage] = []
         for tool_call in last.tool_calls:
-            name = tool_call["name"]
-            args = tool_call["args"]
+            name    = tool_call["name"]
+            args    = tool_call["args"]
             call_id = tool_call["id"]
 
+            # ── 1. Gate ───────────────────────────────────────────────────
             gate = await self._harness.check_tool_call(name, args, self._ctx)
             if not gate.allowed:
                 log.info(
@@ -97,22 +107,54 @@ class HarnessToolNode:
                 ))
                 continue
 
+            # ── 2. Invoke ─────────────────────────────────────────────────
             try:
-                result = await self._invoke_tool(tool_fn, effective_args)
-                results.append(ToolMessage(
-                    content=str(result),
-                    tool_call_id=call_id,
-                ))
+                raw_result = await self._invoke_tool(tool_fn, effective_args)
             except Exception as exc:
                 log.error(
                     "tool execution error",
-                    extra={"tool": name, "error": str(exc), **self._ctx.to_log_fields()},
+                    extra={"tool": name, "error": str(exc),
+                           **self._ctx.to_log_fields()},
                 )
                 results.append(ToolMessage(
                     content=f"Tool error: {exc}",
                     tool_call_id=call_id,
                     status="error",
                 ))
+                continue
+
+            # ── 3. Scan tool result ───────────────────────────────────────
+            result_text = str(raw_result)
+            tverdict = await self._harness.scan_tool_result(result_text, self._ctx)
+
+            if tverdict.blocked:
+                log.warning(
+                    "tool result blocked — indirect injection detected",
+                    extra={"tool": name, **self._ctx.to_log_fields()},
+                )
+                results.append(ToolMessage(
+                    content=(
+                        f"Tool result from '{name}' was blocked by SHAI "
+                        f"(indirect injection detected)"
+                    ),
+                    tool_call_id=call_id,
+                    status="error",
+                ))
+                continue
+
+            # Use redacted text if the scan applied redaction
+            safe_result = tverdict.redacted_text or result_text
+
+            if tverdict.warned:
+                log.warning(
+                    "tool result flagged — potential injection (action=alert)",
+                    extra={"tool": name, **self._ctx.to_log_fields()},
+                )
+
+            results.append(ToolMessage(
+                content=safe_result,
+                tool_call_id=call_id,
+            ))
 
         return {"messages": results}
 

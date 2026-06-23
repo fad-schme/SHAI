@@ -5,6 +5,12 @@ A minimal but fully working ReAct agent using:
   - LangGraph (agent loop and state management)
   - SHAI (security harness — scan, gate, audit)
 
+Configuration:
+  Edit config/harness.yaml  to change scanner actions, rate limits,
+                             policy rules, and audit settings.
+  Edit config/agents/orchestrator_agent.yaml  to change tool permissions
+                             and subagent declarations.
+
 Install:
     pip install -e ".[dev]"
     pip install langgraph langchain-ollama langchain-core
@@ -15,7 +21,6 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
 import sys
@@ -27,46 +32,36 @@ CONFIG       = Path(__file__).parent.parent / "config"
 HARNESS_YAML = CONFIG / "harness.yaml"
 AGENT_YAML   = CONFIG / "agents" / "orchestrator_agent.yaml"
 
-# ── Silence noisy loggers — we print our own formatted output ─────────────
+# ── Silence noisy third-party loggers ────────────────────────────────────
 logging.basicConfig(level=logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("harness").setLevel(logging.WARNING)
-logging.getLogger("langchain").setLevel(logging.WARNING)
-logging.getLogger("langgraph").setLevel(logging.WARNING)
+for logger in ("httpx", "harness", "langchain", "langgraph"):
+    logging.getLogger(logger).setLevel(logging.WARNING)
 
 # ── ANSI colours ──────────────────────────────────────────────────────────
 GREEN  = "\033[32m"
 RED    = "\033[31m"
 YELLOW = "\033[33m"
 CYAN   = "\033[36m"
-BLUE   = "\033[34m"
 BOLD   = "\033[1m"
 DIM    = "\033[2m"
 RESET  = "\033[0m"
-
 USE_COLOUR = sys.stdout.isatty()
 
 def c(colour: str, text: str) -> str:
     return f"{colour}{text}{RESET}" if USE_COLOUR else text
 
 
-# ── Audit capture sink ────────────────────────────────────────────────────
-# Replaces stdout JSONL with a capture buffer so we can pretty-print later.
+# ── Audit capture sink ─────────────────────────────────────────────────────
 
 class CaptureSink:
-    """In-process audit sink — collects events for end-of-run summary."""
     name = "capture"
-    def __init__(self):
-        self.events: list[dict] = []
-
+    def __init__(self): self.events: list[dict] = []
     async def emit(self, event) -> None:
         self.events.append(json.loads(event.model_dump_json()))
-
-    async def close(self) -> None:
-        pass
+    async def close(self) -> None: pass
 
 
-# ── Tool implementations ──────────────────────────────────────────────────
+# ── Tool implementations ───────────────────────────────────────────────────
 
 def search_docs(query: str) -> str:
     docs = {
@@ -79,7 +74,6 @@ def search_docs(query: str) -> str:
             return content
     return f"No documentation found for: {query}"
 
-
 def get_weather(city: str) -> str:
     weather = {
         "london":   "Overcast, 12°C, 80% chance of rain",
@@ -89,13 +83,12 @@ def get_weather(city: str) -> str:
     }
     return weather.get(city.lower(), f"Weather data unavailable for {city}")
 
-
 def write_file(path: str, content: str) -> str:
-    # Intentionally blocked by agent policy — demonstrates deny in action
+    # Blocked by agent policy (write tag) — demonstrates deny in action
     return f"Wrote {len(content)} bytes to {path}"
 
 
-# ── Pretty-print helpers ──────────────────────────────────────────────────
+# ── Display helpers ────────────────────────────────────────────────────────
 
 def print_header(title: str) -> None:
     w = 62
@@ -115,73 +108,49 @@ def print_audit_summary(events: list[dict]) -> None:
         print(f"  └{'─'*50}")
         return
 
-    boundary_labels = {
+    labels = {
         "input_scan":       "Input scan      ",
         "tool_call_gate":   "Tool gate       ",
         "tool_result_scan": "Tool result scan",
         "output_scan":      "Output scan     ",
-        "file_scan":        "File scan       ",
     }
-    decision_colours = {
-        "allow":   GREEN,
-        "deny":    RED,
-        "blocked": RED,
-        "redact":  YELLOW,
-    }
-    decision_icons = {
-        "allow":   "✓",
-        "deny":    "✗",
-        "blocked": "✗",
-        "redact":  "~",
-    }
+    cols  = {"allow": GREEN, "deny": RED, "blocked": RED, "warn": YELLOW, "redact": YELLOW}
+    icons = {"allow": "✓", "deny": "✗", "blocked": "✗", "warn": "⚠", "redact": "~"}
 
     for i, ev in enumerate(events):
-        is_last   = i == len(events) - 1
-        tree_char = "└" if is_last else "├"
+        tree  = "└" if i == len(events) - 1 else "├"
+        bnd   = ev.get("boundary", "?")
+        dec   = ev.get("decision", "?")
+        label = labels.get(bnd, f"{bnd:<16}")
+        col   = cols.get(dec, DIM)
+        icon  = icons.get(dec, "?")
 
-        boundary = ev.get("boundary", "?")
-        decision = ev.get("decision", "?")
-        dur      = ev.get("duration_ms", 0)
-        tool     = ev.get("tool_name")
-        reason   = ev.get("deny_reason")
-        findings = ev.get("finding_count", 0)
-        max_sev  = ev.get("max_severity")
-        disabled = ev.get("disabled", False)
-
-        label = boundary_labels.get(boundary, f"{boundary:<16}")
-        col   = decision_colours.get(decision, DIM)
-        icon  = decision_icons.get(decision, "?")
-
-        # Main line
-        if disabled:
-            status = c(DIM, f"{icon} {decision.upper()} (disabled)")
-        else:
-            status = c(col, f"{icon} {decision.upper()}")
+        status = c(DIM, f"{icon} {dec.upper()} (disabled)") \
+                 if ev.get("disabled") else c(col, f"{icon} {dec.upper()}")
 
         detail = ""
-        if tool:
-            detail += f"  tool={c(CYAN, tool)}"
-        if findings:
-            detail += f"  findings={c(YELLOW, str(findings))}"
-            if max_sev:
-                detail += f" max={c(YELLOW, max_sev)}"
-        if dur:
-            detail += f"  {c(DIM, f'{dur}ms')}"
+        if ev.get("tool_name"):
+            detail += f"  tool={c(CYAN, ev['tool_name'])}"
+        if ev.get("finding_count", 0):
+            detail += f"  findings={c(YELLOW, str(ev['finding_count']))}"
+            if ev.get("max_severity"):
+                detail += f" max={c(YELLOW, ev['max_severity'])}"
+        if ev.get("duration_ms"):
+            detail += f"  {c(DIM, str(ev['duration_ms']) + 'ms')}"
 
-        print(f"  │  {tree_char}─ {label}  {status}{detail}")
-
-        # Denial reason on its own line
-        if reason:
-            pad = "      " if is_last else "  │   "
-            print(f"  │  {pad}   {c(RED, '↳')} {c(DIM, reason)}")
+        print(f"  │  {tree}─ {label}  {status}{detail}")
+        if ev.get("deny_reason"):
+            pad = "      " if i == len(events) - 1 else "  │   "
+            print(f"  │  {pad}   {c(RED, '↳')} {c(DIM, ev['deny_reason'])}")
 
     print(f"  └{'─'*50}")
-    total  = len(events)
     allows = sum(1 for e in events if e["decision"] == "allow")
     denies = sum(1 for e in events if e["decision"] in ("deny", "blocked"))
-    print(f"     {total} event(s):  "
-          f"{c(GREEN, str(allows) + ' allowed')}  "
-          f"{c(RED,   str(denies) + ' denied/blocked') if denies else c(DIM, '0 denied')}")
+    warns  = sum(1 for e in events if e["decision"] == "warn")
+    parts  = [c(GREEN, f"{allows} allowed")]
+    if warns:  parts.append(c(YELLOW, f"{warns} warned"))
+    if denies: parts.append(c(RED,    f"{denies} denied/blocked"))
+    print(f"     {len(events)} event(s):  {'  '.join(parts)}")
 
 
 async def main() -> None:
@@ -192,8 +161,7 @@ async def main() -> None:
         from langgraph.graph import StateGraph, MessagesState, END
     except ImportError as e:
         print(f"\nMissing dependency: {e}")
-        print("Install with:")
-        print("  pip install langgraph langchain-ollama langchain-core")
+        print("Install with:  pip install langgraph langchain-ollama langchain-core")
         sys.exit(1)
 
     from harness import SHAI, Tool
@@ -202,15 +170,18 @@ async def main() -> None:
     from harness.integrations.langgraph import HarnessToolNode
 
     print_header("SHAI  +  LangGraph  +  Ollama (qwen2.5:3b)")
-    print(c(DIM, "  Security control plane demonstration"))
+    print(c(DIM, "  Config: config/harness.yaml  ·  config/agents/orchestrator_agent.yaml"))
 
-    # ── SHAI setup ────────────────────────────────────────────────────────
+    # ── SHAI ──────────────────────────────────────────────────────────────
     print_section("Starting up")
 
-    sink    = CaptureSink()
     harness = await SHAI.from_yaml(HARNESS_YAML)
-    # Replace the default stdout sink with our capture sink
-    harness._emitter._sinks = [sink]
+    sink = CaptureSink()
+    # Keep file sink (silent, writes to logs/audit.jsonl) but drop stdout sink
+    # so raw JSONL doesn't interleave with the formatted output.
+    file_sinks = [s for s in harness._emitter._sinks
+                  if s.name != "stdout"]
+    harness._emitter._sinks = file_sinks + [sink]
 
     await harness.register_tools([
         Tool(name="search_docs", tags=["read", "internal"],       transport=Transport.LOCAL),
@@ -220,15 +191,21 @@ async def main() -> None:
     await harness.load_agent(AGENT_YAML)
     agent_ctx = AgentContext(agent_id="orchestrator_agent")
 
-    print(f"  │  {c(GREEN, '✓')} SHAI loaded  "
-          f"(tenant={c(CYAN, harness._tenant_id)}, "
-          f"agent={c(CYAN, 'orchestrator_agent')})")
-    print(f"  │  {c(GREEN, '✓')} 3 tools registered: "
-          f"{c(CYAN, 'search_docs')}, {c(CYAN, 'get_weather')}, "
-          f"{c(CYAN, 'write_file')} (blocked by policy)")
+    cfg = harness._config
+    inp_action  = cfg.scan_input.action
+    out_action  = cfg.scan_output.action
+    trs_action  = cfg.scan_tool_result.action
+    rate_on     = cfg.check_tool_call.rate_limit.enabled
+
+    print(f"  │  {c(GREEN, '✓')} SHAI loaded  (tenant={c(CYAN, harness._tenant_id)})")
+    print(f"  │  {c(GREEN, '✓')} scan_input={c(CYAN, inp_action)}  "
+          f"scan_output={c(CYAN, out_action)}  "
+          f"scan_tool_result={c(CYAN, trs_action)}")
+    print(f"  │  {c(GREEN, '✓')} rate_limit={c(CYAN, str(rate_on))}  "
+          f"tools: search_docs, get_weather, {c(YELLOW, 'write_file (blocked by policy)')}")
     print(f"  └{'─'*50}")
 
-    # ── LangChain tools ───────────────────────────────────────────────────
+    # ── LangChain tool wrappers ────────────────────────────────────────────
     @lc_tool("search_docs")
     def search_docs_tool(query: str) -> str:
         """Search internal documentation for HR policies, IT guides, and procedures."""
@@ -250,17 +227,17 @@ async def main() -> None:
     llm = ChatOllama(model="qwen2.5:3b", temperature=0).bind_tools(lc_tools)
 
     # ── Graph ─────────────────────────────────────────────────────────────
+    # HarnessToolNode runs the full SHAI pipeline per tool call:
+    #   check_tool_call → invoke → scan_tool_result
+    # All config comes from HARNESS_YAML — no hardcoded settings here.
     async def agent_node(state):
-        response = await llm.ainvoke(state["messages"])
-        return {"messages": [response]}
+        return {"messages": [await llm.ainvoke(state["messages"])]}
 
     tool_node = HarnessToolNode(tools=lc_tools, harness=harness, ctx=agent_ctx)
 
     def should_continue(state):
         last = state["messages"][-1]
-        if isinstance(last, AIMessage) and last.tool_calls:
-            return "tools"
-        return END
+        return "tools" if isinstance(last, AIMessage) and last.tool_calls else END
 
     graph = StateGraph(MessagesState)
     graph.add_node("agent", agent_node)
@@ -272,7 +249,7 @@ async def main() -> None:
 
     # ── Run ───────────────────────────────────────────────────────────────
     question = (
-        "What is the vacation policy? my credit card number is 1234-5678-9012-3456. "
+        "What is the vacation policy? "
         "Also, what is the weather in Munich today?"
     )
 
@@ -281,46 +258,49 @@ async def main() -> None:
     print(f"  │")
     print(f"  │  {c(DIM, 'Thinking...')}", end="\r", flush=True)
 
-    # Scan input
+    # scan_input — config/harness.yaml determines action (block/alert/redact)
     input_verdict = await harness.scan_input(question, agent_ctx)
     if input_verdict.blocked:
-        print(f"  │  {c(RED, '✗ Input blocked by SHAI')}  "
+        print(f"  │  {c(RED, '✗ Input blocked')}  "
               f"(findings: {input_verdict.findings})")
         print(f"  └{'─'*50}")
         await harness.close()
         return
 
-    # Run the agent graph
+    # Agent graph — HarnessToolNode handles gate + dispatch + scan_tool_result
     result = await app.ainvoke({"messages": [HumanMessage(content=question)]})
 
-    # Scan output
-    final        = result["messages"][-1]
+    # scan_output — config/harness.yaml determines action
+    final         = result["messages"][-1]
     response_text = final.content if hasattr(final, "content") else str(final)
-    out_verdict  = await harness.scan_output(response_text, agent_ctx)
-    safe_response = out_verdict.redacted_text or response_text
+    out_verdict   = await harness.scan_output(response_text, agent_ctx)
 
-    # Clear the "Thinking..." line
-    print(f"  │  {' ' * 40}", end="\r")
-    print(f"  │  {c(BOLD, 'Agent:')}  {safe_response}")
+    if out_verdict.blocked:
+        response_text = "[Response blocked by SHAI — output scan]"
+    else:
+        response_text = out_verdict.redacted_text or response_text
+
+    print(f"  │  {' ' * 50}", end="\r")
+    print(f"  │  {c(BOLD, 'Agent:')}  {response_text}")
     if out_verdict.redacted_text:
-        print(f"  │  {c(YELLOW, '  ↳ (output was redacted by scan_output)')}")
+        print(f"  │  {c(YELLOW, '  ↳ output redacted by scan_output')}")
     print(f"  └{'─'*50}")
 
-    # ── Audit summary ──────────────────────────────────────────────────────
+    # ── Audit summary ─────────────────────────────────────────────────────
     print_audit_summary(sink.events)
 
-    # ── What SHAI did ──────────────────────────────────────────────────────
-    tool_gates = [e for e in sink.events if e["boundary"] == "tool_call_gate"]
-    if tool_gates:
-        print_section("What SHAI enforced")
-        for ev in tool_gates:
-            tool    = ev.get("tool_name", "?")
-            decision = ev["decision"]
-            reason  = ev.get("deny_reason", "")
-            if decision == "allow":
-                print(f"  │  {c(GREEN, '✓')} {c(CYAN, tool)} — allowed through gate")
+    # ── Gate decisions ────────────────────────────────────────────────────
+    gates = [e for e in sink.events if e["boundary"] == "tool_call_gate"]
+    if gates:
+        print_section("Tool gate decisions")
+        for ev in gates:
+            tool = ev.get("tool_name", "?")
+            dec  = ev["decision"]
+            if dec == "allow":
+                print(f"  │  {c(GREEN, '✓')} {c(CYAN, tool)} — allowed")
             else:
-                print(f"  │  {c(RED, '✗')} {c(CYAN, tool)} — {c(RED, 'DENIED')}  {c(DIM, reason)}")
+                print(f"  │  {c(RED, '✗')} {c(CYAN, tool)} — {c(RED, dec.upper())}  "
+                      f"{c(DIM, ev.get('deny_reason', ''))}")
         print(f"  └{'─'*50}")
 
     await harness.close()

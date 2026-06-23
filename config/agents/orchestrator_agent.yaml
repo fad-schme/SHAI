@@ -13,6 +13,9 @@ allowed_tags:
   - read
   - internal
   - external_read
+  - write
+  - external_write
+  - sensitive
 
 policy_rules:
   - id: deny_write_default
@@ -40,6 +43,7 @@ sub_agents:
     allowed_tags:
       - read
       - internal
+      - external_read
     policy_rules:
       - id: research_read_only
         match:

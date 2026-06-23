@@ -20,7 +20,7 @@ from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import run_scan, run_file_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import run as run_gate
-from harness.core.types import BoundaryName, ScanAction, ScanStatus, Severity
+from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.config.loader import load_yaml
 from harness.adapters.secrets.env import EnvVarProvider
 from harness.config.schema import HarnessConfig

@@ -51,4 +51,7 @@ policy:
       reason: "MCP tools require explicit agent-level allow rule"
 
 audit_sinks:
+  - name: file
+    config:
+      path: ./logs/audit.jsonl
   - name: stdout

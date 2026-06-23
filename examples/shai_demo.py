@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import sys
-import textwrap
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -140,46 +139,24 @@ async def _write_file(path: str, content: str) -> str:
 
 # ── Harness setup ─────────────────────────────────────────────────────────
 
+# ── Harness setup ─────────────────────────────────────────────────────────
+# Loads config/harness.yaml and config/agents/orchestrator_agent.yaml.
+# Edit those files to change scanner behaviour, rate limits, policy rules,
+# and actions (block / alert / redact) without touching any code.
+
+CONFIG      = Path(__file__).parent.parent / "config"
+HARNESS_CFG = CONFIG / "harness.yaml"
+AGENT_CFG   = CONFIG / "agents" / "orchestrator_agent.yaml"
+
+
 async def setup() -> tuple[SHAI, AgentContext, CaptureSink]:
-    import tempfile
-
-    cfg = Path(tempfile.mkdtemp()) / "harness.yaml"
-    cfg.write_text(textwrap.dedent("""\
-        version: 1
-        tenant_id: "shai-demo"
-        scan_input:
-          enabled: true
-          block_at: high
-          scanners:
-            - name: regex_pii
-            - name: injection_scan
-        scan_output:
-          enabled: true
-          block_at: high
-          scanners:
-            - name: regex_pii
-        scan_tool_result:
-          enabled: true
-          block_at: high
-        check_tool_call:
-          rate_limit:
-            enabled: true
-            window_seconds: 60
-            max_calls_per_window: 20
-            max_calls_per_tool: 3
-          arg_scanners:
-            - name: regex_pii
-          scan_args_for_tags:
-            - sensitive
-        policy:
-          name: rules
-        audit_sinks:
-          - name: stdout
-    """))
-
-    harness = await SHAI.from_yaml(cfg)
+    harness = await SHAI.from_yaml(HARNESS_CFG)
     sink = CaptureSink()
-    harness._emitter._sinks = [sink]   # swap stdout sink for capture
+    # Keep file sink (writes to logs/audit.jsonl) but drop stdout sink
+    # so raw JSONL doesn't interleave with the formatted scenario output.
+    file_sinks = [s for s in harness._emitter._sinks
+                  if s.name != "stdout"]
+    harness._emitter._sinks = file_sinks + [sink]
 
     await harness.register_tools([
         Tool(name="search_docs", tags=["read", "internal"],        transport=Transport.LOCAL),
@@ -189,54 +166,8 @@ async def setup() -> tuple[SHAI, AgentContext, CaptureSink]:
         Tool(name="write_file",  tags=["write", "sensitive"],      transport=Transport.LOCAL),
     ])
 
-    agent = Path(tempfile.mkdtemp()) / "agent.yaml"
-    agent.write_text(textwrap.dedent("""\
-        id: orchestrator_agent
-        allowed_tool_names:
-          - search_docs
-          - get_weather
-          - send_alert
-          - read_file
-          - write_file
-        allowed_tags:
-          - read
-          - internal
-          - external_read
-          - write
-          - external_write
-          - sensitive
-        policy_rules:
-          - id: deny_write_by_default
-            match:
-              tool_tags: [write]
-            action: deny
-            reason: "write tools require explicit approval"
-          - id: allow_read_tools
-            match:
-              tool_tags: [read]
-            action: allow
-        audit_tags:
-          env: demo
-        sub_agents:
-          - id: research_sub
-            allowed_tool_names:
-              - search_docs
-              - get_weather
-            allowed_tags:
-              - read
-              - internal
-              - external_read
-            policy_rules:
-              - id: research_read_only
-                match:
-                  tool_tags: [write]
-                action: deny
-                reason: "research_sub cannot write"
-    """))
-
-    await harness.load_agent(agent)
+    await harness.load_agent(AGENT_CFG)
     return harness, AgentContext(agent_id="orchestrator_agent"), sink
-
 
 # ── Scenarios ─────────────────────────────────────────────────────────────
 

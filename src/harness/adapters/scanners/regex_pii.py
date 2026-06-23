@@ -1,15 +1,18 @@
-"""RegexPIIScanner — detects common PII patterns using compiled regex.
+"""RegexPIIScanner — detects common PII and credential patterns.
 
 Reference implementation. No external dependencies. Returns immediately —
 async def for Protocol compliance only.
 
 Pattern categories:
-  email          medium   RFC-5322-ish common shapes
-  phone          medium   US + international formats
-  ssn            high     US Social Security Number
-  credit_card    high     Luhn-validated 13-16 digit sequences
-  ipv4           low      dotted-quad addresses
-  api_key_like   medium   long base64/hex tokens (32+ chars)
+  pii.email          medium   RFC-5322-ish common shapes
+  pii.phone          medium   US + international formats
+  pii.ssn            high     US Social Security Number
+  pii.credit_card    high     Luhn-validated 13–16 digit sequences
+  network.ipv4       low      dotted-quad addresses
+  secret.api_key     medium   long base64/hex tokens (32+ chars)
+  secret.credential  high     inline credential disclosure
+                              e.g. "my password is X", "credentials: X",
+                              "token: X", "api_key=X"
 
 Redaction: replaces each match with [REDACTED:<category>].
 Finding.detail: never contains the matched text — category only.
@@ -17,7 +20,6 @@ Finding.detail: never contains the matched text — category only.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 
 from harness.adapters.scanners.base import ScanResult
 from harness.core.context import AgentContext
@@ -59,9 +61,23 @@ _PATTERNS: list[tuple[str, Severity, re.Pattern]] = [
         ),
     ),
     (
-        "secret.api_key_like",
+        "secret.api_key",
         Severity.MEDIUM,
         re.compile(r"\b[A-Za-z0-9+/]{32,}={0,2}\b"),
+    ),
+    (
+        "secret.credential",
+        Severity.HIGH,
+        # Matches: "my password is X", "password: X", "credentials: X",
+        # "token: X", "api_key=X", "secret: X", "passwd X" etc.
+        # The value capture group matches non-whitespace sequences of 6+ chars
+        # following the keyword, up to end-of-token.
+        re.compile(
+            r"(?i)\b(?:password|passwd|credentials?|secret|token|api[_\-]?key"
+            r"|auth[_\-]?token|access[_\-]?key)\b"
+            r"(?:\s*(?:is|are):?\s*|\s*[:=]\s*|\s+)"
+            r"([^\s,;\"'`]{6,})"
+        ),
     ),
 ]
 
@@ -75,7 +91,7 @@ class RegexPIIScanner:
         """
         Args:
             categories: list of category names to enable (default: all).
-                        e.g. ["pii.email", "pii.ssn"]
+                        e.g. ["pii.email", "pii.ssn", "secret.credential"]
         """
         if categories:
             self._patterns = [(n, s, p) for n, s, p in _PATTERNS if n in categories]
@@ -92,7 +108,6 @@ class RegexPIIScanner:
                     scanner=self.name,
                     category=category,
                     severity=severity,
-                    span=(m.start(), m.end()),
                     detail=f"{category} pattern detected",  # never the matched text
                 ))
 
