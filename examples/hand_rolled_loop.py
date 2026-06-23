@@ -1,19 +1,16 @@
 """hand_rolled_loop.py — canonical SHAI integration reference.
 
 Demonstrates the full per-turn flow with a hand-rolled agent loop:
-  load_sources → scan_input → [tool call gates] → scan_output → unload_sources
+  scan_input → check_tool_call → scan_tool_result → scan_output
+
+Configuration is loaded from config/harness.yaml and
+config/agents/orchestrator_agent.yaml — edit those files to change
+scanner actions, rate limits, and policy rules.
 
 Run from the repo root:
     python examples/hand_rolled_loop.py
 
-Expected output: JSONL audit events on stdout, plus a printed summary.
-
 Requires: pip install -e ".[dev]"
-
-User-managed config files live in config/ at the repo root.
-Developers edit config/harness.yaml, config/agents/, and config/policies/
-to configure SHAI for their deployment. These files are never inside the
-package.
 """
 from __future__ import annotations
 
@@ -21,14 +18,13 @@ import asyncio
 import sys
 from pathlib import Path
 
-# Allow running from repo root without install
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from harness import Harness, Tool
+from harness import SHAI, Tool
+from harness.core.context import AgentContext
 from harness.core.types import Transport
 
-# User-managed config — lives outside the package
-CONFIG      = Path(__file__).parent.parent / "config"
+CONFIG       = Path(__file__).parent.parent / "config"
 HARNESS_YAML = CONFIG / "harness.yaml"
 AGENT_YAML   = CONFIG / "agents" / "orchestrator_agent.yaml"
 
@@ -38,8 +34,8 @@ async def main() -> None:
     print("SHAI — hand-rolled loop example")
     print("=" * 60)
 
-    # ── 1. Build harness from user config ─────────────────────────────────
-    harness = Harness.from_yaml(HARNESS_YAML)
+    # ── 1. Build harness from config ──────────────────────────────────────
+    harness = await SHAI.from_yaml(HARNESS_YAML)
 
     # ── 2. Register local tools at startup ───────────────────────────────
     await harness.register_tools([
@@ -48,65 +44,73 @@ async def main() -> None:
         Tool(name="list_inbox",  tags=["read", "internal"],            transport=Transport.LOCAL),
     ])
 
-    # ── 3. Load agent — returns the AgentContext ready for use ────────
-    agent = await harness.load_agent(AGENT_YAML)
+    # ── 3. Load agent ─────────────────────────────────────────────────────
+    # Tools are resolved once here — no per-turn registry lookup.
+    ctx = await harness.load_agent(AGENT_YAML)
 
     print("\n── Turn start ───────────────────────────────────────────────")
 
-    # ── 5. load_sources ───────────────────────────────────────────────────
-
-    # ── 6. scan_input ─────────────────────────────────────────────────────
+    # ── 4. scan_input ─────────────────────────────────────────────────────
     user_text = "Please search the docs for the onboarding guide."
-    verdict = await harness.scan_input(user_text, agent)
-    print(f"[scan_input]      blocked={verdict.blocked}  findings={len(verdict.findings)}")
+    verdict = await harness.scan_input(user_text, ctx)
+    print(f"[scan_input]      status={verdict.status}  findings={len(verdict.findings)}")
     if verdict.blocked:
         print("  Input blocked — turn aborted.")
+        await harness.close()
         return
+    safe_input = verdict.redacted_text or user_text
 
-    # ── 7a. Tool call — ALLOW path ────────────────────────────────────────
+    # ── 5. check_tool_call — ALLOW path ──────────────────────────────────
     gate = await harness.check_tool_call(
         "search_docs",
         {"query": "onboarding guide", "limit": 5},
-        agent,
+        ctx,
     )
     print(f"[check_tool_call] search_docs  allowed={gate.allowed}  reason={gate.deny_reason!r}")
     if gate.allowed:
-        tool_result = "Found 3 documents: onboarding.pdf, setup.md, faq.html"
-        print(f"  → tool result: {tool_result!r}")
+        # Agent dispatches with effective args (redacted_args if policy redacted them)
+        effective_args = gate.redacted_args or {"query": "onboarding guide", "limit": 5}
+        raw_result = "Found 3 documents: onboarding.pdf, setup.md, faq.html"
 
-    # ── 7b. Tool call — DENY path ─────────────────────────────────────────
+        # ── 6. scan_tool_result ───────────────────────────────────────────
+        tverdict = await harness.scan_tool_result(raw_result, ctx)
+        print(f"[scan_tool_result] status={tverdict.status}  findings={len(tverdict.findings)}")
+        if tverdict.blocked:
+            raw_result = "[tool result blocked — indirect injection detected]"
+        else:
+            raw_result = tverdict.redacted_text or raw_result
+        print(f"  → safe result: {raw_result!r}")
+
+    # ── 7. check_tool_call — DENY path ────────────────────────────────────
     gate2 = await harness.check_tool_call(
         "send_email",
         {"to": "bob@example.com", "subject": "test", "body": "hello"},
-        agent,
+        ctx,
     )
     print(f"[check_tool_call] send_email   allowed={gate2.allowed}  reason={gate2.deny_reason!r}")
 
     # ── 8. scan_output ────────────────────────────────────────────────────
     llm_response = "Here are the docs I found: onboarding.pdf, setup.md, faq.html"
-    out_verdict = await harness.scan_output(llm_response, agent)
-    print(f"[scan_output]     blocked={out_verdict.blocked}  findings={len(out_verdict.findings)}")
+    out_verdict = await harness.scan_output(llm_response, ctx)
+    print(f"[scan_output]     status={out_verdict.status}  findings={len(out_verdict.findings)}")
     final_response = out_verdict.redacted_text or llm_response
-    print(f"\n── Agent response ───────────────────────────────────────────")
+
+    print("\n── Agent response ───────────────────────────────────────────")
     print(f"  {final_response!r}")
 
-    # ── 9. unload_sources ─────────────────────────────────────────────────
-    print("\n── Turn end ─────────────────────────────────────────────────")
-
-    # ── 10. Subagent example ──────────────────────────────────────────────
+    # ── 9. Subagent example ───────────────────────────────────────────────
     print("\n── Subagent turn ────────────────────────────────────────────")
-    child_agent = harness.scope_context_for_subagent(agent, sub_agent_id="research_sub")
-    print(f"[scope_subagent]  agent_id={child_agent.agent_id}  sub_agent_id={child_agent.sub_agent_id}")
-    print(f"                  allowed_tags={child_agent.allowed_tags}")
+    child_ctx = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
+    print(f"[scope_subagent]  agent_id={child_ctx.agent_id}  sub_agent_id={child_ctx.sub_agent_id}")
+    print(f"                  allowed_tags={child_ctx.allowed_tags}")
 
-    child_
-    g1 = await harness.check_tool_call("search_docs", {"query": "policy"}, child_agent)
-    g2 = await harness.check_tool_call("send_email",  {"to": "x@y.com"},   child_agent)
+    g1 = await harness.check_tool_call("search_docs", {"query": "policy"}, child_ctx)
+    g2 = await harness.check_tool_call("send_email",  {"to": "x@y.com"},   child_ctx)
     print(f"[check_tool_call] search_docs  allowed={g1.allowed}")
     print(f"[check_tool_call] send_email   allowed={g2.allowed}  reason={g2.deny_reason!r}")
 
     await harness.close()
-    print("\nDone. JSONL audit events are printed above each section.")
+    print("\nDone. Audit events written to logs/audit.jsonl")
 
 
 if __name__ == "__main__":

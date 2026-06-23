@@ -4,7 +4,7 @@ SecretsProvider:  Abstract interface. Every secrets backend implements this.
 Secret:           Value object returned by resolve() — value + TTL + version.
 EnvVarProvider:   Reference implementation. Reads from environment variables.
 
-Called only at Harness.from_yaml() time — never on the hot path.
+Called only at SHAI.from_yaml() time — never on the hot path.
 resolve() is synchronous: secret resolution happens once at startup.
 
 secret:// URI convention

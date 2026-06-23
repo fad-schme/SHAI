@@ -1,6 +1,6 @@
 """injection_scan.py — YAML-driven injection-pattern scanner.
 
-Replaces basic_injection.py and yaml_rule_scanner.py.
+Replaces the earlier basic_injection and yaml_rule_scanner implementations.
 Default pattern catalog: injection_patterns.yaml (ships with harness).
 Alternate catalog for document content: patterns_for_doc.yaml.
 

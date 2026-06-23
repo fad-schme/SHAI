@@ -27,7 +27,7 @@ async def _build_harness(tmp_path: Path, *, scan: bool = True) -> tuple[SHAI, St
     buf = StringIO()
     cfg = tmp_path / "h.yaml"
     enabled = "true" if scan else "false"
-    scanners = "  scanners:\n    - name: regex_pii\n    - name: basic_injection\n" if scan else ""
+    scanners = "  scanners:\n    - name: regex_pii\n    - name: injection_scan\n" if scan else ""
     cfg.write_text(
         f"version: 1\n"
         f"scan_input:\n  enabled: {enabled}\n{scanners}"
