@@ -1,166 +1,211 @@
 # Policy
 
-SHAI uses an intersection model: agent-scoped rules are evaluated first, then global rules. First deny anywhere wins. Default allow on no match.
+SHAI uses an intersection model: agent-scoped rules are evaluated first, then global rules. First match wins. Default allow on no match.
 
 ---
 
-## Rule grammar
+## Rule schema
 
 ```yaml
 - id: my_rule            # snake_case, unique within the rule set
-  match:                 # all declared conditions must be satisfied
-    tool_names: []       # tool.name must be in this list
-    tool_tags:  []       # tool.tags must intersect this list
-    transport:  []       # tool.transport must be in this list (local|mcp|skill)
-    agent_ids:  []       # ctx.agent_id must be in this list
+  match:                 # all declared conditions must be satisfied (AND semantics)
+    tool_names:    []    # tool.name must be in this list
+    tool_tags:     []    # tool.tags must intersect this list (any tag matches)
+    transport:     []    # tool.transport: local | mcp | skill
+    agent_ids:     []    # ctx.agent_id must be in this list
     sub_agent_ids: []    # ctx.sub_agent_id must be in this list
-    source_tags: []      # source.tags must intersect (for evaluate_source only)
-    any: []              # OR combinator — any sub-match satisfies
-    all: []              # AND combinator — all sub-matches must satisfy
-    not: {}              # NOT combinator — sub-match must not satisfy
+    source_tags:   []    # source.tags must intersect (evaluate_source only)
+    any:           []    # OR: any sub-match satisfies
+    all:           []    # AND: all sub-matches must satisfy
+    not:           {}    # NOT: sub-match must not satisfy
   action: deny           # allow | deny | redact | suppress
   reason: "why"          # required for deny
   redact:                # required for redact
-    field_name: "***"
+    field_name: "[REDACTED]"
 ```
 
-All `match` conditions are optional. An empty `match` matches everything.
+All `match` conditions are optional. An empty `match: {}` matches every call.
 
 ---
 
 ## Intersection model
 
 ```
-Turn: agent_id=orchestrator_agent, sub_agent_id=research_sub
+Turn: agent_id=orchestrator_agent, sub_agent_id=research_sub, tool=search_docs
 
-Pass 1: subagent rules (research_sub.policy_rules) + parent rules (orchestrator_agent.policy_rules)
-Pass 2: global rules (config/policies/rules.yaml, loaded by RuleBasedPolicy)
+Pass 1: research_sub.policy_rules + orchestrator_agent.policy_rules  (in that order)
+Pass 2: global rules from rules_path
 
-First deny in pass 1 OR pass 2 → GateDecision(allowed=False)
-First allow in pass 1 → GateDecision(allowed=True) immediately
-No match in either pass → default allow
+First deny in pass 1 or pass 2 → GateDecision(allowed=False)
+First allow in pass 1           → GateDecision(allowed=True)  ← does not skip pass 2 global denies
+No match in either pass         → default allow
 ```
 
-**Important:** an `allow` rule in pass 1 (agent rules) returns immediately before pass 2 (global rules). To enforce a global deny that cannot be overridden by agent rules, ensure the deny rule fires in pass 2 (global), and that no agent-level allow can fire first. Use `agent_ids` in the global rule to scope it if needed.
+**Important:** an `allow` in pass 1 (agent rules) does not skip pass 2 global denies. If you have a global deny that must fire regardless of agent rules, it will fire in pass 2 after agent rules complete without a match.
+
+To enforce a global deny that agent rules cannot override:
+
+```yaml
+# Global rules — evaluated after agent rules
+- id: deny_pii_tools_globally
+  match:
+    tool_tags: [pii_access]
+    agent_ids: [untrusted_agent]   # scope to agent so only applies where needed
+  action: deny
+  reason: "PII access not permitted for untrusted_agent"
+```
 
 ---
 
-## Rule evaluation
+## Rule evaluation order
 
-Rules are evaluated in declaration order within each list. Put more-specific rules before less-specific ones.
+Rules are evaluated in declaration order within each pass. Put more-specific rules before less-specific ones.
 
 ```yaml
 policy_rules:
-  # More specific first
+  # More specific first — allow this one tool
   - id: allow_search
     match:
       tool_names: [search_docs]
     action: allow
 
   # Less specific catch-all
-  - id: deny_all_external
+  - id: deny_all_reads
     match:
-      tool_tags: [external_write]
+      tool_tags: [read]
     action: deny
-    reason: "external writes not permitted by default"
+    reason: "read tools denied except search_docs"
 ```
 
 ---
 
-## Source suppression
+## Actions
 
-`action: suppress` is only meaningful in `evaluate_source()`. It prevents a tool source from activating for a given agent/turn combination.
-
-```yaml
-- id: suppress_mcp_for_unvetted
-  match:
-    source_tags: [mcp]
-    agent_ids: [unvetted_agent]
-  action: suppress
-  reason: "MCP not permitted for unvetted agents"
-```
-
----
-
-## Loading rules
-
-### From agent-xx.yaml (agent-scoped)
-
-```yaml
-policy_rules:
-  - id: my_rule
-    match: {tool_tags: [external_write]}
-    action: deny
-    reason: "not allowed"
-```
-
-### From rules.yaml (global)
-
-```yaml
-# config/policies/rules.yaml
-- id: global_deny_mcp
-  match:
-    transport: [mcp]
-  action: deny
-  reason: "MCP requires enterprise subscription"
-```
-
-Referenced in `harness.yaml`:
-
-```yaml
-policy:
-  name: rules
-  config:
-    rules_path: ./config/policies/rules.yaml
-```
-
----
-
-## Writing a production PolicyEngine (harness-enterprise)
-
-For OPA or Cedar in `harness-enterprise`, implement the `PolicyEngine` Protocol:
-
-```python
-class OPAPolicy:
-    name = "opa"
-
-    async def evaluate(self, tool, args, ctx, *, rules=None) -> PolicyDecision:
-        # Call OPA REST API
-        ...
-
-    async def evaluate_source(self, source, ctx) -> SourceDecision:
-        ...
-```
-
-Register under `harness.policy` entry point and reference by name in `harness.yaml`.
+| Action | Behaviour |
+|---|---|
+| `allow` | Returns `GateDecision(allowed=True)` immediately. Pass 2 still runs for global denies. |
+| `deny` | Returns `GateDecision(allowed=False, deny_reason=rule.reason)`. |
+| `redact` | Returns `GateDecision(allowed=True, redacted_args=rule.redact)`. Agent dispatches with `redacted_args`. |
+| `suppress` | Used in `evaluate_source()` only. Deactivates the source for this agent/turn. |
 
 ---
 
 ## Combinators
 
 ```yaml
-# OR: deny if tool is external_write OR sensitive
-- id: deny_risky
+# OR: allow if tool is search_docs OR fetch_doc
+- id: allow_read_tools
   match:
     any:
-      - tool_tags: [external_write]
-      - tool_tags: [sensitive]
-  action: deny
-  reason: "risky tool"
+      - tool_names: [search_docs]
+      - tool_names: [fetch_doc]
+  action: allow
 
-# AND: deny only if BOTH external_write AND mcp
-- id: deny_external_mcp
+# AND: deny only when both conditions are true
+- id: deny_external_mcp_for_sub
   match:
     all:
-      - tool_tags: [external_write]
       - transport: [mcp]
+      - tool_tags: [external]
   action: deny
-  reason: "external MCP not permitted"
+  reason: "external MCP denied for subagents"
 
-# NOT: allow everything except external_write
-- id: allow_non_external
+# NOT: deny everything except local tools
+- id: deny_non_local
   match:
     not:
-      tool_tags: [external_write]
-  action: allow
+      transport: [local]
+  action: deny
+  reason: "only local tools permitted"
 ```
+
+---
+
+## Transport-based rules
+
+The `transport` field distinguishes tools by origin:
+
+```yaml
+# Allow local and skill tools; require explicit approval for MCP
+- id: allow_local_skill
+  match:
+    transport: [local, skill]
+  action: allow
+
+- id: deny_mcp_by_default
+  match:
+    transport: [mcp]
+  action: deny
+  reason: "MCP requires explicit agent-level allow rule"
+```
+
+Agent-level rules can then allow specific MCP tools:
+
+```yaml
+# In agent YAML — allows slack MCP tools for this agent
+policy_rules:
+  - id: allow_slack_mcp
+    match:
+      transport: [mcp]
+      tool_tags: [messaging]
+    action: allow
+```
+
+---
+
+## Source suppression
+
+`evaluate_source()` runs before `source.load()` at `load_agent()` time. A `suppress` rule deactivates the source entirely for that agent:
+
+```yaml
+- id: suppress_external_mcp_for_untrusted
+  match:
+    source_tags: [external_mcp]
+    agent_ids: [untrusted_agent]
+  action: suppress
+  reason: "external MCP not permitted for untrusted_agent"
+```
+
+---
+
+## Global rules file
+
+```yaml
+# config/policies/rules.yaml
+# Loaded by RuleBasedPolicy at startup. Not reloaded at runtime.
+
+- id: allow_local_default
+  match:
+    transport: [local, skill]
+  action: allow
+
+- id: deny_mcp_default
+  match:
+    transport: [mcp]
+  action: deny
+  reason: "MCP requires explicit agent-level permission"
+
+- id: deny_external_write_globally
+  match:
+    tool_tags: [external_write]
+  action: deny
+  reason: "external_write requires explicit agent-level allow"
+```
+
+---
+
+## RuleBasedPolicy
+
+Reference `PolicyEngine` backed by YAML-declared rules. Constructed at `from_yaml()` time.
+
+```python
+# In harness.yaml
+policy:
+  name: rules
+  config:
+    rules_path: ./config/policies/rules.yaml
+```
+
+Rules are validated at construction. Changes to `rules_path` require process restart — the file is not watched or reloaded at runtime.
+
+Enterprise engines (OPA, Cedar) implement the `PolicyEngine` protocol and are registered under `harness.policy`.

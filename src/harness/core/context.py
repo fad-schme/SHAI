@@ -51,14 +51,6 @@ class AgentContext(BaseModel, frozen=True):
             allowed_tags=allowed_tags,
         )
 
-    def agent_key(self) -> tuple[str, str]:
-        """Canonical key for logging and human-readable identification.
-
-        Returns (agent_id, sub_agent_id or ""). Views are keyed on id(ctx),
-        not agent_key(), to support concurrent same-agent turns.
-        """
-        return (self.agent_id, self.sub_agent_id or "")
-
     def to_log_fields(self) -> dict[str, str | None]:
         """Canonical logging dict. Every logger calls this."""
         return {

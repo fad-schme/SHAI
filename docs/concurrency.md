@@ -1,94 +1,66 @@
 # Concurrency
 
-SHAI is designed for concurrent async use within a single process. One `Harness` instance serves many concurrent agent turns safely.
+One `SHAI` instance serves many concurrent agent turns safely.
 
 ---
 
-## View isolation
+## Threading model
 
-Each call to `harness.load_sources(ctx)` creates a fresh `InMemoryRegistryView` keyed by `id(ctx)`. This is Python's object identity — two distinct `RuntimeContext` objects always have distinct keys even if they represent the same logical agent.
+| Component | Concurrency mechanism |
+|---|---|
+| `ToolRegistry` | `threading.Lock` for writes (startup only); lock-free dict reads on hot path |
+| `AgentRegistry` | Same as `ToolRegistry` |
+| `RateLimiter` | `threading.Lock` held only for deque operations (O(1) amortised) |
+| `AuditEmitter` | `asyncio.gather` for concurrent sink fan-out |
+| `SourceRegistry.activate()` | `asyncio.gather` for concurrent source loading |
+| `FileSink` | `asyncio.Lock` serialises concurrent `emit()` calls; `run_in_executor` offloads blocking writes |
+| `_agent_tools` | Dict populated at `load_agent()` time, read lock-free on every turn |
+
+---
+
+## Turn isolation
+
+Each turn is identified by the `AgentContext` object passed to every boundary call. `AgentContext` is frozen (immutable) and carries `agent_id`, `sub_agent_id`, and `allowed_tags`.
+
+Two concurrent turns for the same agent are distinguished by object identity — each holds a different `AgentContext` instance. There is no shared per-turn mutable state.
+
+`_agent_tools[agent_id]` is a dict keyed by agent ID. It is populated once at `load_agent()` and read lock-free on every turn. Concurrent turns for the same agent read the same dict — which is safe because the dict is never mutated on the hot path.
+
+---
+
+## Concurrent parent + subagent turns
+
+A common pattern — orchestrator turn and research subagent turn running simultaneously:
 
 ```python
-# Two concurrent turns for the same agent — isolated by object identity
-ctx_a = RuntimeContext(agent_id="orchestrator_agent")
-ctx_b = RuntimeContext(agent_id="orchestrator_agent")
+ctx       = await harness.load_agent("agents/orchestrator.yaml")
+child_ctx = harness.scope_context_for_subagent(ctx, "research_sub")
 
-assert id(ctx_a) != id(ctx_b)   # distinct keys → distinct views
-
-await asyncio.gather(
-    harness.load_sources(ctx_a),
-    harness.load_sources(ctx_b),
-)
-# _views[id(ctx_a)] and _views[id(ctx_b)] are two separate objects
-```
-
-**Why `id(ctx)` and not `agent_key()`?**
-
-`agent_key()` returns `(agent_id, sub_agent_id or "")`. Ten concurrent turns for the same agent would all share one key — last writer wins, earlier turns lose their view. `id(ctx)` gives per-object uniqueness at zero cost.
-
-**Lifetime:** the view lives from `load_sources(ctx)` to `unload_sources(ctx)`. The caller must hold a strong reference to `ctx` for the duration of the turn — if `ctx` is garbage-collected and a new `RuntimeContext` happens to reuse the same `id()`, `check_tool_call` will not find the view and will fall back to a fresh base-registry view.
-
----
-
-## Shared base registry
-
-`InMemoryRegistry` is the shared base. Writes (`register`, `register_many`) hold a `threading.Lock`. Reads (`get`, `list`) are lock-free — GIL-safe in CPython.
-
-**Startup invariant:** `register_tools()` must be called before any `load_sources()` call. Registering tools during a live turn is not supported and may produce inconsistent view snapshots.
-
----
-
-## Audit emission
-
-`AuditEmitter.emit()` fans out to all sinks concurrently via `asyncio.gather`. Individual sink failures are logged and swallowed. All sinks failing raises `AuditEmissionError`.
-
-`StdoutSink` writes synchronously — stdout writes are fast enough that blocking the event loop briefly is acceptable. `FileSink` uses `asyncio.Lock` + `run_in_executor` for ordered, non-blocking file I/O.
-
----
-
-## Thread safety
-
-The harness is async-first. All boundary methods are `async def`. The `threading.Lock` in `InMemoryRegistry` exists to protect startup writes from threads (e.g. a background reload thread). The async boundaries themselves never hold the lock — they read without locking.
-
-`scope_context_for_subagent` is the only synchronous method on the facade. It reads from the registry (lock-free) and constructs a new frozen `RuntimeContext`. It is safe to call from any thread.
-
----
-
-## Parent + subagent concurrent
-
-```python
-parent_ctx = RuntimeContext(agent_id="orchestrator_agent")
-child_ctx  = harness.scope_context_for_subagent(parent_ctx, "research_sub")
-
-# Load both views concurrently
-await asyncio.gather(
-    harness.load_sources(parent_ctx),
-    harness.load_sources(child_ctx),
-)
-
-# Run gates concurrently — each uses its own view
-await asyncio.gather(
-    harness.check_tool_call("search_docs", {}, parent_ctx),
-    harness.check_tool_call("search_docs", {}, child_ctx),
-)
-
-# Unload
-await asyncio.gather(
-    harness.unload_sources(parent_ctx),
-    harness.unload_sources(child_ctx),
+# Run concurrently — both use the same harness, different contexts
+results = await asyncio.gather(
+    orchestrator_turn(harness, ctx),
+    research_turn(harness, child_ctx),
 )
 ```
 
-The parent and child views are distinct objects at distinct `id()` keys. Tool additions to the child's overlay never appear in the parent's view.
+Both turns share `_agent_tools["orchestrator_agent"]`. The subagent's tool visibility is enforced by `check_tool_call` L2 (tag gate) at call time, not by a separate tool set. This is safe because `child_ctx.allowed_tags` is immutable.
+
+---
+
+## Rate limiter concurrency
+
+`RateLimiter` holds a single `threading.Lock` for all bucket operations. The lock is acquired for the duration of the deque prune + append — typically microseconds. It is never held across I/O or async boundaries.
+
+Under high concurrency the lock becomes a brief serialisation point on `check_tool_call`. This is intentional — the rate limiter's global budget counter must be exact.
 
 ---
 
 ## Hazards to avoid
 
-**Don't reuse a RuntimeContext across turns.** Create a fresh one per turn. The `id(ctx)` key is per-object, not per-turn-semantics.
+**Do not share `AgentContext` between turns.** `AgentContext` is frozen but contextually meaningful — a context created for one turn should not be reused for a different turn of the same agent. Use `AgentContext(agent_id=...)` for each new turn.
 
-**Don't call `load_sources` twice with the same ctx without calling `unload_sources` in between.** The second call overwrites the view in `_views` — the first view is lost.
+**Do not call `register_tools()` on the hot path.** `register_tools()` acquires the `ToolRegistry` write lock and re-resolves all loaded agents. It is designed for startup. Calling it per-turn will serialize concurrent turns through the lock.
 
-**Don't register tools after startup.** `register_tools()` acquires a threading.Lock. Calling it mid-turn may block coroutines briefly and will not update views that are already open.
+**Do not call `load_agent()` per turn.** `load_agent()` activates sources (potentially network calls for MCP), registers tools, and populates `_agent_tools`. It is a startup operation. Call it once; hold the returned `AgentContext` for the agent's lifetime.
 
-**Don't hold ctx beyond the turn.** If `ctx` is held in a long-lived data structure, its `id()` may appear in `_views` indefinitely — the view is never GC'd and tools from old source activations remain visible.
+**Do not mutate `gate.redacted_args`.** `GateDecision.redacted_args` is the policy engine's output. Callers should use it as-is or copy it before modification.

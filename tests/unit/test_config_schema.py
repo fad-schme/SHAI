@@ -52,3 +52,4 @@ def test_enabled_scan_with_scanners_ok():
     bc = BoundaryConfig(enabled=True, scanners=[{"name": "regex_pii"}])
     assert bc.enabled
     assert bc.scanners[0].name == "regex_pii"
+

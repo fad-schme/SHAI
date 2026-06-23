@@ -49,11 +49,6 @@ class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
     scanners:            list[AdapterRef] = Field(default_factory=list)
     max_size_mb:         float        = 100.0
 
-    @model_validator(mode="after")
-    def _enabled_needs_scanners(self) -> "FileScanConfig":
-        if self.enabled and not self.scanners:
-            raise ValueError("scanners must be non-empty when scan_file is enabled")
-        return self
 
 
 
@@ -131,6 +126,7 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     url:         str | None = None
     credentials: dict[str, str] = Field(default_factory=dict)
     tags:        list[str] = Field(default_factory=list)
+    tool_names:  list[str] = Field(default_factory=list)  # local sources only: subset of tools to expose
 
     @model_validator(mode="after")
     def _transport_constraints(self) -> "SourceConfig":

@@ -12,16 +12,6 @@ def test_basic_construction():
     assert ctx.allowed_tags is None
 
 
-def test_agent_key_top_level():
-    ctx = AgentContext(agent_id="a1")
-    assert ctx.agent_key() == ("a1", "")
-
-
-def test_agent_key_subagent():
-    ctx = AgentContext(agent_id="a1", sub_agent_id="s1")
-    assert ctx.agent_key() == ("a1", "s1")
-
-
 def test_to_log_fields():
     ctx = AgentContext(agent_id="a1", sub_agent_id="sub1")
     fields = ctx.to_log_fields()
@@ -78,10 +68,3 @@ def test_scope_subagent_parent_unchanged():
     ctx   = AgentContext(agent_id="orchestrator")
     child = ctx.scope_subagent("research_sub", allowed_tags=["read"])
     assert ctx.sub_agent_id is None   # parent not mutated
-
-
-def test_scope_subagent_key_distinct_from_parent():
-    ctx   = AgentContext(agent_id="orchestrator")
-    child = ctx.scope_subagent("research_sub", allowed_tags=["read"])
-    assert ctx.agent_key()   == ("orchestrator", "")
-    assert child.agent_key() == ("orchestrator", "research_sub")

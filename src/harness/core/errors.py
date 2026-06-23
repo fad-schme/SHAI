@@ -69,5 +69,18 @@ class AuditEmissionError(HarnessError):
     """All configured sinks failed. Single sink failure is logged and swallowed."""
 
 class MCPInvocationError(HarnessError):
-    """MCP server returned a JSON-RPC error during tool invocation."""
-    pass
+    """MCP server returned a JSON-RPC error during tool invocation.
+
+    Attributes: source, tool, code, message mirror the JSON-RPC error fields.
+    """
+
+    def __init__(self, source: str, tool: str, code: int, message: str) -> None:
+        self.source  = source
+        self.tool    = tool
+        self.code    = code
+        self.message = message
+        super().__init__(
+            f"MCP invocation error [{source}] tool={tool!r} "
+            f"code={code} message={message!r}",
+            op="mcp_invoke",
+        )

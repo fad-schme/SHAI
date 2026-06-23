@@ -32,7 +32,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, Iterable, Protocol
 
-from harness.core.errors import ConfigError
+from harness.core.errors import ConfigError, MCPInvocationError
 from harness.core.types import Transport
 from harness.tools.registry import ToolRegistry
 from harness.tools.tool import Tool
@@ -632,30 +632,6 @@ class MCPSource:
             else:
                 headers[key] = value
         return headers
-
-
-# ── MCPInvocationError ────────────────────────────────────────────────────
-
-class MCPInvocationError(Exception):
-    """Raised when an MCP server returns a JSON-RPC error during tool invocation.
-
-    Attributes
-    ----------
-    source:  name of the MCPSource that raised
-    tool:    tool name (or method) that failed
-    code:    JSON-RPC error code
-    message: error message from the server
-    """
-
-    def __init__(self, source: str, tool: str, code: int, message: str) -> None:
-        self.source  = source
-        self.tool    = tool
-        self.code    = code
-        self.message = message
-        super().__init__(
-            f"MCP invocation error [{source}] tool={tool!r} "
-            f"code={code} message={message!r}"
-        )
 
 
 # ── SSE parsing helpers ───────────────────────────────────────────────────

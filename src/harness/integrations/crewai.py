@@ -65,7 +65,7 @@ def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
         return await asyncio.to_thread(tool, **effective)
 
     def _gated_sync(**kwargs: Any) -> Any:
-        return asyncio.get_event_loop().run_until_complete(_gated_async(**kwargs))
+        return asyncio.run(_gated_async(**kwargs))
 
     # Try to build a proper CrewAI StructuredTool if crewai is installed
     try:

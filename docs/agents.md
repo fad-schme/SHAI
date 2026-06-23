@@ -1,17 +1,17 @@
 # Agents
 
-An agent is a named identity with a declared capability set. Every boundary call carries a `RuntimeContext` that identifies which agent (and optionally which subagent) is making the call.
+An agent is a named identity with a declared capability set. Every boundary call carries an `AgentContext` that identifies which agent (and optionally which subagent) is making the call.
 
 ---
 
 ## agent-xx.yaml schema
 
 ```yaml
-id: orchestrator_agent          # snake_case, unique within this harness
+id: orchestrator_agent          # snake_case: ^[a-z][a-z0-9_]*$, unique within harness
 display_name: "Orchestrator"    # optional, human-readable
 version: "1.0.0"                # optional
 
-# Capability declarations — mandatory
+# Capability declarations — mandatory, must be non-empty
 allowed_tool_names:
   - search_docs
   - send_email
@@ -22,9 +22,9 @@ allowed_tags:
   - internal
   - external_write
 
-# Source activation — which tool sources to load at turn start
+# Tool source activation — names must match sources declared in harness.yaml
 sources:
-  - docs_skill
+  - docs_local
   - outlook_mcp
 
 # Agent-scoped policy rules (evaluated before global rules)
@@ -39,17 +39,17 @@ policy_rules:
       tool_names: [send_email, list_inbox]
     action: allow
 
-log_level: DEBUG                # DEBUG | INFO | WARNING | ERROR
+log_level: DEBUG    # DEBUG | INFO | WARNING | ERROR
 audit_tags:
   team: platform
   env: prod
 
-# Subagents declared inside the parent
+# Subagents — capabilities always ⊆ parent
 sub_agents:
   - id: research_sub
-    allowed_tool_names: [search_docs]   # ⊆ parent allowed_tool_names
-    allowed_tags: [read, internal]      # ⊆ parent allowed_tags
-    sources: [docs_skill]
+    allowed_tool_names: [search_docs]      # ⊆ parent allowed_tool_names
+    allowed_tags: [read, internal]         # ⊆ parent allowed_tags
+    sources: [docs_local]
     policy_rules:
       - id: research_deny_write
         match:
@@ -60,17 +60,18 @@ sub_agents:
 
 ---
 
-## Cross-field invariants enforced at load time
+## Cross-field invariants enforced at load_agent() time
 
-These are checked at `harness.load_agent()` — not at gate time.
+These are validated when the YAML is parsed — not at gate time.
 
 - `id` must match `^[a-z][a-z0-9_]*$`
 - `allowed_tool_names` and `allowed_tags` must be non-empty
 - Subagent `allowed_tool_names` ⊆ parent `allowed_tool_names`
 - Subagent `allowed_tags` ⊆ parent `allowed_tags`
 - Subagent `id` values must be unique within the parent
-- `deny` rules require `reason`
-- `redact` rules require `redact` dict
+- `deny` rules require a non-empty `reason`
+- `redact` rules require a `redact` mapping
+- `log_level` must be one of `DEBUG`, `INFO`, `WARNING`, `ERROR`
 
 Violations raise `ConfigError` with the field path.
 
@@ -78,61 +79,63 @@ Violations raise `ConfigError` with the field path.
 
 ## Subagent model
 
-```
-orchestrator_agent
-├── research_sub   (read-only)
-└── email_sub      (read + external_write)
-```
-
-One parent → many subagents. One subagent → one parent. A subagent never has its own subagents.
-
-When `scope_context_for_subagent` is called, the harness:
-
-1. Looks up the parent `AgentConfig` by `ctx.agent_id`.
-2. Finds the `SubAgentConfig` with the matching `sub_agent_id`.
-3. Returns a new `RuntimeContext` with `sub_agent_id` set and `allowed_tags` narrowed to the subagent's declared tags.
-
-The returned `RuntimeContext` carries both `agent_id` (parent identity) and `sub_agent_id` (subagent identity). Both are stamped on every `AuditEvent`.
+Subagents are declared inside the parent YAML. They are not separate agents — they are scoped views of the parent's capability set.
 
 ```python
-parent_ctx = RuntimeContext(agent_id="orchestrator_agent")
-child_ctx  = harness.scope_context_for_subagent(parent_ctx, "research_sub")
-# child_ctx.agent_id     == "orchestrator_agent"
+ctx       = await harness.load_agent("agents/orchestrator.yaml")
+child_ctx = harness.scope_context_for_subagent(ctx, "research_sub")
+
+# child_ctx.agent_id     == "orchestrator_agent"  (parent identity preserved)
 # child_ctx.sub_agent_id == "research_sub"
-# child_ctx.allowed_tags == ["read", "internal"]
+# child_ctx.allowed_tags == ["read", "internal"]  (scoped down from parent)
 ```
+
+`scope_context_for_subagent` looks up `SubAgentConfig` from the already-loaded parent config and returns a new frozen `AgentContext`. It raises `SubAgentNotDeclaredError` if the sub_agent_id is not declared under the parent.
+
+In `check_tool_call`, the subagent's `allowed_tool_names` and `policy_rules` are used directly. The parent's `policy_rules` are added after the subagent's (intersection model — both must pass for an allow).
 
 ---
 
-## Registry lifecycle
+## AgentRegistry lifecycle
 
 ```python
-# Startup
-await harness.load_agent("config/agents/orchestrator_agent.yaml")
+# Load (parse + validate + register)
+ctx = await harness.load_agent("agents/my_agent.yaml")
 
-# Runtime update (atomic swap)
-await harness.reload_agent("config/agents/orchestrator_agent.yaml")
+# Reload (atomic replace — old definition kept on validation failure)
+ctx = await harness.reload_agent("agents/my_agent.yaml")
 
-# Shutdown / test cleanup
-await harness.deregister_agent("orchestrator_agent")
-
-# Inspection
-agents = await harness.list_agents()
+# Deregister
+await harness.deregister_agent(ctx.agent_id)
 ```
 
-`get()` (called on the hot path by boundaries) is synchronous and lock-free. Writes (`load`, `reload`, `deregister`) hold a `threading.Lock` for the duration of the dict mutation.
+`load_agent()` is idempotent on identical content — loading the same file twice returns the same `AgentConfig` without error. Loading the same `id` with different content raises `AgentConflictError` — use `reload_agent` instead.
+
+`deregister_agent()` clears the agent's entry from `_agent_tools` and resets the rate limiter for that `agent_id`.
 
 ---
 
 ## audit_tags
 
-`audit_tags` on `AgentConfig` are stamped on every `AuditEvent` emitted during that agent's turns. Use them to correlate events with team, environment, cost centre, or any other dimension relevant to your SIEM queries.
+`audit_tags` in `agent-xx.yaml` are stamped onto every `AuditEvent` emitted for that agent. Use them for SIEM filtering — e.g. `team`, `env`, `cost_center`, `case_id`. They are never set by agent code; they come from the static config.
 
-```yaml
-audit_tags:
-  team: platform
-  env: prod
-  user_id: "{{resolved at runtime via operator code}}"
+```json
+{
+  "audit_tags": {"team": "platform", "env": "prod"}
+}
 ```
 
-`user_id` correlation: the harness does not carry `user_id`. Operators who need user-level audit correlation set `audit_tags: {user_id: <value>}` dynamically on `AgentConfig` before loading, or use a wrapper that stamps it on `extra` in the `AuditEvent`.
+---
+
+## Tool resolution at load_agent() time
+
+Tools are resolved once, not per turn:
+
+1. `SourceRegistry.activate(ctx, cfg.sources)` — activate declared sources, collect their tools
+2. Register source tools into the shared `ToolRegistry`
+3. `_resolve_tools(cfg)` — filter to `allowed_tool_names`
+4. Store in `_agent_tools[cfg.id]`
+
+Every subsequent turn reads from `_agent_tools[cfg.id]` directly — no registry lookup, no source activation.
+
+If `register_tools()` is called after `load_agent()`, all loaded agents are re-resolved automatically so new tools become immediately available.

@@ -1,27 +1,23 @@
 # Boundaries
 
-Three boundaries surround every agent turn. Each emits exactly one `AuditEvent` per call regardless of outcome.
+Four boundaries surround every agent turn. Each emits exactly one `AuditEvent` per call regardless of outcome. No raw text in any event field.
 
 ```
-user text ──► scan_input ──► LLM ──► check_tool_call ──► tool ──► LLM ──► scan_output ──► response
+user text ──► scan_input ──► LLM ──► check_tool_call ──► tool ──► scan_tool_result ──► LLM ──► scan_output ──► response
 ```
 
 ---
 
 ## scan_input
 
-**File:** `boundaries/scan_input.py` (delegates to `boundaries/_scan.py`)
-
-Inspects the user's text before it reaches the LLM.
+Inspects user text before it reaches the LLM. Detects PII, prompt injection, and custom patterns.
 
 | Behaviour | Detail |
 |---|---|
 | Disabled | Emits `AuditEvent(disabled=True, decision=allow)`. Returns `ScanVerdict(blocked=False)`. |
-| Scanners run | Concurrently via `asyncio.gather`. Exceptions per-scanner are logged and treated as empty findings — pipeline continues. |
-| Block threshold | Configurable `block_at` severity (default `high`). Any finding at or above this level sets `blocked=True`. |
-| Redaction | If any scanner returns `redacted_text`, the last one wins. Callers should use `verdict.redacted_text or original_text`. |
-
-**Return type:** `ScanVerdict`
+| Scanners | Run concurrently via `asyncio.gather`. Per-scanner exceptions are logged and treated as empty findings — pipeline never raises. |
+| Block threshold | `block_at` severity (default `high`). Any finding at or above blocks. |
+| Redaction | Last scanner's `redacted_text` wins. Use `verdict.redacted_text or original`. |
 
 ```python
 verdict = await harness.scan_input(user_text, ctx)
@@ -34,49 +30,69 @@ safe_text = verdict.redacted_text or user_text
 
 ## check_tool_call
 
-**File:** `boundaries/check_tool_call.py`
+The mandatory gate. Cannot be disabled. Four layers in strict order. First deny anywhere wins. Exactly one `AuditEvent` per call.
 
-The mandatory gate — cannot be disabled. Four layers in strict order. First deny anywhere wins.
+### Pre-gate — agent registered?
 
-### Layer 1a — agent registered?
+`AgentRegistry.get(ctx.agent_id)` raises `AgentNotRegisteredError` if the agent was never loaded. Mapped to `GateDecision(allowed=False)`.
 
-`AgentRegistry.get(ctx.agent_id)` raises `AgentNotRegisteredError` if the agent was never loaded. Returns `GateDecision(allowed=False)`.
+### L1 — allowed_tool_names
 
-### Layer 1b — allowed_tool_names
+Hard pre-policy gate. `tool_name` must be in `AgentConfig.allowed_tool_names` (or the active `SubAgentConfig.allowed_tool_names`). No policy rule can override this. If the LLM requests a tool not in `allowed_tool_names`, L1 fires before policy runs.
 
-Hard pre-policy gate. `tool_name` must be in `AgentConfig.allowed_tool_names` (or `SubAgentConfig.allowed_tool_names` for subagent calls). Policy cannot override this.
+### L2 — allowed_tags (subagent capability gate)
 
-### Layer 1c — allowed_tags (subagent capability gate)
+Active only when `ctx.allowed_tags is not None` (i.e. a subagent call scoped by `scope_context_for_subagent`). Every tag on the tool must be in `allowed_tags`. Prevents subagents from calling tools their parent never granted capability for.
 
-Only active when `ctx.allowed_tags is not None` (i.e. this is a subagent call). Every tag on the tool must be in `allowed_tags`. Prevents a subagent from calling tools that require capabilities its parent never granted.
-
-### Layer 2 — intersection policy
+### L3 — intersection policy
 
 `PolicyEngine.evaluate(tool, args, ctx, rules=combined_rules)`.
 
-`combined_rules` = subagent rules + parent rules. The engine evaluates these first, then its own global rules. First match wins. Default allow on no match.
+`combined_rules` = subagent `policy_rules` + parent `policy_rules`. Engine evaluates these first, then its global rules (`rules_path`). First match wins. Default allow on no match.
 
-### Layer 3 — arg scanning (optional)
+Policy actions: `allow`, `deny`, `redact`.
 
-Only fires for tools tagged with a tag in `scan_args_for_tags` (default: `["sensitive"]`). Runs configured `arg_scanners` on the flattened args text. Any finding at `HIGH` or above denies the call.
+### L4 — arg scanning (optional)
 
-**Return type:** `GateDecision`
+Fires only for tools tagged with any tag in `scan_args_for_tags` (default: `["sensitive"]`). Runs `arg_scanners` on the flattened args string. Any finding at `HIGH` or above denies.
 
 ```python
-gate = await harness.check_tool_call(tool_name, args, ctx)
+gate = await harness.check_tool_call(name, args, ctx)
 if not gate.allowed:
     return f"Denied: {gate.deny_reason}"
 effective_args = gate.redacted_args or args
-result = await dispatch(tool_name, effective_args)
+result = await dispatch(name, effective_args)
+```
+
+---
+
+## scan_tool_result
+
+Scans tool return values before they re-enter the LLM context. Detects indirect prompt injection embedded in documents, search results, or API responses.
+
+Uses `patterns_for_doc.yaml` — a 9-rule catalog tuned for document content. No configuration needed; the catalog is bundled.
+
+```python
+result  = await source.call(tool_name, args)
+verdict = await harness.scan_tool_result(result, ctx)
+if verdict.blocked:
+    return "Tool result blocked — potential injection"
+safe_result = verdict.redacted_text or result
+```
+
+Disabled by default. Enable in `harness.yaml`:
+
+```yaml
+scan_tool_result:
+  enabled: true
+  block_at: high
 ```
 
 ---
 
 ## scan_output
 
-**File:** `boundaries/scan_output.py` (delegates to `boundaries/_scan.py`)
-
-Identical structure to `scan_input`. Inspects the LLM's response before it reaches the user.
+Identical structure to `scan_input`. Inspects the LLM's final response before it reaches the user. Catches accidental PII egress or data leakage in the response.
 
 ```python
 verdict = await harness.scan_output(llm_response, ctx)
@@ -89,9 +105,30 @@ return verdict.redacted_text or llm_response
 
 These hold on every code path, including error and disabled paths:
 
-- Exactly **one** `AuditEvent` per boundary call.
-- Disabled boundary → `decision=allow`, `disabled=True`, `finding_count=0`.
-- `decision=deny` → `deny_reason` is non-null.
-- `decision=blocked` → only on `input_scan` or `output_scan`.
-- `decision=deny` → only on `tool_call_gate`.
-- `tenant_id` is stamped from `HarnessConfig`, never from the caller.
+- Exactly **one** `AuditEvent` per boundary call
+- `disabled=True` → `decision=allow`, `finding_count=0`
+- `decision=deny` → `deny_reason` is non-null, only on `tool_call_gate`
+- `decision=blocked` → only on scan boundaries (`input_scan`, `output_scan`, `tool_result_scan`, `file_scan`)
+- `tenant_id` stamped from `HarnessConfig`, never from the caller
+- No raw user text, LLM output, tool arguments, or scanner-matched substrings in any field
+
+---
+
+## scan_file
+
+Inspects uploaded files. Structurally identical to `scan_input` — same pipeline, same audit invariants.
+
+`FileScanner` is always included automatically and handles: size gate, MIME type verification, PDF JavaScript, EXIF metadata, ZIP/Office macros, and InjectionScanner on extracted text.
+
+```yaml
+scan_file:
+  enabled: true
+  block_at: high
+  max_size_mb: 50
+```
+
+```python
+verdict = await harness.scan_file("/path/to/upload.pdf", ctx)
+if verdict.blocked:
+    return "File rejected"
+```

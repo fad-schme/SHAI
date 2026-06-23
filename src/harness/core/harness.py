@@ -14,7 +14,7 @@ from harness.adapters.scanners.rate_limiter import RateLimiter
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.tools.registry import ToolRegistry
-from harness.tools.source import LocalSource, MCPSource, SourceRegistry
+from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
@@ -178,6 +178,7 @@ class SHAI:
                 source = LocalSource(
                     name=src_cfg.name,
                     registry=tool_registry,
+                    tool_names=list(src_cfg.tool_names) or None,
                     tags=list(src_cfg.tags),
                 )
             await source_registry.register(source)
@@ -419,7 +420,7 @@ class SHAI:
         await self._source_registry.close()
         await self._emitter.close()
 
-    async def get_source(self, name: str) -> "MCPSource":
+    async def get_source(self, name: str) -> "ToolSource":
         """Return a registered source by name.
 
         Callers use this to get a reference to an MCPSource for direct tool
@@ -483,18 +484,18 @@ def _build_scanners(adapter_refs: list) -> list:
 def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
     """Build file scanners — always includes FileScanner as the structural pass.
 
-    If no scanners are configured (scan_file disabled), returns [FileScanner]
-    with InjectionScanner(patterns_for_doc) pre-wired as the content scanner.
-    Additional scanners in the config are appended after.
+    FileScanner runs structural checks (MIME, size, extension, PDF JS, EXIF, ZIP,
+    Office macros) then runs InjectionScanner on extracted text content.
+    Additional scanners declared in config are appended after.
     """
     from harness.adapters.scanners.file_scanner import FileScanner
-    from harness.adapters.scanners.injection_scan import InjectionScanner as YamlRuleScanner
+    from harness.adapters.scanners.injection_scan import InjectionScanner
     from pathlib import Path as _Path
 
     patterns_for_doc = _Path(__file__).parent.parent / \
         "adapters/scanners/patterns_for_doc.yaml"
 
-    text_scanner = YamlRuleScanner(
+    text_scanner = InjectionScanner(
         patterns_file=patterns_for_doc if patterns_for_doc.exists() else None,
         name="injection_scan_doc",
     )

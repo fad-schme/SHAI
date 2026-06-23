@@ -1,6 +1,6 @@
 # Audit Event Schema
 
-Every boundary call emits exactly one `AuditEvent`. No field ever contains raw user input, LLM output, tool arguments, or scanner-matched substrings.
+Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output, tool arguments, or scanner-matched substrings appear in any field.
 
 ---
 
@@ -8,51 +8,63 @@ Every boundary call emits exactly one `AuditEvent`. No field ever contains raw u
 
 | Field | Type | Always present | Description |
 |---|---|---|---|
-| `timestamp` | `datetime` (UTC, ISO 8601) | ✓ | When the boundary was called |
-| `boundary` | `input_scan \| tool_call_gate \| output_scan` | ✓ | Which boundary emitted this event |
-| `decision` | `allow \| deny \| redact \| blocked` | ✓ | Outcome |
-| `disabled` | `bool` | ✓ | True if boundary was disabled in config |
-| `duration_ms` | `int` | ✓ | Wall-clock time from boundary entry to emit |
-| `tenant_id` | `str` | ✓ | From `harness.yaml → tenant_id`. Default `"default"` |
-| `agent_id` | `str` | ✓ | From `RuntimeContext.agent_id` |
-| `sub_agent_id` | `str \| null` | — | Set for subagent turns |
-| `tool_name` | `str \| null` | gate only | Tool that was gated |
-| `transport` | `str \| null` | gate only | `local \| mcp \| skill` |
-| `adapters` | `list[str]` | — | Names of scanners or policy engine that ran |
-| `finding_count` | `int` | — | Number of findings (scan boundaries only) |
-| `max_severity` | `info \| low \| medium \| high \| critical \| null` | — | Highest finding severity |
-| `deny_reason` | `str \| null` | when denied | Operator-authored rule text or harness internal reason |
-| `audit_tags` | `dict[str, str]` | — | From `AgentConfig.audit_tags` |
-| `extra` | `dict[str, Any]` | — | Caller-supplied metadata (never auto-populated) |
-
----
-
-## Cross-field constraints (enforced at construction)
-
-- `decision=deny` requires `deny_reason` to be non-null.
-- `decision=blocked` is only valid on `input_scan` and `output_scan`.
-- `decision=deny` is only valid on `tool_call_gate`.
-- `disabled=True` requires `decision=allow` and `finding_count=0`.
+| `timestamp` | ISO 8601 datetime (UTC) | Yes | Wall-clock time of the event |
+| `boundary` | string enum | Yes | `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan` |
+| `decision` | string enum | Yes | `allow`, `deny`, `blocked`, `redact` |
+| `disabled` | bool | Yes | `true` when the boundary is configured `enabled: false` |
+| `duration_ms` | int | Yes | Wall-clock duration of the boundary call in milliseconds |
+| `tenant_id` | string | Yes | From `harness.yaml` — identifies the deployment |
+| `agent_id` | string | Yes | The top-level agent making the call |
+| `sub_agent_id` | string | No | Set when `scope_context_for_subagent` is active |
+| `tool_name` | string | No | Tool name for `tool_call_gate` events |
+| `transport` | string | No | `local`, `mcp`, or `skill` for `tool_call_gate` events |
+| `adapters` | list[string] | Yes | Scanner or policy adapter names that ran |
+| `finding_count` | int | Yes | Number of findings (0 for gate and disabled events) |
+| `max_severity` | string | No | Highest finding severity: `info`, `low`, `medium`, `high`, `critical` |
+| `deny_reason` | string | No | Required when `decision=deny` |
+| `audit_tags` | object | Yes | Operator-defined tags from agent-xx.yaml `audit_tags` |
+| `extra` | object | Yes | Adapter-specific metadata |
+| `signature` | string | No | HMAC-SHA256 hex digest when `audit_signing.enabled: true` |
 
 ---
 
 ## Decision values by boundary
 
-| Boundary | Possible decisions |
-|---|---|
-| `input_scan` | `allow`, `blocked`, `allow` (disabled) |
-| `tool_call_gate` | `allow`, `deny`, `redact` |
-| `output_scan` | `allow`, `blocked`, `allow` (disabled) |
+| Decision | `input_scan` | `tool_call_gate` | `tool_result_scan` | `output_scan` | `file_scan` |
+|---|---|---|---|---|---|
+| `allow` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `deny` | — | ✓ | — | — | — |
+| `blocked` | ✓ | — | ✓ | ✓ | ✓ |
+| `redact` | — | ✓ | — | — | — |
+
+`deny` is only used by the tool call gate. `blocked` is only used by scan boundaries. `redact` occurs on the gate when a policy rule has `action: redact`.
 
 ---
 
-## JSONL output (StdoutSink)
+## Example events
 
-Each event is one line of JSON. `null` fields are omitted.
-
+**Input blocked (PII detected):**
 ```json
 {
   "timestamp": "2025-01-15T10:23:45.123456+00:00",
+  "boundary": "input_scan",
+  "decision": "blocked",
+  "disabled": false,
+  "duration_ms": 3,
+  "tenant_id": "platform-prod",
+  "agent_id": "orchestrator_agent",
+  "sub_agent_id": null,
+  "adapters": ["regex_pii", "injection_scan"],
+  "finding_count": 1,
+  "max_severity": "high",
+  "audit_tags": {"team": "platform", "env": "prod"}
+}
+```
+
+**Tool call denied (policy):**
+```json
+{
+  "timestamp": "2025-01-15T10:23:45.456789+00:00",
   "boundary": "tool_call_gate",
   "decision": "deny",
   "disabled": false,
@@ -63,58 +75,88 @@ Each event is one line of JSON. `null` fields are omitted.
   "tool_name": "send_email",
   "transport": "local",
   "adapters": ["rules"],
-  "deny_reason": "external_write requires explicit permission",
+  "finding_count": 0,
+  "deny_reason": "research_sub is read-only",
   "audit_tags": {"team": "platform", "env": "prod"}
+}
+```
+
+**Tool result scan — indirect injection detected:**
+```json
+{
+  "timestamp": "2025-01-15T10:23:46.789012+00:00",
+  "boundary": "tool_result_scan",
+  "decision": "blocked",
+  "disabled": false,
+  "duration_ms": 5,
+  "tenant_id": "platform-prod",
+  "agent_id": "orchestrator_agent",
+  "adapters": ["injection_scan_doc"],
+  "finding_count": 2,
+  "max_severity": "high",
+  "audit_tags": {"team": "platform", "env": "prod"}
+}
+```
+
+**Signed event:**
+```json
+{
+  "timestamp": "2025-01-15T10:23:47.000000+00:00",
+  "boundary": "tool_call_gate",
+  "decision": "allow",
+  "duration_ms": 1,
+  "tenant_id": "platform-prod",
+  "agent_id": "orchestrator_agent",
+  "tool_name": "search_docs",
+  "transport": "local",
+  "adapters": ["rules"],
+  "finding_count": 0,
+  "audit_tags": {},
+  "signature": "a3f2b1c4d5e6..."
 }
 ```
 
 ---
 
+## Verifying a signed event
+
+```python
+import hashlib, hmac, json
+
+def verify(event: dict, secret: bytes) -> bool:
+    expected = event.get("signature")
+    if expected is None:
+        return False
+    payload = {k: v for k, v in event.items() if k != "signature" and v is not None}
+    body = json.dumps(payload, sort_keys=True, default=str).encode()
+    computed = hmac.new(secret, body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computed, expected)
+```
+
+The signature covers all non-null fields except `signature` itself, serialised as deterministic JSON (`sort_keys=True`). Use `hmac.compare_digest` for timing-safe comparison.
+
+---
+
 ## SIEM query examples
 
-**All denied tool calls in the last hour:**
-```
-boundary="tool_call_gate" AND decision="deny"
-```
+All sinks emit JSONL (one JSON object per line). Standard queries:
 
-**PII detections above medium severity:**
-```
-boundary="input_scan" AND max_severity IN ["high", "critical"]
-```
+```bash
+# All denials in the last hour
+jq 'select(.decision == "deny")' audit.jsonl
 
-**All events for a specific agent across all tenants:**
-```
-agent_id="orchestrator_agent"
-```
+# Tool call gate events for a specific agent
+jq 'select(.boundary == "tool_call_gate" and .agent_id == "orchestrator_agent")' audit.jsonl
 
-**Subagent turning privilege isolation violations:**
-```
-sub_agent_id=* AND decision="deny" AND deny_reason="*capability set*"
-```
+# Subagent privilege escalation attempts
+jq 'select(.decision == "deny" and .sub_agent_id != null)' audit.jsonl
 
----
+# Indirect injection detections
+jq 'select(.boundary == "tool_result_scan" and .decision == "blocked")' audit.jsonl
 
-## What is never in an AuditEvent
+# Events missing a signature (audit signing not enabled or tampered)
+jq 'select(.signature == null)' audit.jsonl
 
-- The user's message text
-- The LLM's response text
-- Tool arguments or return values
-- The matched substring from a scanner finding
-- Credentials or secret values
-- Any PII beyond what operators explicitly put in `audit_tags`
-
-`Finding.detail` contains only category names and short notes — never the matched text.
-
----
-
-## tenant_id in multi-deployment setups
-
-Each `Harness` instance reads `tenant_id` from `harness.yaml`. When running multiple harness instances (multiple processes), give each a distinct `tenant_id` so log partitioning works:
-
-```yaml
-# deployment-a/config/harness.yaml
-tenant_id: "platform-prod-eu"
-
-# deployment-b/config/harness.yaml
-tenant_id: "platform-prod-us"
+# High-severity findings on input
+jq 'select(.boundary == "input_scan" and .max_severity == "high")' audit.jsonl
 ```

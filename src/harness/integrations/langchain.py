@@ -53,7 +53,7 @@ def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
         description: str = getattr(original, "description", "")
 
         def _run(self, *args: Any, **kwargs: Any) -> Any:
-            return asyncio.get_event_loop().run_until_complete(self._arun(*args, **kwargs))
+            return asyncio.run(self._arun(*args, **kwargs))
 
         async def _arun(self, *args: Any, **kwargs: Any) -> Any:
             tool_args = kwargs or ({"input": args[0]} if args else {})
