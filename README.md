@@ -62,10 +62,18 @@ scan_output:
   scanners:
     - name: regex_pii
 
+# Inline policy rules — no external file needed
 policy:
-  name: rules
-  config:
-    rules_path: ./config/policies/rules.yaml
+  rules:
+    - id: allow_read_tools
+      match:
+        tool_tags: [read]
+      action: allow
+    - id: deny_external_write
+      match:
+        tool_tags: [external_write]
+      action: deny
+      reason: "external_write requires explicit approval"
 
 audit_sinks:
   - name: stdout
