@@ -121,15 +121,26 @@ async def test_activate_suppressed_by_policy():
     assert tools == []
 
 
-async def test_activate_unknown_source_skipped():
+async def test_activate_unknown_required_source_raises():
+    """Missing required source raises ConfigError — fail-safe default."""
+    from harness.core.errors import ConfigError
     reg = SourceRegistry(_make_policy())
-    # "nonexistent" not registered — should skip, not raise
-    tools = await reg.activate(CTX, ["nonexistent"])
+    with pytest.raises(ConfigError, match="nonexistent"):
+        await reg.activate(CTX, ["nonexistent"])
+
+
+async def test_activate_unknown_optional_source_skipped():
+    """Missing optional source (required=False) is skipped, not raised."""
+    reg = SourceRegistry(_make_policy())
+    tools = await reg.activate(CTX, ["nonexistent"],
+                               required_flags={"nonexistent": False})
     assert tools == []
 
 
-async def test_activate_failed_source_skipped():
-    """A source whose load() raises must not crash the whole activation."""
+async def test_activate_failed_required_source_raises():
+    """Required source whose load() raises must raise ConfigError."""
+    from harness.core.errors import ConfigError
+
     bad = MagicMock()
     bad.name = "bad_source"
     bad.transport = Transport.LOCAL
@@ -139,7 +150,23 @@ async def test_activate_failed_source_skipped():
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(bad)
-    tools = await reg.activate(CTX, ["bad_source"])
+    with pytest.raises(ConfigError, match="bad_source"):
+        await reg.activate(CTX, ["bad_source"])
+
+
+async def test_activate_failed_optional_source_skipped():
+    """Optional source whose load() raises is skipped, not raised."""
+    bad = MagicMock()
+    bad.name = "bad_source"
+    bad.transport = Transport.LOCAL
+    bad.tags = []
+    bad.load = AsyncMock(side_effect=RuntimeError("network error"))
+    bad.close = AsyncMock()
+
+    reg = SourceRegistry(_make_policy(active=True))
+    await reg.register(bad)
+    tools = await reg.activate(CTX, ["bad_source"],
+                               required_flags={"bad_source": False})
     assert tools == []
 
 
@@ -468,3 +495,87 @@ async def test_other_agents_not_affected_by_source_override(tmp_path):
     assert "sensitive" not in tags_b, "agent_b must not be affected by agent_a's source override"
 
     await harness.close()
+
+
+# ── required flag — fail-safe activation tests ────────────────────────────
+
+async def test_missing_required_source_raises():
+    """Missing required source must raise ConfigError at activate() time."""
+    from harness.core.errors import ConfigError
+
+    reg = SourceRegistry(_make_policy(active=True))
+    # "missing_src" is not registered
+    with pytest.raises(ConfigError, match="missing_src"):
+        await reg.activate(CTX, ["missing_src"], required_flags={"missing_src": True})
+
+
+async def test_missing_optional_source_skips():
+    """Missing optional source must log and skip, not raise."""
+    reg = SourceRegistry(_make_policy(active=True))
+    # Should not raise — returns empty list
+    tools = await reg.activate(CTX, ["missing_src"], required_flags={"missing_src": False})
+    assert tools == []
+
+
+async def test_failed_required_source_raises():
+    """required source whose load() fails must raise ConfigError."""
+    from harness.core.errors import ConfigError
+    from unittest.mock import AsyncMock, MagicMock
+
+    bad = MagicMock()
+    bad.name = "bad_src"
+    bad.transport = Transport.LOCAL
+    bad.tags = []
+    bad.load = AsyncMock(side_effect=RuntimeError("connection refused"))
+    bad.close = AsyncMock()
+
+    reg = SourceRegistry(_make_policy(active=True))
+    await reg.register(bad)
+
+    with pytest.raises(ConfigError, match="bad_src"):
+        await reg.activate(CTX, ["bad_src"], required_flags={"bad_src": True})
+
+
+async def test_failed_optional_source_skips():
+    """Optional source whose load() fails must log and skip, not raise."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    bad = MagicMock()
+    bad.name = "bad_src"
+    bad.transport = Transport.LOCAL
+    bad.tags = []
+    bad.load = AsyncMock(side_effect=RuntimeError("connection refused"))
+    bad.close = AsyncMock()
+
+    reg = SourceRegistry(_make_policy(active=True))
+    await reg.register(bad)
+
+    tools = await reg.activate(CTX, ["bad_src"], required_flags={"bad_src": False})
+    assert tools == []
+
+
+async def test_policy_suppressed_source_skips_regardless_of_required():
+    """Policy suppression always skips — it is intentional, not a failure."""
+    tool = Tool(name="search", tags=["read"], transport=Transport.LOCAL)
+    tool_reg = _make_registry.__wrapped__(tool) if hasattr(_make_registry, '__wrapped__') else None
+
+    import asyncio as _asyncio
+    tr = ToolRegistry()
+    await tr.register(Tool(name="search", tags=["read"], transport=Transport.LOCAL))
+    src = LocalSource(name="docs", registry=tr, tool_names=["search"])
+
+    reg = SourceRegistry(_make_policy(active=False))  # policy suppresses
+    await reg.register(src)
+
+    # Even though required=True, suppression is not a failure — no raise
+    tools = await reg.activate(CTX, ["docs"], required_flags={"docs": True})
+    assert tools == []
+
+
+async def test_required_defaults_to_true_when_no_flags_passed():
+    """When required_flags is None, missing source raises (default=required)."""
+    from harness.core.errors import ConfigError
+
+    reg = SourceRegistry(_make_policy(active=True))
+    with pytest.raises(ConfigError):
+        await reg.activate(CTX, ["unregistered_source"])

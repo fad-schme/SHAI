@@ -145,6 +145,10 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
                   Resolved via SecretsProvider at from_yaml() time.
     tags:         tags applied to ALL tools returned by this source, merged with
                   any tags declared on individual tools.
+    required:     when True (default), a missing or failed source raises ConfigError
+                  at load_agent() time — the agent is not usable without it. Set to
+                  False for optional enrichment sources where degraded operation is
+                  acceptable (e.g. a telemetry source that is nice-to-have).
     """
     name:        str
     transport:   Transport = Transport.LOCAL
@@ -152,6 +156,10 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     credentials: dict[str, str] = Field(default_factory=dict)
     tags:        list[str] = Field(default_factory=list)
     tool_names:  list[str] = Field(default_factory=list)  # local sources only: subset of tools to expose
+    required:    bool = True
+    # required=True (default): missing or failed source raises ConfigError at load_agent() time.
+    # required=False: missing or failed source is logged and skipped — use for
+    #                 optional enrichment sources where degraded operation is acceptable.
 
     @model_validator(mode="after")
     def _transport_constraints(self) -> "SourceConfig":

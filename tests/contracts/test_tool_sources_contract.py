@@ -175,13 +175,22 @@ async def test_source_registry_activate():
     assert any(t.name == "search_docs" for t in tools)
 
 
-async def test_source_registry_unknown_source_skipped():
+async def test_source_registry_unknown_required_source_raises():
+    """Missing required source (default) raises ConfigError — fail-safe default."""
+    from harness.core.errors import ConfigError
     src_registry = SourceRegistry(policy=RuleBasedPolicy())
-    reg  = ToolRegistry()
-    ctx  = AgentContext(
-        agent_id="a1")
-    # no exception — missing source is logged and skipped
-    tools = await src_registry.activate(ctx, ["nonexistent"])
+    ctx = AgentContext(agent_id="a1")
+    with pytest.raises(ConfigError, match="nonexistent"):
+        await src_registry.activate(ctx, ["nonexistent"])
+
+
+async def test_source_registry_unknown_optional_source_skipped():
+    """Missing optional source (required=False) is logged and skipped, not raised."""
+    src_registry = SourceRegistry(policy=RuleBasedPolicy())
+    ctx = AgentContext(agent_id="a1")
+    tools = await src_registry.activate(
+        ctx, ["nonexistent"], required_flags={"nonexistent": False}
+    )
     assert tools == []
 
 

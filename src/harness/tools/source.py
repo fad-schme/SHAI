@@ -126,20 +126,45 @@ class SourceRegistry:
         self,
         ctx: "AgentContext",
         source_names: list[str],
+        required_flags: dict[str, bool] | None = None,
     ) -> list[Tool]:
         """Activate declared sources and return their merged tool list.
 
-        Called once at load_agent() time. Missing sources are logged and
-        skipped. Sources suppressed by policy are logged and skipped.
-        Failed loads are logged and skipped — partial activation is better
-        than a hard failure at startup.
+        Called once at load_agent() time.
+
+        Failure handling — controlled per source by required_flags:
+
+        required=True (default):
+            Missing source (not registered) → raises ConfigError immediately.
+            Failed load (source.load() raised) → raises ConfigError immediately.
+            The agent is not considered usable without it.
+
+        required=False:
+            Missing source → logged at WARNING, skipped.
+            Failed load → logged at ERROR, skipped.
+            Use for optional enrichment sources where degraded operation
+            is acceptable (e.g. a telemetry or analytics source).
+
+        Policy-suppressed sources are always skipped regardless of required flag —
+        suppression is an intentional operator decision, not a failure.
         """
-        tasks: list[tuple[str, asyncio.Task]] = []
+        if required_flags is None:
+            required_flags = {}
+
+        tasks: list[tuple[str, bool, asyncio.Task]] = []
 
         for name in source_names:
+            is_required = required_flags.get(name, True)
             source = self._sources.get(name)
             if source is None:
-                log.warning("declared source not registered — skipped",
+                if is_required:
+                    from harness.core.errors import ConfigError as _CE
+                    raise _CE(
+                        f"source '{name}' declared by agent '{ctx.agent_id}' "
+                        f"is not registered in the harness. "                        f"Add it to config.sources or set required: false.",
+                        op="source_activate",
+                    )
+                log.warning("optional source not registered — skipped",
                             extra={"source": name, **ctx.to_log_fields()})
                 continue
 
@@ -150,20 +175,26 @@ class SourceRegistry:
                                 **ctx.to_log_fields()})
                 continue
 
-            tasks.append((name, asyncio.create_task(source.load(ctx))))
+            tasks.append((name, is_required, asyncio.create_task(source.load(ctx))))
 
         if not tasks:
             return []
 
         results = await asyncio.gather(
-            *[t for _, t in tasks],
+            *[t for _, _, t in tasks],
             return_exceptions=True,
         )
 
         tools: list[Tool] = []
-        for (src_name, _), result in zip(tasks, results):
+        for (src_name, is_req, _), result in zip(tasks, results):
             if isinstance(result, Exception):
-                log.error("source load failed — skipped",
+                if is_req:
+                    from harness.core.errors import ConfigError as _CE
+                    raise _CE(
+                        f"source '{src_name}' failed to load: {result}",
+                        op="source_activate",
+                    )
+                log.error("optional source load failed — skipped",
                           extra={"source": src_name, "error": str(result),
                                  **ctx.to_log_fields()})
             else:

@@ -162,6 +162,8 @@ SHAI.load_agent(path)
         ├── PolicyEngine.evaluate_source(source, ctx)  ← suppress check
         ├── source.load(ctx) [concurrent]              ← fetch tools
         └── ToolRegistry.register(tool)                ← merge into shared store
+  Missing required source or failed load → ConfigError (fail-safe default)
+  Missing optional source (required: false) → logged and skipped
   └── _resolve_tools(cfg)              ← filter to allowed_tool_names
 ```
 
@@ -178,6 +180,8 @@ A named, curated subset of registered tools. `transport=Transport.SKILL` enables
 Connects to an MCP server via SSE, runs the JSON-RPC initialize handshake, fetches the tool catalog with `tools/list`, and exposes `call(tool_name, args)` for dispatch. Tools are stamped `transport=Transport.MCP`.
 
 Requires `pip install shai[mcp]` (adds `httpx>=0.27`). If httpx is absent, `load()` raises `ConfigError` with a clear install message.
+
+By default (`required: true`) a failed MCP connection at `load_agent()` time raises `ConfigError` — the agent is not usable without it. Set `required: false` in `SourceConfig` for optional sources where degraded operation is acceptable.
 
 **Lifecycle:**
 1. Constructed at `from_yaml()` from `config.sources`.

@@ -12,10 +12,6 @@ allowed_tags:
   - internal
   - external_write
 
-sources:
-  - docs_skill
-  - outlook_mcp
-
 policy_rules:
   - id: deny_external_write_default
     match:
@@ -42,8 +38,6 @@ sub_agents:
     allowed_tags:
       - read
       - internal
-    sources:
-      - docs_skill
     policy_rules:
       - id: research_deny_write
         match:
@@ -60,6 +54,4 @@ sub_agents:
       - read
       - internal
       - external_write
-    sources:
-      - outlook_mcp
     policy_rules: []

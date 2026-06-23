@@ -294,7 +294,15 @@ class SHAI:
         ctx = AgentContext(agent_id=cfg.id)
 
         # Activate declared sources for this agent
-        source_tools = await self._source_registry.activate(ctx, list(cfg.sources))
+        # Build required_flags from SourceConfig — required=True (default) means
+        # a missing or failed source raises ConfigError rather than degrading silently.
+        required_flags = {
+            sc.name: sc.required
+            for sc in self._config.sources
+        }
+        source_tools = await self._source_registry.activate(
+            ctx, list(cfg.sources), required_flags=required_flags
+        )
 
         # Source tools may carry additional tags merged from the source config.
         # We cannot blindly re-register them — the registry rejects same-name

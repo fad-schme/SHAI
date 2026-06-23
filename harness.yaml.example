@@ -80,10 +80,17 @@ audit_signing:
 #     tags:
 #       - external_mcp
 #       - messaging
+#     required: true   # default — failed connection raises ConfigError at startup
 #
-#   - name: docs_skill
+#   - name: analytics_mcp
+#     transport: mcp
+#     url: "https://analytics.internal/sse"
+#     required: false  # optional — failure is logged and skipped, not fatal
+#
+#   - name: docs_local
 #     transport: local
 #     tags:
 #       - read
 #       - internal
+#     required: true
 
