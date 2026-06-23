@@ -93,10 +93,16 @@ async def test_check_tool_call_deny_policy(wired_harness: SHAI):
 
 
 async def test_check_tool_call_unregistered_agent_denied(harness: SHAI):
-    from harness.core.errors import AgentNotRegisteredError
+    """Unregistered agent must produce GateDecision(allowed=False) with audit event.
+
+    Must NOT raise — the pre-gate guarantee requires a deny-with-audit
+    on every code path, never a naked exception.
+    """
     ctx = AgentContext(agent_id="nobody")
-    with pytest.raises(AgentNotRegisteredError):
-        await harness.check_tool_call("search_docs", {}, ctx)
+    gate = await harness.check_tool_call("search_docs", {}, ctx)
+    assert gate.allowed is False
+    assert gate.deny_reason is not None
+    assert "nobody" in gate.deny_reason
 
 
 # ── Subagent isolation ────────────────────────────────────────────────────

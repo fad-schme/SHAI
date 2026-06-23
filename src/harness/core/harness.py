@@ -417,7 +417,25 @@ class SHAI:
                 await self._emitter.emit(event)
                 return GateDecision(allowed=False, deny_reason=reason)
 
-        agent_config = self._agent_registry.get(ctx.agent_id)
+        # Pre-gate: agent must be registered — deny with audit event on miss
+        try:
+            agent_config = self._agent_registry.get(ctx.agent_id)
+        except Exception as e:
+            from harness.core.events import AuditEvent, now_ms
+            reason = f"agent '{ctx.agent_id}' is not registered in this harness"
+            event = AuditEvent.build(
+                boundary=BoundaryName.TOOL_CALL_GATE,
+                decision=Decision.DENY,
+                ctx=ctx,
+                tenant_id=self._tenant_id,
+                duration_ms=0,
+                tool_name=name,
+                deny_reason=reason,
+                audit_tags={},
+            )
+            await self._emitter.emit(event)
+            return GateDecision(allowed=False, deny_reason=reason)
+
         tools        = self._agent_tools.get(ctx.agent_id, {})
         return await run_gate(
             name, args, ctx,

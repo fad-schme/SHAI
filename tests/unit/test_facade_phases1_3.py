@@ -97,19 +97,17 @@ async def test_scope_context_child_tags_are_subset(harness, orchestrator_yaml):
 
 
 async def test_boundaries_are_wired_in_phase5(harness):
-    # Phase 5 wired all boundary methods — they no longer raise
-    # NotImplementedError. scan_input/scan_output are callable on any ctx
-    # (disabled in fixture config → always return allow).
-    # check_tool_call raises AgentNotRegisteredError on unknown agent.
-    from harness.core.errors import AgentNotRegisteredError
-    ctx = AgentContext(
-        agent_id="a1")
+    """All boundary methods are wired and never raise on unknown agents —
+    they return deny-with-audit instead (pre-gate guarantee).
+    """
+    ctx = AgentContext(agent_id="a1")
     # scan_input disabled in fixture → allow verdict, no error
     verdict = await harness.scan_input("hello", ctx)
     assert not verdict.blocked
-    # check_tool_call requires a registered agent
-    with pytest.raises(AgentNotRegisteredError):
-        await harness.check_tool_call("search_docs", {}, ctx)
+    # check_tool_call on unregistered agent → GateDecision deny, no exception
+    gate = await harness.check_tool_call("search_docs", {}, ctx)
+    assert gate.allowed is False
+    assert gate.deny_reason is not None
 
 async def test_from_yaml_missing_file():
     with pytest.raises(ConfigError):

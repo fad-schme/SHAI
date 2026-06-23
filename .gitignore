@@ -20,6 +20,7 @@ ENV/
 *.pyo
 *.pyd
 .DS_Store
+session_state_*
 
 # Distribution / packaging
 build/
