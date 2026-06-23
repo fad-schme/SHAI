@@ -22,14 +22,14 @@ from pathlib import Path
 import pytest
 
 from harness.core.context import AgentContext
-from harness.core.harness import Harness
+from harness.core.harness import SHAI
 from harness.core.types import Transport
 from harness.tools.tool import Tool
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
-async def _build_harness(tmp_path: Path) -> Harness:
+async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
@@ -38,7 +38,7 @@ async def _build_harness(tmp_path: Path) -> Harness:
         "policy:\n  name: rules\n"
         "audit_sinks:\n  - name: stdout\n"
     )
-    h = Harness.from_yaml(cfg)
+    h = SHAI.from_yaml(cfg)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
     await h.register_tools([
         Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),

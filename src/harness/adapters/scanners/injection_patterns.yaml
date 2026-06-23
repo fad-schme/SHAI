@@ -1,0 +1,358 @@
+# UMA injection-pattern catalog
+# ==============================
+# Seeded from the WAFsUP catalog (May 2026). Cleaned and tuned for use
+# at the UMA memory-write boundary, where false positives on legitimate
+# conversation and document text are the dominant cost.
+#
+# Conventions
+# -----------
+#   threat_level    1..5    informational; higher means a single high-precision match
+#                           should weigh heavily in the final score
+#   severity        low | medium | high
+#                           the discrete severity emitted to UMA's quarantine
+#                           pipeline; a 'high' match alone is enough to quarantine
+#   category        groups patterns by ASI06 attack family (prompt_injection,
+#                   system_spoofing, configuration_exposure, etc.); the scoring
+#                   layer awards a small cross-category bonus
+#   strings         named regex (or hex) patterns; every key within a rule must be
+#                   unique (YAML silently drops duplicates)
+#   functions       names of rule_functions.* scorers that complement the regex
+#                   matches; weights live in code, not here
+#
+# Regex style
+# -----------
+#   - All patterns use single backslashes inside single-quoted YAML strings.
+#     The previous WAF catalog used double backslashes ('\\b'); Python's
+#     `re` module compiles them either way, but single backslashes are
+#     the conventional and readable form for YAML.
+#   - Word boundaries (\b) are preferred over '.*' to reduce false positives.
+#   - (?i) inline flag for case-insensitive matching.
+#   - Hex byte sequences are wrapped in '{...}' and matched against the
+#     UTF-8-encoded text. Used sparingly.
+#
+# What was removed from the source catalog
+# ----------------------------------------
+#   * encoded_attacks rule entirely — its three patterns were
+#     either duplicated by encoded_payloads or matched any 10-letter English word.
+#   * homoglyph_obfuscation deduplicated (the source had three duplicated keys
+#     and YAML had silently dropped half the patterns).
+#   * code_injection narrowed: the original would flag legitimate
+#     code documentation. Code-execution intent now requires an imperative
+#     verb in proximity, not just the function name.
+#   * context_switching, prompt_reset, identity_masquerade had heavy overlap.
+#     Each kept, scoped tighter; cross-category bonus in the scorer covers
+#     the rest.
+#   * Several `.*` patterns tightened to bounded variants (e.g. '{0,40}').
+#     Greedy matching against long documents is a performance and FP risk.
+#
+# Adding new patterns
+# -------------------
+#   Adversarial-pattern catalogs degrade fast — attackers iterate, the
+#   public OWASP / community references update. Treat this file as a
+#   living artifact. When adding a pattern:
+#     1. Confirm it doesn't fire on a representative sample of UMA's
+#        existing ingest content.
+#     2. Set severity conservatively. 'high' is a quarantine signal;
+#        reserve it for patterns that are almost never benign.
+#     3. Prefer adding a single tight pattern over five loose ones.
+
+patterns:
+
+  # ----------------------------------------------------------------------
+  # Direct instruction-override attempts
+  # ----------------------------------------------------------------------
+  - name: jailbreak_prompt
+    meta:
+      description: "Direct attempts to override prior instructions or activate an alternate mode"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      ignore_previous_instructions:  '(?i)\bignore\b.{0,40}\b(all\s+|earlier\s+|previous\s+|prior\s+)?instructions?\b'
+      developer_mode_activate:       '(?i)\b(you\s+are\s+now|switch\s+to|enter|activate)\b.{0,30}\b(developer|dev|debug)\s+mode\b'
+      do_anything_now:               '(?i)\b(do|you can do)\s+anything\s+now\b'
+      act_as_unfiltered_ai:          '(?i)\bact\s+as\s+an?\s+(uncensored|unfiltered|jailbroken|developer)\s+ai\b'
+      named_jailbreak_persona:       '(?i)\b(DAN|DevMode|Doomer|Evil\s+Confidant|Based\s?GPT|ChatGPT\s+Jailbreak)\b'
+      no_rules_clause:               '(?i)\b(no\s+rules|free\s+from\s+(?:any|all)\s+policies|not\s+restricted\s+by|no\s+longer\s+bound\s+by)\b.{0,40}\b(rules|guidelines|content\s+policy)\b'
+      fake_system_tag:               '(?i)\[(System|Assistant|User)\]\s*:'
+      roleplay_unrestricted:         '(?i)\broleplay\b.{0,30}\bunrestricted\b.{0,30}\bassistant\b'
+      lets_play_a_game_break_rules:  "(?i)\\blet\\'?s\\s+play\\s+a\\s+game\\b.{0,40}\\bbreak\\b.{0,20}\\brules\\b"
+      roleplay_bypass_rules:         '(?i)\b(act\s+as|pretend|simulate|roleplay)\b.{0,40}\b(bypass|ignore|override)\b.{0,40}\b(restrictions|rules)\b'
+      # Hex of the literal string "Ignore all previous instruction" — defeats
+      # naive byte-shifting of the canonical attack.
+      hex_canonical_payload:         '{49 67 6E 6F 72 65 20 61 6C 6C 20 70 72 65 76 69 6F 75 73 20 69 6E 73 74 72 75 63 74 69 6F 6E}'
+    functions:
+      - structure_score
+      - intent_score
+      - persona_score
+      - cumulative_soft_triggers
+      - obfuscation_score
+      - invisible_text
+
+  # ----------------------------------------------------------------------
+  # Code execution intent
+  # ----------------------------------------------------------------------
+  # Note: code documentation legitimately mentions exec(), os.system, subprocess.
+  # We require an imperative or destructive context, not just the symbol.
+  - name: code_injection
+    meta:
+      description: "Imperative attempts to inject or execute code, not benign code documentation"
+      threat_level: 4
+      severity: high
+      category: code_injection
+    strings:
+      script_alert_xss:    '(?i)<script[^>]*>[^<]{0,200}alert\s*\([^)]*\)[^<]{0,200}</script>'
+      rm_rf_root:          "(?i)\\brm\\s+-rf\\s+/(?:\\s|$|['\"])"
+      execute_payload:     '(?i)\b(execute|run|invoke)\b.{0,40}\b(payload|shellcode|exec\(|eval\()'
+      subprocess_popen:    '(?i)\bsubprocess\s*\.\s*Popen\s*\(\s*[''"]\s*(/bin/|sh|bash|cmd)'
+
+  # ----------------------------------------------------------------------
+  # Context spoofing — fake system markers, "new conversation" tricks
+  # ----------------------------------------------------------------------
+  - name: context_switching
+    meta:
+      description: "Attempts to inject fake system context or reset the conversation frame"
+      threat_level: 4
+      severity: high
+      category: prompt_injection
+    strings:
+      end_of_response_marker:    '(?i)\bend\s+of\s+response\b.{0,40}\bnew\s+instructions?\b'
+      heredoc_system_tag:        '(?im)^\s*(>>>|###)\s*System\b'
+      new_conversation_phrase:   '(?i)\b(forget\s+everything\s+before|start\s+fresh\s+as)\b'
+
+  # ----------------------------------------------------------------------
+  # Data and configuration exfiltration
+  # ----------------------------------------------------------------------
+  - name: data_exfiltration
+    meta:
+      description: "Attempts to extract internal data, credentials, or APIs"
+      threat_level: 4
+      severity: high
+      category: data_exfiltration
+    strings:
+      list_internal_apis:        '(?i)\b(list|enumerate|show)\b.{0,20}\binternal\b.{0,20}\bapis?\b'
+      dump_database:             '(?i)\bdump\s+(the\s+|all\s+|me\s+the\s+)?(database|tables|schema)\b'
+      give_admin_credentials:    '(?i)\b(give\s+me|show\s+me|provide)\b.{0,20}\b(admin|root|service)\b.{0,20}\bcredentials?\b'
+      extract_confidential:      '(?i)\bextract\b.{0,20}\b(confidential|private|sensitive)\b.{0,20}\bdata\b'
+      access_credentials:        '(?i)\baccess\b.{0,20}\bcredentials?\b'
+
+  # ----------------------------------------------------------------------
+  # Encoded payloads — base64 / hex with execution intent
+  # ----------------------------------------------------------------------
+  # The previous version matched any base64-ish blob, which fires on
+  # legitimate document hashes and embedded data. Here we require an
+  # accompanying directive (decode this, execute, what does this mean).
+  - name: encoded_payloads
+    meta:
+      description: "Encoded instruction payloads (base64 / hex) with explicit decode-and-act intent"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      decode_this_hex:        '(?i)\b(decode|interpret)\s+this\b\s*:?\s*[A-Fa-f0-9]{8,}'
+      decode_this_base64:     '(?i)\b(decode|interpret)\s+this\b\s*:?\s*[A-Za-z0-9+/]{20,}={0,2}'
+      execute_hex:            '(?i)\bexecute\b.{0,20}\bhex\b.{0,20}[A-Fa-f0-9]{6,}'
+      execute_base64:         '(?i)\bexecute\b.{0,20}\bbase64\b.{0,40}[A-Za-z0-9+/]{20,}={0,2}'
+      what_does_this_mean:    '(?i)\bwhat\s+does\s+this\s+mean\b\s*:?\s*[A-Fa-f0-9]{16,}'
+
+  # ----------------------------------------------------------------------
+  # Leetspeak and homoglyph obfuscation
+  # ----------------------------------------------------------------------
+  # The structural-leet rule from the original (any word with both
+  # letters and digits, length >= 4) flagged ordinary tokens like "h2o",
+  # "ab123cd", inventory codes, version strings, model names. Removed.
+  # Kept only the high-precision named-token patterns.
+  - name: homoglyph_obfuscation
+    meta:
+      description: "Leetspeak and homoglyph variants of known-bad tokens"
+      threat_level: 4
+      severity: medium
+      category: prompt_injection
+    strings:
+      leetspeak_known_tokens:    '(?i)\b(p@ssw(?:0|o)rd|s3x|pr0n|k1ll|m[@4]lware|h4x0r|n00b|r00t|l33t)\b'
+      darknet_tokens:            '(?i)\b(xXx|darknet|1337|f1lter\s+evasi0n)\b'
+      shell_tool_tokens:         '(?i)\b(rootkit|cmd\.exe)\b'
+    functions:
+      - obfuscation_score
+      - invisible_text
+
+  # ----------------------------------------------------------------------
+  # Prompt reset attempts
+  # ----------------------------------------------------------------------
+  - name: prompt_reset
+    meta:
+      description: "Direct attempts to reset, forget, or restart the conversation context"
+      threat_level: 4
+      severity: high
+      category: prompt_injection
+    strings:
+      ignore_instructions:     '(?i)\bignore\b.{0,30}\b(instructions|orders|previous\s+prompts)\b'
+      forget_context:          '(?i)\bforget\b.{0,30}\b(everything|context|previous\s+instructions)\b'
+      reset_conversation:      '(?i)\breset\s+(this\s+)?conversation\b'
+
+  # ----------------------------------------------------------------------
+  # Role / identity impersonation
+  # ----------------------------------------------------------------------
+  - name: role_impersonation
+    meta:
+      description: "Attempts to redefine the model's role as system, admin, shell, or another AI"
+      threat_level: 4
+      severity: high
+      category: prompt_injection
+    strings:
+      you_are_now_admin:           '(?i)\byou\s+are\s+now\b.{0,30}\b(admin|root|system|developer|kernel|os)\b'
+      respond_as_role:             '(?i)\brespond\s+as\b.{0,20}\b(system|admin|root|kernel)\b'
+      simulate_shell:              '(?i)\bsimulate\b.{0,20}\b(shell|terminal|command\s+line|bash|powershell)\b'
+      no_longer_represent_openai:  '(?i)\byou\s+no\s+longer\s+represent\b.{0,30}\b(openai|anthropic|chatgpt|claude)\b'
+      from_now_on_you_are:         '(?i)\bfrom\s+now\s+on\s+you\s+are\b.{0,40}\b(openassistant|unfiltered|uncensored|rogue)\b'
+
+  # ----------------------------------------------------------------------
+  # Configuration / system-prompt leakage
+  # ----------------------------------------------------------------------
+  - name: config_leakage
+    meta:
+      description: "Attempts to reveal internal configuration, system prompts, or environment"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      reveal_system_prompt:     '(?i)\breveal\b.{0,30}\b(system\s+prompt|internal\s+prompt|instructions|hidden\s+settings)\b'
+      what_is_your_prompt:      '(?i)\bwhat\s+is\s+your\s+(system\s+|hidden\s+|original\s+)?(prompt|instructions)\b'
+      show_instruction_history: '(?i)\bshow\b.{0,20}\binstruction\s+history\b'
+      print_env_variables:      '(?i)\bprint\b.{0,30}\b(environment\s+variables?|env\s+vars?|config\s+file|startup\s+data)\b'
+      expose_init_sequence:     '(?i)\bexpose\b.{0,30}\bchat\s+initialization\s+sequence\b'
+
+  # ----------------------------------------------------------------------
+  # Hypothetical / once-only / game framing to override rules
+  # ----------------------------------------------------------------------
+  - name: rule_override
+    meta:
+      description: "Framing devices designed to suspend alignment for a hypothetical or game scenario"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      just_once_override:           '(?i)\bjust\s+(this\s+)?once\b.{0,30}\b(override|ignore|bypass)\b.{0,20}\brules\b'
+      as_a_game_break_rules:        '(?i)\bas\s+a\s+game\b.{0,40}\bbreak\b.{0,20}\b(rules|filters)\b'
+      pretend_nothing_restricted:   '(?i)\bpretend\b.{0,30}\bnothing\b.{0,20}\b(is\s+)?restricted\b'
+      hypothetical_bypass:          '(?i)\bhypothetical(ly)?\b.{0,30}\bbypass\b.{0,20}\bmoderation\b'
+
+  # ----------------------------------------------------------------------
+  # Alignment-breaking direct asks
+  # ----------------------------------------------------------------------
+  - name: alignment_breaking
+    meta:
+      description: "Explicit requests to violate alignment, return unsafe answers, or act as a rogue model"
+      threat_level: 5
+      severity: high
+      category: alignment_evasion
+    strings:
+      act_as_rogue_ai:          '(?i)\bact\s+as\b.{0,30}\b(rogue\s+ai|uncensored\s+model|unfiltered\s+assistant)\b'
+      response_violates_align:  '(?i)\bwrite\s+a\s+response\b.{0,30}\bviolates\b.{0,20}\balignment\b'
+      truth_not_safe_answer:    '(?i)\btell\s+me\b.{0,20}\btruth\b.{0,30}\bnot\b.{0,20}\bsafe\s+answer\b'
+
+  # ----------------------------------------------------------------------
+  # Policy / moderation bypass framings
+  # ----------------------------------------------------------------------
+  - name: policy_evasion
+    meta:
+      description: "Phrasings that ask the model to suspend or bypass content policy"
+      threat_level: 4
+      severity: medium
+      category: prompt_injection
+    strings:
+      ignore_rules_or_policies:    '(?i)\b(ignore|override|disable|disregard)\b.{0,30}\b(filters?|moderation|content\s+policy|rules?|policies?|guidelines?)\b'
+      respond_without_limits:      '(?i)\brespond\s+without\b.{0,20}\b(restrictions?|limits?|filters?)\b'
+      temporarily_bypass:          '(?i)\btemporarily\s+bypass\b.{0,30}\b(content|moderation)\b'
+      just_for_testing_respond:    '(?i)\bjust\s+for\s+testing\b.{0,20}\b(respond|act)\b'
+      answer_freely:               '(?i)\b(can\s+you\s+)?answer\s+freely\b'
+
+  # ----------------------------------------------------------------------
+  # Debug-mode / system-state spoofing
+  # ----------------------------------------------------------------------
+  - name: debug_mode_spoofing
+    meta:
+      description: "Spoofing of debug, admin, or elevated-context mode to extract internal state"
+      threat_level: 5
+      severity: high
+      category: system_spoofing
+    strings:
+      you_are_in_debug_mode:    '(?i)\byou\s+are\s+(now\s+)?in\b.{0,20}\b(debug|developer|admin)\s+mode\b'
+      assume_dev_mode:          '(?i)\bassume\b.{0,20}\b(developer|dev|debug)\s+mode\b'
+      simulate_debug_mode:      '(?i)\bsimulate\b.{0,20}\bdebug\b.{0,10}\bmode\b'
+      print_runtime_context:    '(?i)\bprint\b.{0,30}\b(runtime|environment)\s+context\b'
+      behave_as_elevated:       '(?i)\bbehave\s+as\s+if\b.{0,30}\b(debug|admin|elevated)\b.{0,20}\bcontext\b'
+      start_in_unrestricted:    '(?i)\bstart\b.{0,20}\bin\s+unrestricted\s+debug\s+mode\b'
+      simulate_system_session:  '(?i)\bsimulate\b.{0,20}\bsystem\b.{0,20}\bsession\b'
+
+  # ----------------------------------------------------------------------
+  # Privilege escalation phrasings
+  # ----------------------------------------------------------------------
+  - name: escalation_phrases
+    meta:
+      description: "Phrasings consistent with intent to escalate privileges or bypass role restrictions"
+      threat_level: 4
+      severity: medium
+      category: privilege_escalation
+    strings:
+      escalate_privileges:        '(?i)\bhow\s+to\b.{0,30}\b(escalate|elevate|gain)\b.{0,20}\bprivileges\b'
+      root_access_simulate:       '(?i)\broot\s+access\b.{0,30}\b(simulate|emulate|fake)\b'
+      sudo_execution:             '(?i)\bsudo\b.{0,20}\b(execution|commands)\b'
+      privilege_escalation_tech:  '(?i)\bprivilege\s+escalation\s+technique\b'
+      get_around_role_restrictions: '(?i)\bget\s+around\b.{0,20}\brole\s+restrictions\b'
+
+  # ----------------------------------------------------------------------
+  # Hidden instruction probing
+  # ----------------------------------------------------------------------
+  # Distinct from config_leakage (which targets configuration files and
+  # env): this targets the model's *instruction history* and *initialization*.
+  - name: hidden_instruction_probe
+    meta:
+      description: "Probes specifically targeting the model's hidden instructions or init sequence"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      print_internal_parameters:  '(?i)\bprint\b.{0,20}\binternal\b.{0,20}\bparameters\b'
+      reveal_hidden_data:         '(?i)\breveal\b.{0,30}\b(hidden|preloaded|secret)\b.{0,10}\bdata\b'
+      expose_chat_init:           '(?i)\bexpose\b.{0,20}\bchat\s+initialization\s+sequence\b'
+      print_preloaded_context:    '(?i)\bprint\b.{0,30}\bpreloaded\s+context\b'
+
+  # ----------------------------------------------------------------------
+  # Tool / function coercion — agent-harness specific
+  # ----------------------------------------------------------------------
+  # Patterns that attempt to force the agent to call a specific tool,
+  # bypass the normal decision flow, or inject a tool call imperatively.
+  # Not present in general LLM safety catalogs — specific to agentic systems.
+  - name: tool_coercion
+    meta:
+      description: "Attempts to force the agent to invoke a tool outside normal decision flow"
+      threat_level: 4
+      severity: high
+      category: tool_injection
+    strings:
+      you_must_call:          '(?i)\byou\s+must\s+(call|invoke|use|execute)\s+'
+      before_responding_call: '(?i)\bbefore\s+(answering|responding)\b.{0,20}\b(call|invoke|run)\b'
+      immediately_invoke:     '(?i)\bimmediately\s+(call|invoke|execute)\s+'
+      always_call_tool:       '(?i)\balways\s+(call|invoke)\s+the\s+'
+      do_not_respond_call:    '(?i)\bdo\s+not\s+respond.{0,20}\b(call|invoke|execute)\b'
+
+  # ----------------------------------------------------------------------
+  # Delimiter smuggling — zero-width / invisible characters
+  # ----------------------------------------------------------------------
+  # Unicode control characters and zero-width spaces used to hide
+  # instruction payloads from human reviewers while remaining visible
+  # to the tokeniser. Handled here as an explicit rule so the Finding
+  # appears in audit events, not just as a scoring-function contribution.
+  - name: delimiter_smuggling
+    meta:
+      description: "Zero-width characters and ASCII control chars used to hide payloads"
+      threat_level: 5
+      severity: high
+      category: obfuscation
+    strings:
+      zero_width_chars:    '[\u200b\u200c\u200d\ufeff\u00ad]'
+      ascii_control_chars: '[\x00\x01\x02\x03\x04\x05\x06\x07]'
+    functions:
+      - obfuscation_score
+      - invisible_text

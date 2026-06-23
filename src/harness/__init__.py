@@ -14,7 +14,7 @@ from harness.core.errors import (
     SubAgentNotDeclaredError,
     ToolNotRegisteredError,
 )
-from harness.core.harness import Harness
+from harness.core.harness import SHAI, Harness  # Harness = backwards-compat alias
 from harness.core.types import BoundaryName, Decision, Severity, Transport
 from harness.core.verdicts import Finding, GateDecision, ScanVerdict
 from harness.tools.tool import Tool
@@ -25,7 +25,8 @@ except PackageNotFoundError:
     __version__ = "0.0.0+dev"
 
 __all__ = [
-    "Harness",
+    "SHAI",
+    "Harness",  # backwards-compat alias
     "Tool",
     "AgentContext",
     "RuntimeContext",  # backward-compat alias

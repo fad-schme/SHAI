@@ -26,8 +26,6 @@ GROUPS = frozenset({
     "harness.scanners",
     "harness.policy",
     "harness.audit_sinks",
-    "harness.tool_registry",
-    "harness.tool_sources",
     "harness.secrets",
 })
 
@@ -56,7 +54,7 @@ def _load_group(group: str) -> dict[str, type]:
             except Exception as e:
                 log.warning(
                     "failed to load adapter entry point",
-                    extra={"group": group, "name": ep.name, "error": str(e)},
+                    extra={"group": group, "adapter_name": ep.name, "error": str(e)},
                 )
 
     if conflicts:
@@ -92,7 +90,7 @@ def resolve(group: str, name: str) -> type:
             op="adapter_discovery",
         )
 
-    log.debug("adapter resolved", extra={"group": group, "name": name, "class": cls.__qualname__})
+    log.debug("adapter resolved", extra={"group": group, "adapter_name": name, "class": cls.__qualname__})
     return cls
 
 

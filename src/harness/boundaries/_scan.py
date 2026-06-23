@@ -152,3 +152,32 @@ async def run_file_scan(
         block_at=block_at,
         audit_tags=audit_tags,
     )
+
+
+async def run_tool_result_scan(
+    result: str,
+    ctx: "AgentContext",
+    *,
+    scanners: list["Scanner"],
+    emitter: "AuditEmitter",
+    tenant_id: str,
+    enabled: bool,
+    block_at: Severity,
+    audit_tags: dict[str, str] | None = None,
+) -> ScanVerdict:
+    """Scan a tool's return value before it re-enters the LLM context.
+
+    Identical contract to run_scan — one AuditEvent, same disabled/block logic.
+    Uses BoundaryName.TOOL_RESULT_SCAN so SIEM queries can distinguish it.
+    """
+    return await run_scan(
+        result,
+        ctx,
+        boundary=BoundaryName.TOOL_RESULT_SCAN,
+        scanners=scanners,
+        emitter=emitter,
+        tenant_id=tenant_id,
+        enabled=enabled,
+        block_at=block_at,
+        audit_tags=audit_tags,
+    )

@@ -34,12 +34,12 @@ from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
-    from harness.core.harness import Harness
+    from harness.core.harness import SHAI
 
 log = logging.getLogger(__name__)
 
 
-def wrap_tool(tool: Any, *, harness: "Harness", ctx: "AgentContext") -> Any:
+def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
     """Return a gated version of a CrewAI tool.
 
     Works with @tool decorated functions and BaseTool subclasses.
@@ -91,7 +91,7 @@ def wrap_tool(tool: Any, *, harness: "Harness", ctx: "AgentContext") -> Any:
 def wrap_tools(
     tools: Sequence[Any],
     *,
-    harness: "Harness",
+    harness: "SHAI",
     ctx: "AgentContext",
 ) -> list[Any]:
     """Wrap a list of CrewAI tools."""

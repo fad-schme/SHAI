@@ -1,4 +1,4 @@
-"""Tests for Harness facade — phases 1–3."""
+"""Tests for SHAI facade — phases 1–3."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,11 +7,11 @@ import pytest
 
 from harness.core.context import AgentContext
 from harness.core.errors import AgentNotRegisteredError, ConfigError, SubAgentNotDeclaredError
-from harness.core.harness import Harness
+from harness.core.harness import SHAI
 
 
 @pytest.fixture
-def harness(tmp_path: Path) -> Harness:
+def harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         "version: 1\n"
@@ -20,7 +20,7 @@ def harness(tmp_path: Path) -> Harness:
         "policy:\n  name: rules\n"
         "audit_sinks:\n  - name: stdout\n"
     )
-    return Harness.from_yaml(cfg)
+    return SHAI.from_yaml(cfg)
 
 
 async def test_load_and_list_agents(harness, orchestrator_yaml, research_yaml):
@@ -113,4 +113,4 @@ async def test_boundaries_are_wired_in_phase5(harness):
 
 async def test_from_yaml_missing_file():
     with pytest.raises(ConfigError):
-        Harness.from_yaml("/nonexistent/path/harness.yaml")
+        SHAI.from_yaml("/nonexistent/path/harness.yaml")

@@ -1,4 +1,4 @@
-"""Integration tests — full async turn through a real Harness instance.
+"""Integration tests — full async turn through a real SHAI instance.
 
 No mocks beyond the RecordingSink. Tests run against the real boundaries,
 real registry, real policy engine, real scanners.
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from harness.core.context import AgentContext
-from harness.core.harness import Harness
+from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Decision, Transport
 from harness.core.events import AuditEvent
 from harness.tools.tool import Tool
@@ -25,7 +25,7 @@ class RecordingSink:
     async def close(self): pass
 
 
-def _make_harness(tmp_path: Path, *, scan_enabled: bool = False) -> Harness:
+def _make_harness(tmp_path: Path, *, scan_enabled: bool = False) -> SHAI:
     cfg = tmp_path / "h.yaml"
     scanners_block = (
         "  scanners:\n    - name: regex_pii\n    - name: basic_injection\n"
@@ -39,17 +39,17 @@ def _make_harness(tmp_path: Path, *, scan_enabled: bool = False) -> Harness:
         f"policy:\n  name: rules\n"
         f"audit_sinks:\n  - name: stdout\n"
     )
-    h = Harness.from_yaml(cfg)
+    h = SHAI.from_yaml(cfg)
     # Inject recording sink for assertions
     h._emitter._sinks.append(RecordingSink())
     return h
 
 
-def _recording_sink(h: Harness) -> RecordingSink:
+def _recording_sink(h: SHAI) -> RecordingSink:
     return next(s for s in h._emitter._sinks if isinstance(s, RecordingSink))
 
 
-async def _setup_harness(tmp_path: Path, *, scan_enabled: bool = False) -> Harness:
+async def _setup_harness(tmp_path: Path, *, scan_enabled: bool = False) -> SHAI:
     h = _make_harness(tmp_path, scan_enabled=scan_enabled)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
     await h.register_tools([

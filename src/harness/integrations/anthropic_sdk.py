@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
-    from harness.core.harness import Harness
+    from harness.core.harness import SHAI
     from harness.core.verdicts import GateDecision, ScanVerdict
     from harness.tools.tool import Tool
 
@@ -40,7 +40,7 @@ async def gated_dispatch(
     tool_args: dict[str, Any],
     ctx: "AgentContext",
     *,
-    harness: "Harness",
+    harness: "SHAI",
     dispatch: Callable[[str, dict[str, Any]], Awaitable[Any]],
 ) -> Any:
     """Gate one tool call then dispatch if allowed.
@@ -49,7 +49,7 @@ async def gated_dispatch(
         tool_name:  the tool name from the model's tool_use block
         tool_args:  the tool input dict from the model's tool_use block
         ctx:        the AgentContext for this turn
-        harness:    the Harness instance
+        harness:    the SHAI instance
         dispatch:   async callable(tool_name, args) → tool result
 
     Returns the tool result on allow, or the GateDecision on deny so the
@@ -72,7 +72,7 @@ async def run_turn(
     user_text: str,
     ctx: "AgentContext",
     *,
-    harness: "Harness",
+    harness: "SHAI",
     llm_fn: Callable[
         [str, list["Tool"], "AgentContext"],
         Awaitable[str],

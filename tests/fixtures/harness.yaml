@@ -13,26 +13,3 @@ policy:
 
 audit_sinks:
   - name: stdout
-
-tool_registry:
-  name: memory
-
-secrets:
-  name: env
-
-tool_sources:
-  - name: docs_skill
-    transport: skill
-    tools:
-      - search_docs
-    tags:
-      - skill
-      - read
-      - internal
-
-agents:
-  directory: ./tests/fixtures/agents
-
-logging:
-  level: DEBUG
-  json_format: true

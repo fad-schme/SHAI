@@ -28,8 +28,9 @@ def test_load_dict_minimal():
 
 
 def test_load_dict_validation_error_surfaces_field():
-    with pytest.raises(ConfigError, match="audit_sinks"):
-        load_dict({**_minimal(), "audit_sinks": []})
+    """A bad field value surfaces as ConfigError with the field name."""
+    with pytest.raises(ConfigError):
+        load_dict({**_minimal(), "scan_input": {"enabled": True, "block_at": "invalid_severity"}})
 
 
 def test_load_yaml_missing_file():

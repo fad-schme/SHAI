@@ -2,8 +2,8 @@
 
 AuditSink:    Protocol every sink adapter must satisfy.
 AuditEmitter: Fans out to all sinks concurrently. Truncates long deny_reason
-              fields before emission (only runtime safety applied — the event
-              schema never carries raw text by design).
+              fields before emission. Optionally signs each event with
+              HMAC-SHA256 (R3 — mitigates T8 Repudiation & Untraceability).
 
 Individual sink failures are logged and swallowed.
 All sinks failing raises AuditEmissionError.
@@ -11,6 +11,9 @@ All sinks failing raises AuditEmissionError.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 from typing import TYPE_CHECKING, Protocol
 
@@ -38,18 +41,41 @@ class AuditSink(Protocol):
         ...
 
 
+def _sign_event(event: "AuditEvent", secret: bytes) -> str:
+    """Compute HMAC-SHA256 signature over the event body (excluding signature field).
+
+    The payload is the deterministic JSON of all non-None fields excluding
+    `signature`. Sorted keys ensure consistent ordering across Python versions.
+    """
+    payload = {
+        k: v for k, v in event.model_dump(exclude_none=True).items()
+        if k != "signature"
+    }
+    body = json.dumps(payload, sort_keys=True, default=str).encode()
+    return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
 class AuditEmitter:
 
-    def __init__(self, sinks: list[AuditSink]) -> None:
+    def __init__(
+        self,
+        sinks: list[AuditSink],
+        signing_secret: bytes | None = None,
+    ) -> None:
         if not sinks:
             raise ValueError("AuditEmitter requires at least one sink")
-        self._sinks = sinks
+        self._sinks          = sinks
+        self._signing_secret = signing_secret
 
     async def emit(self, event: "AuditEvent") -> None:
-        """Truncate oversized fields, then fan-out to all sinks concurrently."""
+        """Truncate oversized fields, optionally sign, then fan-out concurrently."""
         if event.deny_reason and len(event.deny_reason) > _MAX_DENY_REASON:
             object.__setattr__(event, "deny_reason",
                                event.deny_reason[:_MAX_DENY_REASON - 3] + "...")
+
+        if self._signing_secret is not None:
+            sig = _sign_event(event, self._signing_secret)
+            object.__setattr__(event, "signature", sig)
 
         results = await asyncio.gather(
             *[self._emit_one(sink, event) for sink in self._sinks],

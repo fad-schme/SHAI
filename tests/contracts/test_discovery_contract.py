@@ -37,8 +37,6 @@ def test_all_expected_groups_defined():
         "harness.scanners",
         "harness.policy",
         "harness.audit_sinks",
-        "harness.tool_registry",
-        "harness.tool_sources",
         "harness.secrets",
     }
     assert expected == GROUPS
@@ -68,11 +66,11 @@ def test_resolve_regex_pii():
         pytest.skip("package not installed — entry points not registered")
 
 
-def test_resolve_basic_injection():
-    from harness.adapters.scanners.basic_injection import BasicInjectionScanner
+def test_resolve_injection_scan():
+    from harness.adapters.scanners.injection_scan import InjectionScanner
     try:
-        cls = resolve("harness.scanners", "basic_injection")
-        assert cls is BasicInjectionScanner
+        cls = resolve("harness.scanners", "injection_scan")
+        assert cls is InjectionScanner
     except AdapterDiscoveryError:
         pytest.skip("package not installed")
 
@@ -114,10 +112,10 @@ def test_resolve_memory_registry():
 
 
 def test_resolve_env_secrets():
-    from harness.adapters.secrets.env import EnvSecrets
+    from harness.adapters.secrets.env import EnvVarProvider
     try:
         cls = resolve("harness.secrets", "env")
-        assert cls is EnvSecrets
+        assert cls is EnvVarProvider
     except AdapterDiscoveryError:
         pytest.skip("package not installed")
 

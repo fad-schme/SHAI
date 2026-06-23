@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from harness.adapters.audit_sinks.stdout import StdoutSink
+from harness.adapters.scanners.rate_limiter import RateLimiter
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
-from harness.adapters.scanners.basic_injection import BasicInjectionScanner
+from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.tools.registry import ToolRegistry
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import run_scan, run_file_scan
+from harness.boundaries._scan import run_scan, run_file_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import run as run_gate
 from harness.core.types import BoundaryName
 from harness.config.loader import load_yaml
@@ -31,11 +32,11 @@ from harness.tools.tool import Tool
 log = logging.getLogger(__name__)
 
 
-class Harness:
+class SHAI:
     """Control-plane facade for production agents.
 
     Startup sequence:
-        harness = Harness.from_yaml("config/harness.yaml")
+        harness = SHAI.from_yaml("config/harness.yaml")
         await harness.register_tools([...])
         agent = await harness.load_agent("config/agents/my_agent.yaml")
 
@@ -63,6 +64,10 @@ class Harness:
         file_scanners: list,
         file_max_size_mb: float,
         scan_args_for_tags: frozenset[str],
+        rate_limiter: RateLimiter | None,
+        tool_result_scanners: list,
+        scan_tool_result_enabled: bool,
+        tool_result_block_at: Severity,
     ) -> None:
         self._config              = config
         self._tenant_id           = config.tenant_id
@@ -81,6 +86,10 @@ class Harness:
         self._file_scanners       = file_scanners
         self._file_max_size_mb    = file_max_size_mb
         self._scan_args_for_tags  = scan_args_for_tags
+        self._rate_limiter              = rate_limiter
+        self._tool_result_scanners      = tool_result_scanners
+        self._scan_tool_result_enabled  = scan_tool_result_enabled
+        self._tool_result_block_at      = tool_result_block_at
         # Per-agent resolved tool sets — populated at load_agent() time
         # key: agent_id, value: {tool_name: Tool} for that agent
         self._agent_tools: dict[str, dict[str, Tool]] = {}
@@ -88,18 +97,21 @@ class Harness:
     # ── Construction ──────────────────────────────────────────────────────
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "Harness":
+    def from_yaml(cls, path: str | Path) -> "SHAI":
         """Load harness.yaml and construct a fully wired Harness instance.
 
-        Secret resolution order:
-          1. Build a SecretsProvider from config.secrets (default: EnvVarProvider).
-          2. Re-parse YAML with the provider so secret:// URIs are resolved.
+        Secret resolution:
+          Resolves ${ENV_VAR} then secret:// URIs using EnvVarProvider.
+          All secret:// references must be present as environment variables.
         """
         # First pass: resolve ${ENV_VAR} only (no provider yet)
         config_pre = load_yaml(path)
 
-        # Build the secrets provider from config
-        provider = _build_secrets_provider(config_pre.secrets)
+        # Always use EnvVarProvider for secret:// resolution.
+        # Enterprise providers can be swapped by subclassing or patching before
+        # calling from_yaml() — no config field needed since there is only one
+        # implementation in core.
+        provider = EnvVarProvider()
 
         # Second pass: resolve secret:// URIs with the provider
         config = load_yaml(path, provider=provider)
@@ -119,7 +131,39 @@ class Harness:
         )
 
         sinks   = _build_sinks(config.audit_sinks)
-        emitter = AuditEmitter(sinks)
+
+        # R3: resolve signing key if configured
+        signing_secret: bytes | None = None
+        if config.audit_signing.enabled:
+            raw_secret = config.audit_signing.secret
+            if raw_secret.startswith("secret://"):
+                raw_secret = provider.resolve(
+                    raw_secret[len("secret://"):]
+                ).value
+            signing_secret = raw_secret.encode()
+            log.info("audit event signing enabled")
+
+        emitter = AuditEmitter(sinks, signing_secret=signing_secret)
+
+        # R2: tool result scanner — uses bundled patterns_for_doc.yaml
+        from pathlib import Path as _Path
+        from harness.adapters.scanners.injection_scan import InjectionScanner as _IS
+        _doc_patterns = _Path(__file__).parent.parent / \
+            "adapters/scanners/patterns_for_doc.yaml"
+        tool_result_scanners = (
+            [_IS(patterns_file=_doc_patterns, name="injection_scan_doc")]
+            if config.scan_tool_result.enabled else []
+        )
+
+        rl_cfg = config.check_tool_call.rate_limit
+        rate_limiter = (
+            RateLimiter(
+                window_seconds=rl_cfg.window_seconds,
+                max_calls_per_window=rl_cfg.max_calls_per_window,
+                max_calls_per_tool=rl_cfg.max_calls_per_tool,
+            )
+            if rl_cfg.enabled else None
+        )
 
         return cls(
             config=config,
@@ -138,6 +182,10 @@ class Harness:
             file_scanners=file_scanners,
             file_max_size_mb=config.scan_file.max_size_mb,
             scan_args_for_tags=frozenset(config.check_tool_call.scan_args_for_tags),
+            rate_limiter=rate_limiter,
+            tool_result_scanners=tool_result_scanners,
+            scan_tool_result_enabled=config.scan_tool_result.enabled,
+            tool_result_block_at=config.scan_tool_result.block_at,
         )
 
     # ── Startup ───────────────────────────────────────────────────────────
@@ -186,6 +234,8 @@ class Harness:
         config = self._agent_registry.get(agent_id)
         await self._agent_registry.deregister(config)
         self._agent_tools.pop(agent_id, None)
+        if self._rate_limiter is not None:
+            self._rate_limiter.reset(agent_id)
 
     async def list_agents(self) -> list[AgentConfig]:
         return await self._agent_registry.list()
@@ -227,6 +277,25 @@ class Harness:
     async def check_tool_call(
         self, name: str, args: dict[str, Any], ctx: AgentContext
     ) -> GateDecision:
+        # R1: rate limit check before the gate runs
+        if self._rate_limiter is not None:
+            allowed, reason = self._rate_limiter.check(ctx.agent_id, name)
+            if not allowed:
+                from harness.core.events import AuditEvent, now_ms
+                from harness.core.types import BoundaryName, Decision
+                event = AuditEvent.build(
+                    boundary=BoundaryName.TOOL_CALL_GATE,
+                    decision=Decision.DENY,
+                    ctx=ctx,
+                    tenant_id=self._tenant_id,
+                    duration_ms=0,
+                    tool_name=name,
+                    deny_reason=reason,
+                    audit_tags=self._audit_tags_for(ctx),
+                )
+                await self._emitter.emit(event)
+                return GateDecision(allowed=False, deny_reason=reason)
+
         agent_config = self._agent_registry.get(ctx.agent_id)
         tools        = self._agent_tools.get(ctx.agent_id, {})
         return await run_gate(
@@ -256,6 +325,27 @@ class Harness:
             tenant_id=self._tenant_id,
             enabled=self._scan_file_enabled,
             block_at=self._file_block_at,
+            audit_tags=self._audit_tags_for(ctx),
+        )
+
+    async def scan_tool_result(self, result: str, ctx: AgentContext) -> ScanVerdict:
+        """Scan a tool's return value before it re-enters the LLM context.
+
+        Call after every tool dispatch and before passing the result to the LLM.
+        Detects indirect prompt injection embedded in tool outputs (T6).
+
+        Example:
+            result   = await dispatch(tool_name, args)
+            verdict  = await harness.scan_tool_result(result, agent)
+            safe_result = verdict.redacted_text or result
+        """
+        return await run_tool_result_scan(
+            result, ctx,
+            scanners=self._tool_result_scanners,
+            emitter=self._emitter,
+            tenant_id=self._tenant_id,
+            enabled=self._scan_tool_result_enabled,
+            block_at=self._tool_result_block_at,
             audit_tags=self._audit_tags_for(ctx),
         )
 
@@ -303,7 +393,7 @@ class Harness:
 def _build_scanners(adapter_refs: list) -> list:
     _REFERENCE = {
         "regex_pii":       lambda cfg: RegexPIIScanner(**cfg),
-        "basic_injection": lambda cfg: BasicInjectionScanner(**cfg),
+        "injection_scan":  lambda cfg: InjectionScanner(**cfg),
     }
     scanners = []
     for ref in adapter_refs:
@@ -317,45 +407,21 @@ def _build_scanners(adapter_refs: list) -> list:
                 scanners.append(cls(**ref.config))
             except Exception as e:
                 log.warning("scanner adapter not found — skipped",
-                            extra={"name": ref.name, "error": str(e)})
+                            extra={"adapter_name": ref.name, "error": str(e)})
     return scanners
 
 
-
-def _build_secrets_provider(adapter_ref: object) -> "EnvVarProvider":
-    """Build a SecretsProvider from an AdapterRef config entry.
-
-    Currently only EnvVarProvider is supported in core.
-    Enterprise providers (Vault, AWS, Azure, GCP) register via entry points.
-    """
-    name = getattr(adapter_ref, "name", "env")
-    cfg  = getattr(adapter_ref, "config", {})
-
-    if name == "env":
-        return EnvVarProvider(
-            prefix=cfg.get("prefix") or None,
-        )
-
-    # Enterprise provider via entry point
-    try:
-        from harness.adapters.discovery import resolve
-        cls = resolve("harness.secrets", name)
-        return cls(**cfg)
-    except Exception as e:
-        log.warning("secrets provider %r not found — falling back to EnvVarProvider: %s",
-                    name, e)
-        return EnvVarProvider()
 
 
 def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
     """Build file scanners — always includes FileScanner as the structural pass.
 
     If no scanners are configured (scan_file disabled), returns [FileScanner]
-    with a YamlRuleScanner(patterns_for_doc) pre-wired as the content scanner.
+    with InjectionScanner(patterns_for_doc) pre-wired as the content scanner.
     Additional scanners in the config are appended after.
     """
     from harness.adapters.scanners.file_scanner import FileScanner
-    from harness.adapters.scanners.yaml_rule_scanner import YamlRuleScanner
+    from harness.adapters.scanners.injection_scan import InjectionScanner as YamlRuleScanner
     from pathlib import Path as _Path
 
     patterns_for_doc = _Path(__file__).parent.parent / \
@@ -363,7 +429,7 @@ def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
 
     text_scanner = YamlRuleScanner(
         patterns_file=patterns_for_doc if patterns_for_doc.exists() else None,
-        name="yaml_rules_doc",
+        name="injection_scan_doc",
     )
     scanners = [FileScanner(max_size_mb=max_size_mb, text_scanner=text_scanner)]
 
@@ -376,7 +442,7 @@ def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
             scanners.append(cls(**ref.config))
         except Exception as e:
             log.warning("file scanner adapter not found — skipped",
-                        extra={"name": ref.name, "error": str(e)})
+                        extra={"adapter_name": ref.name, "error": str(e)})
     return scanners
 
 
@@ -395,8 +461,11 @@ def _build_sinks(adapter_refs: list) -> list:
                 sinks.append(cls(**ref.config))
             except Exception as e:
                 log.warning("audit sink not found — skipped",
-                            extra={"name": ref.name, "error": str(e)})
+                            extra={"adapter_name": ref.name, "error": str(e)})
     if not sinks:
         log.warning("no audit sinks configured — falling back to stdout")
         sinks = [StdoutSink()]
     return sinks
+
+# Backwards-compatibility alias — prefer SHAI
+Harness = SHAI

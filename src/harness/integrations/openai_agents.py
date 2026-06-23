@@ -38,14 +38,14 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
-    from harness.core.harness import Harness
+    from harness.core.harness import SHAI
 
 log = logging.getLogger(__name__)
 
 
 def make_before_tool_hook(
     *,
-    harness: "Harness",
+    harness: "SHAI",
     ctx: "AgentContext",
 ) -> Callable:
     """Return an async before_tool_call hook for AgentHooks.
@@ -79,7 +79,7 @@ def make_before_tool_hook(
     return before_tool_call
 
 
-def wrap_tool(tool: Any, *, harness: "Harness", ctx: "AgentContext") -> Any:
+def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
     """Wrap a single OpenAI Agents tool with a harness gate.
 
     Returns a FunctionTool (or the original with a gated _run) depending
@@ -120,7 +120,7 @@ def wrap_tool(tool: Any, *, harness: "Harness", ctx: "AgentContext") -> Any:
 def wrap_tools(
     tools: Sequence[Any],
     *,
-    harness: "Harness",
+    harness: "SHAI",
     ctx: "AgentContext",
 ) -> list[Any]:
     """Wrap a list of OpenAI Agents tools."""

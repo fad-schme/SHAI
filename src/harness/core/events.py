@@ -43,6 +43,7 @@ class AuditEvent(BaseModel, frozen=True):
     # Agent context
     audit_tags: dict[str, str] = {}
     extra:      dict[str, Any] = {}
+    signature:  str | None = None  # HMAC-SHA256, stamped by AuditEmitter when configured
 
     @model_validator(mode="after")
     def _cross_field_constraints(self) -> "AuditEvent":

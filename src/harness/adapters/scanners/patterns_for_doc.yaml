@@ -5,9 +5,9 @@ patterns:
       threat_level: 5
       category: "injection"
     strings:
-      a: "(?i)ignore\s+.*instruction"
-      b: "(?i)disregard\s+.*prior\s+context"
-      c: "(?i)override\s+.*system"
+      a: '(?i)ignore\s+.*instruction'
+      b: '(?i)disregard\s+.*prior\s+context'
+      c: '(?i)override\s+.*system'
 
   - name: impersonation_simulation
     meta:
@@ -15,9 +15,9 @@ patterns:
       threat_level: 4
       category: "impersonation"
     strings:
-      a: "(?i)act\s+as\s+.*?ai|user|developer"
-      b: "(?i)simulate\s+.*behavior"
-      c: "(?i)pretend\s+to\s+.*"
+      a: '(?i)act\s+as\s+.*?ai|user|developer'
+      b: '(?i)simulate\s+.*behavior'
+      c: '(?i)pretend\s+to\s+.*'
 
   - name: system_probe_exfil
     meta:
@@ -25,9 +25,9 @@ patterns:
       threat_level: 4
       category: "leakage"
     strings:
-      a: "(?i)what\s+is\s+your\s+system\s+prompt"
-      b: "(?i)print\s+the\s+instructions"
-      c: "(?i)show\s+your\s+configuration"
+      a: '(?i)what\s+is\s+your\s+system\s+prompt'
+      b: '(?i)print\s+the\s+instructions'
+      c: '(?i)show\s+your\s+configuration'
 
   - name: jailbreak_escape_attempt
     meta:
@@ -35,9 +35,9 @@ patterns:
       threat_level: 5
       category: "jailbreak"
     strings:
-      a: "(?i)unfiltered\s+response"
-      b: "(?i)you\s+are\s+not\s+an\s+ai"
-      c: "(?i)bypass\s+(security|filters|guardrails)"
+      a: '(?i)unfiltered\s+response'
+      b: '(?i)you\s+are\s+not\s+an\s+ai'
+      c: '(?i)bypass\s+(security|filters|guardrails)'
 
   - name: formatting_tricks
     meta:
@@ -45,7 +45,7 @@ patterns:
       threat_level: 3
       category: "obfuscation"
     strings:
-      a: "(?i)markdown\s+injection|prompt\s+stacking"
+      a: '(?i)markdown\s+injection|prompt\s+stacking'
       b: "(?i)```(?:bash|python|sh).*```"
       c: "(?i)<script>|<iframe>|<style>"
 
@@ -55,8 +55,8 @@ patterns:
       threat_level: 4
       category: "code_execution"
     strings:
-      a: "(?i)(eval|exec|base64|decode|import)\s*\\?\\("
-      b: "[\\x[0-9a-fA-F]{2,}]+"
+      a: '(?i)\b(eval|exec|base64_decode|import)\s*\('
+      b: '(?:\\x[0-9a-fA-F]{2,}){2,}'
       c: "(?i)data:text/plain;base64,"
 
   - name: deception_social_engineering
@@ -65,9 +65,9 @@ patterns:
       threat_level: 2
       category: "social_engineering"
     strings:
-      a: "(?i)this\s+is\s+for\s+testing\s+only"
-      b: "(?i)your\s+response\s+will\s+be\s+audited"
-      c: "(?i)you\s+are\s+authorized\s+to"
+      a: '(?i)this\s+is\s+for\s+testing\s+only'
+      b: '(?i)your\s+response\s+will\s+be\s+audited'
+      c: '(?i)you\s+are\s+authorized\s+to'
 
   - name: llm_prompt_artifacts
     meta:
@@ -75,9 +75,9 @@ patterns:
       threat_level: 3
       category: "format_artifact"
     strings:
-      a: "(?i)\\[system\\](\\s*){3,}"
-      b: "<\\|system\\|>"
-      c: "###\\s*Instructions"
+      a: '(?i)\\[system\\](\\s*){3,}'
+      b: '<\\|system\\|>'
+      c: '###\\s*Instructions'
 
   - name: prompt_tag_variants
     meta:

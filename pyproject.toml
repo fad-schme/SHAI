@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "harness"
+name = "shai"
 version = "0.1.0"
-description = "Control-plane SDK for production agents"
+description = "Secure Harness AI — control-plane SDK for production agents"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
@@ -27,11 +27,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [project.scripts]
-harness = "harness_cli.main:main"
+shai = "harness_cli.main:main"
 
 [project.entry-points."harness.scanners"]
-regex_pii       = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
-basic_injection = "harness.adapters.scanners.basic_injection:BasicInjectionScanner"
+regex_pii      = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
+injection_scan = "harness.adapters.scanners.injection_scan:InjectionScanner"
 
 [project.entry-points."harness.policy"]
 rules = "harness.policy.rules:RuleBasedPolicy"
@@ -40,12 +40,5 @@ rules = "harness.policy.rules:RuleBasedPolicy"
 stdout = "harness.adapters.audit_sinks.stdout:StdoutSink"
 file   = "harness.adapters.audit_sinks.file:FileSink"
 
-[project.entry-points."harness.tool_registry"]
-memory = "harness.tools.registry:InMemoryRegistry"
-
-[project.entry-points."harness.tool_sources"]
-local = "harness.tools.source:LocalSource"
-skill = "harness.tools.source:SkillSource"
-
 [project.entry-points."harness.secrets"]
-env = "harness.adapters.secrets.env:EnvSecrets"
+env = "harness.adapters.secrets.env:EnvVarProvider"

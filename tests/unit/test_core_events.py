@@ -2,13 +2,13 @@
 import pytest
 from pydantic import ValidationError
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.types import BoundaryName, Decision, Severity
 
 
-def _ctx(**kw) -> RuntimeContext:
-    return RuntimeContext(agent_id="a1", **kw)
+def _ctx(**kw) -> AgentContext:
+    return AgentContext(agent_id="a1", **kw)
 
 
 def _build(**kw) -> AuditEvent:

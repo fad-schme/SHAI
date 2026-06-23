@@ -5,7 +5,7 @@ Two-pass design:
                        PDF embedded JavaScript, image EXIF metadata,
                        ZIP structure, Office macro detection.
   Pass 2 (content):    Text extracted from the file is run through a
-                       companion text scanner (YamlRuleScanner by default).
+                       companion text scanner (InjectionScanner by default).
 
 All external dependencies are optional and gracefully skipped if not
 installed. The scanner degrades to extension/size checks only.
@@ -305,7 +305,7 @@ class FileScanner:
         """
         max_size_mb:   block files larger than this.
         text_scanner:  optional Scanner to run on extracted text content.
-                       Typically YamlRuleScanner(patterns_for_doc.yaml).
+                       Typically InjectionScanner(patterns_for_doc.yaml).
         """
         self._max_size_mb  = max_size_mb
         self._text_scanner = text_scanner

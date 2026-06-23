@@ -1,4 +1,4 @@
-"""harness agents list — list registered agents."""
+"""harness agents list — list agent files in a directory."""
 from __future__ import annotations
 
 import argparse
@@ -8,24 +8,22 @@ from pathlib import Path
 
 
 def cmd_agents_list(args: argparse.Namespace) -> int:
-    config_path = Path(args.config)
+    agents_dir = Path(args.agents_dir) if args.agents_dir else None
 
-    try:
-        from harness.config.loader import load_yaml
-        config = load_yaml(config_path)
-    except Exception as e:
-        print(f"Error loading {config_path}: {e}", file=sys.stderr)
+    if agents_dir is None:
+        print(
+            "No agents directory specified. Use --agents-dir <path>.",
+            file=sys.stderr,
+        )
         return 1
 
-    agents_dir: Path | None = None
-
-    if agents_dir is None or not agents_dir.exists():
-        print("No agents directory configured.", file=sys.stderr)
+    if not agents_dir.exists():
+        print(f"Agents directory not found: {agents_dir}", file=sys.stderr)
         return 1
 
     agent_files = sorted(agents_dir.glob("*.yaml"))
     if not agent_files:
-        print("No agent files found.")
+        print(f"No agent YAML files found in {agents_dir}")
         return 0
 
     async def _load() -> list:
@@ -46,11 +44,10 @@ def cmd_agents_list(args: argparse.Namespace) -> int:
         print("No agents loaded.")
         return 0
 
-    # Table header
-    col_id   = max(len(a.id) for a in agents)
-    col_ver  = max(len(a.version or "-") for a in agents)
+    col_id    = max(len(a.id) for a in agents)
+    col_ver   = max(len(a.version or "-") for a in agents)
     col_tools = max(len(str(len(a.allowed_tool_names))) for a in agents)
-    col_subs = max(len(str(len(a.sub_agents))) for a in agents)
+    col_subs  = max(len(str(len(a.sub_agents))) for a in agents)
 
     header = (
         f"{'ID':<{col_id}}  "
@@ -70,7 +67,6 @@ def cmd_agents_list(args: argparse.Namespace) -> int:
             f"{len(a.sub_agents):>{col_subs}}  "
             f"{', '.join(a.sources) or '-'}"
         )
-
         for sub in a.sub_agents:
             print(
                 f"  └─ {sub.id:<{col_id - 4}}  "

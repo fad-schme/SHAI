@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
-    from harness.core.harness import Harness
+    from harness.core.harness import SHAI
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class HarnessToolNode:
     def __init__(
         self,
         tools: Sequence[Any],
-        harness: "Harness",
+        harness: "SHAI",
         ctx: "AgentContext",
     ) -> None:
         self._tools = {self._tool_name(t): t for t in tools}

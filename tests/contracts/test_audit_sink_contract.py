@@ -10,11 +10,11 @@ import pytest
 
 from harness.adapters.audit_sinks.file import FileSink
 from harness.adapters.audit_sinks.stdout import StdoutSink
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.types import BoundaryName, Decision
 
-_CTX = RuntimeContext(
+_CTX = AgentContext(
         agent_id="a1")
 
 
@@ -135,7 +135,7 @@ async def test_file_creates_parent_dirs(tmp_path: Path):
 
 async def test_file_sub_agent_id_in_output(tmp_path: Path):
     path = tmp_path / "audit.jsonl"
-    ctx = RuntimeContext(agent_id="a1", sub_agent_id="sub1")
+    ctx = AgentContext(agent_id="a1", sub_agent_id="sub1")
     sink = FileSink(path=path)
     await sink.emit(make_event(ctx=ctx))
     await sink.close()

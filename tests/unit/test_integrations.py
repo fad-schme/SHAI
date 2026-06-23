@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from harness.core.context import AgentContext
-from harness.core.harness import Harness
+from harness.core.harness import SHAI
 from harness.core.types import Transport
 from harness.core.verdicts import GateDecision
 from harness.tools.tool import Tool
@@ -22,7 +22,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 # ── Shared setup ──────────────────────────────────────────────────────────
 
-async def _build_harness(tmp_path: Path) -> Harness:
+async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
@@ -31,7 +31,7 @@ async def _build_harness(tmp_path: Path) -> Harness:
         "policy:\n  name: rules\n"
         "audit_sinks:\n  - name: stdout\n"
     )
-    h = Harness.from_yaml(cfg)
+    h = SHAI.from_yaml(cfg)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
     await h.register_tools([
         Tool(name="search_docs", tags=["read", "internal"],            transport=Transport.LOCAL),
@@ -122,7 +122,7 @@ async def test_run_turn_input_blocked(tmp_path: Path):
         "policy:\n  name: rules\n"
         "audit_sinks:\n  - name: stdout\n"
     )
-    h = Harness.from_yaml(cfg)
+    h = SHAI.from_yaml(cfg)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
     await h.register_tools([
         Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),

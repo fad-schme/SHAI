@@ -5,30 +5,25 @@ from pathlib import Path
 
 import pytest
 
-from harness.core.context import RuntimeContext
+from harness.core.context import AgentContext
 
 FIXTURES = Path(__file__).parent / "fixtures"
 AGENTS   = FIXTURES / "agents"
 
 
 @pytest.fixture
-def ctx() -> RuntimeContext:
-    return RuntimeContext(
-        tenant_id="t1",
+def ctx() -> AgentContext:
+    return AgentContext(
         agent_id="orchestrator_agent",
-        user_id="u1",
-        session_id="s1",
     )
 
 
 @pytest.fixture
-def sub_ctx() -> RuntimeContext:
-    return RuntimeContext(
-        tenant_id="t1",
+def sub_ctx() -> AgentContext:
+    return AgentContext(
         agent_id="orchestrator_agent",
         sub_agent_id="research_sub",
         allowed_tags=["read", "internal"],
-        user_id="u1",
     )
 
 

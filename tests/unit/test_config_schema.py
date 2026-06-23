@@ -21,14 +21,14 @@ def test_minimal_valid_config():
     cfg = HarnessConfig.model_validate(_minimal())
     assert cfg.policy.name == "rules"
     assert len(cfg.audit_sinks) == 1
-    assert cfg.tool_registry.name == "memory"
-    assert cfg.secrets.name == "env"
 
 
-def test_no_audit_sinks_rejected():
-    data = {**_minimal(), "audit_sinks": []}
-    with pytest.raises(ValidationError):
-        HarnessConfig.model_validate(data)
+def test_empty_audit_sinks_allowed():
+    """audit_sinks defaults to [] — empty list is valid, harness falls back to stdout."""
+    data = _minimal()
+    data.pop("audit_sinks", None)  # omit entirely
+    cfg = HarnessConfig.model_validate(data)
+    assert cfg.audit_sinks == []
 
 
 def test_enabled_boundary_without_scanners_rejected():
@@ -52,13 +52,3 @@ def test_enabled_scan_with_scanners_ok():
     bc = BoundaryConfig(enabled=True, scanners=[{"name": "regex_pii"}])
     assert bc.enabled
     assert bc.scanners[0].name == "regex_pii"
-
-
-def test_default_tool_registry_is_memory():
-    cfg = HarnessConfig.model_validate(_minimal())
-    assert cfg.tool_registry.name == "memory"
-
-
-def test_default_secrets_is_env():
-    cfg = HarnessConfig.model_validate(_minimal())
-    assert cfg.secrets.name == "env"

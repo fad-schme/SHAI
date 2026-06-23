@@ -1,6 +1,6 @@
 """Concurrent agent isolation tests.
 
-Proves that one Harness instance safely serves multiple concurrent agents
+Proves that one SHAI instance safely serves multiple concurrent agents
 and parent/child subagent pairs with no cross-contamination.
 
 Tools are resolved once at load_agent() time.
@@ -15,7 +15,7 @@ import pytest
 
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
-from harness.core.harness import Harness
+from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Transport
 from harness.tools.tool import Tool
 
@@ -32,11 +32,11 @@ class RecordingSink:
         pass
 
 
-def _recording_sink(h: Harness) -> RecordingSink:
+def _recording_sink(h: SHAI) -> RecordingSink:
     return next(s for s in h._emitter._sinks if isinstance(s, RecordingSink))
 
 
-async def _build_harness(tmp_path: Path) -> Harness:
+async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
@@ -45,7 +45,7 @@ async def _build_harness(tmp_path: Path) -> Harness:
         "policy:\n  name: rules\n"
         "audit_sinks:\n  - name: stdout\n"
     )
-    h = Harness.from_yaml(cfg)
+    h = SHAI.from_yaml(cfg)
     h._emitter._sinks.append(RecordingSink())
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
     await h.register_tools([
