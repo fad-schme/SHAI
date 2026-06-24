@@ -54,4 +54,3 @@ audit_sinks:
   - name: file
     config:
       path: ./logs/audit.jsonl
-  - name: stdout

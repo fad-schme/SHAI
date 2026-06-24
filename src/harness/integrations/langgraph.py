@@ -1,26 +1,41 @@
 """SHAI integration for LangGraph.
 
-Provides a HarnessToolNode that replaces LangGraph's standard ToolNode.
-It gates every tool call through harness.check_tool_call before executing,
-and scans every tool result through harness.scan_tool_result before the
-result re-enters the LLM context.
+Provides HarnessToolNode — drop-in for LangGraph's ToolNode — and the
+shai_tool decorator for defining tools once with full SHAI metadata.
 
-Usage::
+Quickstart::
 
-    from harness.integrations.langgraph import HarnessToolNode
+    from harness.integrations.langgraph import shai_tool, HarnessToolNode
 
-    tool_node = HarnessToolNode(tools=[search, send_email], harness=harness, ctx=ctx)
+    @shai_tool(tags=["read", "internal"])
+    def search_docs(query: str) -> str:
+        \"\"\"Search internal documentation.\"\"\"
+        return _impl(query)
+
+    @shai_tool(tags=["external_write"])
+    async def send_email(to: str, subject: str, body: str) -> str:
+        \"\"\"Send an email.\"\"\"
+        return await _impl(to, subject, body)
+
+    tools = [search_docs, send_email]
+
+    harness  = await SHAI.from_yaml("config/harness.yaml")
+    ctx      = await harness.load_agent("config/agents/my_agent.yaml")
+    llm      = ChatOllama(...).bind_tools(tools)
+    node     = await HarnessToolNode.create(tools, harness, ctx)
 
     graph = StateGraph(MessagesState)
-    graph.add_node("agent", agent)
-    graph.add_node("tools", tool_node)
-    graph.add_edge("tools", "agent")
-    graph.add_conditional_edges("agent", should_continue)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", node)
+    ...
+
+HarnessToolNode.create() calls register_tools() internally — no separate
+harness.register_tools() call needed.
 
 Subagent handoff::
 
-    child_ctx = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
-    child_node = HarnessToolNode(tools=[search], harness=harness, ctx=child_ctx)
+    child_ctx = harness.scope_context_for_subagent(ctx, "research_sub")
+    child_node = await HarnessToolNode.create(tools, harness, child_ctx)
 
 LangGraph is imported lazily — this module is importable without it installed.
 """
@@ -29,11 +44,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Sequence
 
+from harness.integrations.base import ShaiTool, extract_shai_tools, shai_tool  # re-export
+
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
     from harness.core.harness import SHAI
 
 log = logging.getLogger(__name__)
+
+__all__ = ["shai_tool", "HarnessToolNode"]
 
 
 class HarnessToolNode:
@@ -47,8 +66,8 @@ class HarnessToolNode:
       3. scan_tool_result — scan result for indirect injection before LLM sees it
       4. return ToolMessage — allowed result or denial/block reason as error
 
-    Denied gate decisions and blocked tool results are both surfaced as
-    ToolMessage errors so the agent can continue the conversation.
+    Preferred constructor: await HarnessToolNode.create(tools, harness, ctx)
+    This registers tools with the harness automatically.
     """
 
     def __init__(
@@ -61,8 +80,29 @@ class HarnessToolNode:
         self._harness = harness
         self._ctx     = ctx
 
+    @classmethod
+    async def create(
+        cls,
+        tools: Sequence[Any],
+        harness: "SHAI",
+        ctx: "AgentContext",
+    ) -> "HarnessToolNode":
+        """Preferred constructor — registers tools then builds the node.
+
+        Accepts ShaiTool instances (from @shai_tool) or plain Tool descriptors.
+        Calls harness.register_tools() internally so you don't have to.
+
+        Args:
+            tools:   list of @shai_tool-decorated functions (or plain callables
+                     with SHAI Tool descriptors already registered separately)
+            harness: the SHAI instance from await SHAI.from_yaml(...)
+            ctx:     AgentContext from await harness.load_agent(...)
+        """
+        await harness.register_tools(tools)
+        return cls(tools, harness, ctx)
+
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        """LangGraph node entrypoint. Receives graph state, returns updated state."""
+        """LangGraph node entrypoint."""
         try:
             from langchain_core.messages import AIMessage, ToolMessage
         except ImportError as e:
@@ -82,14 +122,11 @@ class HarnessToolNode:
             args    = tool_call["args"]
             call_id = tool_call["id"]
 
-            # ── 1. Gate ───────────────────────────────────────────────────
             gate = await self._harness.check_tool_call(name, args, self._ctx)
             if not gate.allowed:
-                log.info(
-                    "tool call denied",
-                    extra={"tool": name, "reason": gate.deny_reason,
-                           **self._ctx.to_log_fields()},
-                )
+                log.info("tool call denied",
+                         extra={"tool": name, "reason": gate.deny_reason,
+                                **self._ctx.to_log_fields()})
                 results.append(ToolMessage(
                     content=f"Tool call denied: {gate.deny_reason}",
                     tool_call_id=call_id,
@@ -107,16 +144,15 @@ class HarnessToolNode:
                 ))
                 continue
 
-            # ── 2. Invoke ─────────────────────────────────────────────────
             try:
-                raw_result = await self._invoke_tool(tool_fn, effective_args,
-                                                    dispatch_token=gate.dispatch_token)
-            except Exception as exc:
-                log.error(
-                    "tool execution error",
-                    extra={"tool": name, "error": str(exc),
-                           **self._ctx.to_log_fields()},
+                raw_result = await self._invoke_tool(
+                    tool_fn, effective_args,
+                    dispatch_token=gate.dispatch_token,
                 )
+            except Exception as exc:
+                log.error("tool execution error",
+                          extra={"tool": name, "error": str(exc),
+                                 **self._ctx.to_log_fields()})
                 results.append(ToolMessage(
                     content=f"Tool error: {exc}",
                     tool_call_id=call_id,
@@ -124,36 +160,26 @@ class HarnessToolNode:
                 ))
                 continue
 
-            # ── 3. Scan tool result ───────────────────────────────────────
             result_text = str(raw_result)
-            tverdict = await self._harness.scan_tool_result(result_text, self._ctx)
+            tverdict    = await self._harness.scan_tool_result(result_text, self._ctx)
 
             if tverdict.blocked:
-                log.warning(
-                    "tool result blocked — indirect injection detected",
-                    extra={"tool": name, **self._ctx.to_log_fields()},
-                )
+                log.warning("tool result blocked — indirect injection detected",
+                            extra={"tool": name, **self._ctx.to_log_fields()})
                 results.append(ToolMessage(
-                    content=(
-                        f"Tool result from '{name}' was blocked by SHAI "
-                        f"(indirect injection detected)"
-                    ),
+                    content=(f"Tool result from '{name}' was blocked by SHAI "
+                             f"(indirect injection detected)"),
                     tool_call_id=call_id,
                     status="error",
                 ))
                 continue
 
-            # Use redacted text if the scan applied redaction
-            safe_result = tverdict.redacted_text or result_text
-
             if tverdict.warned:
-                log.warning(
-                    "tool result flagged — potential injection (action=alert)",
-                    extra={"tool": name, **self._ctx.to_log_fields()},
-                )
+                log.warning("tool result flagged — potential injection (action=alert)",
+                            extra={"tool": name, **self._ctx.to_log_fields()})
 
             results.append(ToolMessage(
-                content=safe_result,
+                content=tverdict.redacted_text or result_text,
                 tool_call_id=call_id,
             ))
 
@@ -162,12 +188,12 @@ class HarnessToolNode:
     @staticmethod
     async def _invoke_tool(tool: Any, args: dict[str, Any], *,
                            dispatch_token: str | None = None) -> Any:
-        """Invoke a LangChain tool (sync or async).
-
-        dispatch_token is unused for LangChain tools (they are local callables,
-        not MCPSource). Accepted for API consistency with MCPSource.call().
-        """
+        """Invoke a tool (ShaiTool, LangChain tool, or plain callable)."""
         import asyncio
+        # ShaiTool — use internal async dispatch directly
+        if isinstance(tool, ShaiTool):
+            return await tool._async_call(**args)
+        # LangChain ainvoke
         if asyncio.iscoroutinefunction(getattr(tool, "ainvoke", None)):
             return await tool.ainvoke(args)
         if asyncio.iscoroutinefunction(getattr(tool, "arun", None)):

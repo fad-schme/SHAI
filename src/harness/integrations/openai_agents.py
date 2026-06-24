@@ -1,31 +1,25 @@
 """SHAI integration for the OpenAI Agents SDK.
 
-Provides a before_tool_call hook and a wrap_tool() helper for gating
-tool calls on an OpenAI Agent.
+Quickstart::
 
-Usage with the hook::
+    from harness.integrations.openai_agents import shai_tool, wrap_tools
 
-    from harness.integrations.openai_agents import make_before_tool_hook
+    @shai_tool(tags=["read", "internal"])
+    def search_docs(query: str) -> str:
+        \"\"\"Search internal documentation.\"\"\"
+        return _impl(query)
 
-    hook = make_before_tool_hook(harness=harness, ctx=ctx)
+    tools   = [search_docs]
+    harness = await SHAI.from_yaml(...)
+    ctx     = await harness.load_agent(...)
 
-    agent = Agent(
-        name="assistant",
-        tools=[search_docs, send_email],
-        hooks=AgentHooks(before_tool_call=hook),
-    )
+    # Registers tools and returns gated SDK FunctionTools
+    gated = await wrap_tools(tools, harness=harness, ctx=ctx)
+    agent = Agent(name="assistant", tools=gated)
 
-Usage with wrap_tool()::
-
-    from harness.integrations.openai_agents import wrap_tool, wrap_tools
-
-    gated_tools = wrap_tools([search_docs, send_email], harness=harness, ctx=ctx)
-    agent = Agent(name="assistant", tools=gated_tools)
-
-Subagent handoff::
-
-    child_ctx = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
-    hook = make_before_tool_hook(harness=harness, ctx=child_ctx)
+    # Or use a before_tool_call hook on an existing agent:
+    hook  = make_before_tool_hook(harness=harness, ctx=ctx)
+    agent = Agent(..., hooks=AgentHooks(before_tool_call=hook))
 
 OpenAI Agents SDK is imported lazily.
 """
@@ -36,77 +30,68 @@ import functools
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
+from harness.integrations.base import ShaiTool, shai_tool  # re-export
+
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
     from harness.core.harness import SHAI
 
 log = logging.getLogger(__name__)
 
+__all__ = ["shai_tool", "make_before_tool_hook", "wrap_tool", "wrap_tools"]
 
-def make_before_tool_hook(
-    *,
-    harness: "SHAI",
-    ctx: "AgentContext",
-) -> Callable:
+
+def make_before_tool_hook(*, harness: "SHAI", ctx: "AgentContext") -> Callable:
     """Return an async before_tool_call hook for AgentHooks.
 
-    The hook gates each tool call. When denied, it raises StopToolCall
-    (the SDK's mechanism for preventing tool execution) and the deny
-    reason is returned as the tool result.
+    Gates each tool call. Returns deny reason (SDK uses as tool result) on deny.
     """
     harness_ = harness
-    ctx_ = ctx
+    ctx_     = ctx
 
     async def before_tool_call(tool: Any, args: Any) -> Any:
         tool_name = getattr(tool, "name", str(tool))
-        tool_args = args if isinstance(args, dict) else vars(args) if hasattr(args, "__dict__") else {}
-
+        tool_args = (args if isinstance(args, dict)
+                     else vars(args) if hasattr(args, "__dict__") else {})
         gate = await harness_.check_tool_call(tool_name, tool_args, ctx_)
         if not gate.allowed:
-            log.info(
-                "tool call denied",
-                extra={"tool": tool_name, "reason": gate.deny_reason,
-                       **ctx_.to_log_fields()},
-            )
-            # Return the deny reason — the SDK will use this as the tool result
+            log.info("tool call denied",
+                     extra={"tool": tool_name, "reason": gate.deny_reason,
+                            **ctx_.to_log_fields()})
             return f"Tool call denied: {gate.deny_reason}"
-
-        # Return redacted args if policy applied redaction
-        if gate.redacted_args is not None:
-            return gate.redacted_args
-        return None  # None means proceed with original args
+        return gate.redacted_args if gate.redacted_args is not None else None
 
     return before_tool_call
 
 
 def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
-    """Wrap a single OpenAI Agents tool with a harness gate.
+    """Return a gated OpenAI Agents FunctionTool.
 
-    Returns a FunctionTool (or the original with a gated _run) depending
-    on which SDK version is installed.
+    Note: does not call register_tools(). Use wrap_tools() for that.
     """
-    harness_ = harness
-    ctx_ = ctx
+    harness_  = harness
+    ctx_      = ctx
     tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
-    original_fn = getattr(tool, "_fn", None) or getattr(tool, "fn", None) or (
-        tool if callable(tool) else None
-    )
-
+    original_fn = (getattr(tool, "_fn", None) or getattr(tool, "fn", None)
+                   or (tool if callable(tool) else None))
     if original_fn is None:
-        log.warning("wrap_tool: cannot find callable on tool %s — returning unwrapped", tool_name)
+        log.warning("wrap_tool: cannot find callable on %s — returning unwrapped", tool_name)
         return tool
 
-    @functools.wraps(original_fn)
+    base_fn = original_fn._fn if isinstance(original_fn, ShaiTool) else original_fn
+
+    @functools.wraps(base_fn)
     async def gated(**kwargs: Any) -> Any:
         gate = await harness_.check_tool_call(tool_name, kwargs, ctx_)
         if not gate.allowed:
             return f"Tool call denied: {gate.deny_reason}"
         effective = gate.redacted_args if gate.redacted_args is not None else kwargs
+        if isinstance(original_fn, ShaiTool):
+            return await original_fn._async_call(**effective)
         if asyncio.iscoroutinefunction(original_fn):
             return await original_fn(**effective)
         return await asyncio.to_thread(original_fn, **effective)
 
-    # Try to build an SDK FunctionTool with the gated function
     try:
         from agents import function_tool
         return function_tool(gated, name_override=tool_name)
@@ -117,11 +102,12 @@ def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
     return gated
 
 
-def wrap_tools(
+async def wrap_tools(
     tools: Sequence[Any],
     *,
     harness: "SHAI",
     ctx: "AgentContext",
 ) -> list[Any]:
-    """Wrap a list of OpenAI Agents tools."""
+    """Register tools with the harness and return gated SDK FunctionTools."""
+    await harness.register_tools(tools)
     return [wrap_tool(t, harness=harness, ctx=ctx) for t in tools]

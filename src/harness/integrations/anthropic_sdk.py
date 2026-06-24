@@ -23,6 +23,8 @@ Subagent handoff example (called by the integration, not agent code):
 """
 from __future__ import annotations
 
+from harness.integrations.base import shai_tool  # re-export for convenience
+
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
     from harness.tools.tool import Tool
 
 log = logging.getLogger(__name__)
+
+__all__ = ["shai_tool", "gated_dispatch", "run_turn", "make_tool_result_from_denial"]
 
 
 async def gated_dispatch(

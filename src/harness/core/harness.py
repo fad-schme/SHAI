@@ -278,14 +278,21 @@ class SHAI:
 
     # ── Startup ───────────────────────────────────────────────────────────
 
-    async def register_tools(self, tools: list[Tool]) -> None:
+    async def register_tools(self, tools: "list[Tool | Any]") -> None:
         """Register tools and re-resolve all already-loaded agents.
+
+        Accepts a list of:
+          - Tool descriptors (plain harness.tools.tool.Tool)
+          - ShaiTool instances from the @shai_tool decorator
+            (SHAI metadata + implementation in one object)
 
         May be called before or after load_agent() — order does not matter.
         After registering, every loaded agent's tool set is refreshed so
         newly registered tools become immediately available.
         """
-        await self._tool_registry.register_many(tools)
+        from harness.integrations.base import ShaiTool, extract_shai_tools
+        shai_descriptors = extract_shai_tools(tools)
+        await self._tool_registry.register_many(shai_descriptors)
         # Re-resolve all already-loaded agents so they see the new tools
         for cfg in await self._agent_registry.list():
             self._agent_tools[cfg.id] = self._resolve_tools(cfg)
@@ -572,6 +579,29 @@ class SHAI:
             block_at=self._block_at,
             audit_tags=self._audit_tags_for(ctx),
         )
+
+
+    def collect_events(self):
+        """Context manager that collects AuditEvents emitted during the block.
+
+        Events are appended to the returned list in-place. Complete when the
+        block exits. Configured sinks (file, stdout) are unaffected.
+
+        Usage::
+
+            with harness.collect_events() as events:
+                gate    = await harness.check_tool_call(name, args, ctx)
+                verdict = await harness.scan_input(text, ctx)
+            for ev in events:
+                print(ev.boundary, ev.decision)
+
+        Or around a full agent turn::
+
+            with harness.collect_events() as events:
+                result = await app.ainvoke(messages)
+            display_audit_summary(events)
+        """
+        return self._emitter.collect_events()
 
     async def close(self) -> None:
         """Flush and close all audit sinks and sources. Call at process shutdown."""

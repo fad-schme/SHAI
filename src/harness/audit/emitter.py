@@ -11,10 +11,12 @@ All sinks failing raises AuditEmissionError.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Protocol
 
 from harness.core.errors import AuditEmissionError
@@ -35,6 +37,32 @@ class AuditSink(Protocol):
     async def emit(self, event: "AuditEvent") -> None:
         """Emit one event. Raise on failure — AuditEmitter handles it."""
         ...
+
+
+    @contextlib.contextmanager
+    def collect_events(self) -> "AsyncIterator[list]":
+        """Context manager that collects AuditEvents emitted during the block.
+
+        Returns a list that is populated in-place as events are emitted.
+        The list is complete when the block exits.
+
+        Usage::
+
+            async with harness.collect_events() as events:
+                result = await app.ainvoke(...)
+            # events is now a list[AuditEvent]
+            for ev in events:
+                print(ev.boundary, ev.decision)
+
+        Multiple concurrent collect_events() calls are safe — each gets its
+        own independent list. Does not affect configured sinks (file, stdout).
+        """
+        bucket: list = []
+        self._subscribers.append(bucket)
+        try:
+            yield bucket
+        finally:
+            self._subscribers.remove(bucket)
 
     async def close(self) -> None:
         """Flush and release resources. No-op for stateless sinks."""
@@ -66,6 +94,8 @@ class AuditEmitter:
             raise ValueError("AuditEmitter requires at least one sink")
         self._sinks          = sinks
         self._signing_secret = signing_secret
+        # Subscribers added by collect_events() — notified after all sinks
+        self._subscribers: list[list] = []
 
     async def emit(self, event: "AuditEvent") -> None:
         """Truncate oversized fields, optionally sign, then fan-out concurrently."""
@@ -99,6 +129,36 @@ class AuditEmitter:
                 f"all audit sinks failed: {[n for n, _ in failures]}",
                 op="audit_emit",
             )
+
+        # Notify in-process subscribers (collect_events context managers)
+        for bucket in self._subscribers:
+            bucket.append(event)
+
+
+    @contextlib.contextmanager
+    def collect_events(self) -> "AsyncIterator[list]":
+        """Context manager that collects AuditEvents emitted during the block.
+
+        Returns a list that is populated in-place as events are emitted.
+        The list is complete when the block exits.
+
+        Usage::
+
+            async with harness.collect_events() as events:
+                result = await app.ainvoke(...)
+            # events is now a list[AuditEvent]
+            for ev in events:
+                print(ev.boundary, ev.decision)
+
+        Multiple concurrent collect_events() calls are safe — each gets its
+        own independent list. Does not affect configured sinks (file, stdout).
+        """
+        bucket: list = []
+        self._subscribers.append(bucket)
+        try:
+            yield bucket
+        finally:
+            self._subscribers.remove(bucket)
 
     async def close(self) -> None:
         await asyncio.gather(

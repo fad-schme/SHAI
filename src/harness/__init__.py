@@ -34,6 +34,7 @@ from harness.tools.source import (
     ToolSource,
 )
 from harness.connectivity.config import ConnectivityConfig
+from harness.integrations.base import ShaiTool, shai_tool
 from harness.connectivity.token import DispatchToken, TokenError
 from harness.tools.tool import Tool
 
@@ -83,6 +84,9 @@ __all__ = [
     "MCPInvocationError",
     # Connectivity
     "ConnectivityConfig",
+    # Tool decorator
+    "shai_tool",
+    "ShaiTool",
     "DispatchToken",
     "TokenError",
 ]

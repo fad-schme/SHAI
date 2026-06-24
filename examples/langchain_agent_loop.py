@@ -1,4 +1,12 @@
-"""langgraph_agent.py — SHAI + LangGraph + Ollama
+"""langchain_agent_loop.py — SHAI + LangChain Agent Loop (create_agent)
+
+Uses the LangChain Agent Loop (langchain>=0.3) with ShaiMiddleware.
+SHAI wires into the official middleware API — no manual loop needed.
+
+  ShaiMiddleware hooks:
+    before_agent   → scan_input   (PII + injection scan on user message)
+    wrap_tool_call → check_tool_call + scan_tool_result (gate + T6 protection)
+    after_agent    → scan_output  (PII scan on final response)
 
 Configuration:
   config/harness.yaml                   — scanner actions, rate limits, policy
@@ -6,10 +14,10 @@ Configuration:
 
 Install:
     pip install -e ".[dev]"
-    pip install langgraph langchain-ollama langchain-core
+    pip install "langchain>=0.3" langgraph langchain-ollama langchain-core
 
 Run:
-    python examples/langgraph_agent.py
+    python examples/langchain_agent_loop.py
 """
 from __future__ import annotations
 
@@ -19,9 +27,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-sys.path.insert(0, str(Path(__file__).parent))      # for display.py
+sys.path.insert(0, str(Path(__file__).parent))
 
-from display import (c, print_header, print_startup, print_user,
+from display import (print_header, print_startup, print_user,
                      print_thinking, print_agent, print_blocked,
                      print_audit_summary, print_gate_summary)
 
@@ -36,7 +44,7 @@ for name in ("httpx", "harness", "langchain", "langgraph"):
 
 # ── Tools — defined once, used everywhere ─────────────────────────────────
 
-from harness.integrations.langgraph import shai_tool, HarnessToolNode
+from harness.integrations.langchain import shai_tool, ShaiMiddleware
 
 @shai_tool(tags=["read", "internal"])
 def search_docs(query: str) -> str:
@@ -70,44 +78,36 @@ tools = [search_docs, get_weather, write_file]
 
 async def main() -> None:
     try:
+        from langchain.agents import create_agent
         from langchain_ollama import ChatOllama
-        from langchain_core.messages import HumanMessage, AIMessage
-        from langgraph.graph import StateGraph, MessagesState, END
+        from langchain_core.messages import HumanMessage
     except ImportError as e:
         print(f"\nMissing dependency: {e}")
-        print("Install:  pip install langgraph langchain-ollama langchain-core")
+        print('Install:  pip install "langchain>=0.3" langgraph langchain-ollama langchain-core')
         sys.exit(1)
 
     from harness import SHAI
 
-    print_header("SHAI  +  LangGraph  +  Ollama (qwen2.5:3b)",
-                 "config/harness.yaml · config/agents/orchestrator_agent.yaml")
+    print_header("SHAI  +  LangChain Agent Loop  +  Ollama (qwen2.5:3b)",
+                 "ShaiMiddleware · before_agent · wrap_tool_call · after_agent")
 
     harness   = await SHAI.from_yaml(HARNESS_YAML)
     agent_ctx = await harness.load_agent(AGENT_YAML)
 
-    # HarnessToolNode.create() registers tools with the harness.
-    # Pass the same list to bind_tools() — one list, no duplication.
-    llm       = ChatOllama(model="qwen2.5:3b", temperature=0).bind_tools(tools)
-    tool_node = await HarnessToolNode.create(tools, harness, agent_ctx)
+    # ShaiMiddleware.create() registers tools and builds the middleware.
+    # Pass the same tools list to create_agent — one list, no duplication.
+    middleware = await ShaiMiddleware.create(tools, harness=harness, ctx=agent_ctx)
+
+    llm = ChatOllama(model="qwen2.5:3b", temperature=0)
+
+    agent = create_agent(
+        llm,
+        tools=tools,
+        middleware=[middleware],
+    )
 
     print_startup(harness, [("search_docs", ""), ("get_weather", ""),
                              ("write_file", "blocked by policy")])
-
-    async def agent_node(state):
-        return {"messages": [await llm.ainvoke(state["messages"])]}
-
-    def should_continue(state):
-        last = state["messages"][-1]
-        return "tools" if isinstance(last, AIMessage) and last.tool_calls else END
-
-    graph = StateGraph(MessagesState)
-    graph.add_node("agent", agent_node)
-    graph.add_node("tools", tool_node)
-    graph.set_entry_point("agent")
-    graph.add_conditional_edges("agent", should_continue)
-    graph.add_edge("tools", "agent")
-    app = graph.compile()
 
     question = ("What is the vacation policy? "
                 "Also, what is the weather in Munich today?")
@@ -115,24 +115,24 @@ async def main() -> None:
     print_user(question)
     print_thinking()
 
+    # collect_events() captures all audit events from all four boundaries.
+    # The middleware handles scan_input, check_tool_call, scan_tool_result,
+    # and scan_output — all internally, without any manual calls here.
     with harness.collect_events() as events:
-        verdict = await harness.scan_input(question, agent_ctx)
-        if verdict.blocked:
-            print_blocked("Input", str(verdict.findings))
-            await harness.close()
-            return
+        result = await agent.ainvoke({"messages": [HumanMessage(question)]})
 
-        result        = await app.ainvoke({"messages": [HumanMessage(content=question)]})
-        final         = result["messages"][-1]
-        response_text = final.content if hasattr(final, "content") else str(final)
-        out_verdict   = await harness.scan_output(response_text, agent_ctx)
+    # Extract final response — last AIMessage with no tool_calls
+    messages      = result.get("messages", [])
+    response_text = ""
+    for msg in reversed(messages):
+        if hasattr(msg, "content") and not getattr(msg, "tool_calls", None):
+            response_text = str(msg.content)
+            break
 
-    if out_verdict.blocked:
-        response_text = "[Response blocked by SHAI — output scan]"
-    else:
-        response_text = out_verdict.redacted_text or response_text
+    if not response_text:
+        response_text = "[No response generated]"
 
-    print_agent(response_text, redacted=bool(out_verdict.redacted_text))
+    print_agent(response_text)
     print_audit_summary(events)
     print_gate_summary(events)
 
