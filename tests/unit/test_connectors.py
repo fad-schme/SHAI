@@ -164,3 +164,75 @@ def test_source_config_mcp_with_connector_no_url_passes():
     assert cfg.connector == "slack"
     assert cfg.url is None   # url comes from manifest at from_yaml() time
 
+
+
+# ── Per-tool tags and scan_tool_result_on wiring ───────────────────────────
+
+def test_manifest_to_source_config_includes_tool_specs():
+    m = load_manifest("slack")
+    fields = manifest_to_source_config_fields(m, {})
+    assert "connector_tool_specs" in fields
+    specs = fields["connector_tool_specs"]
+    # send_message must have external_write tag
+    assert "send_message" in specs
+    assert "external_write" in specs["send_message"]["tags"]
+    # read_messages must have read tag
+    assert "read_messages" in specs
+    assert "read" in specs["read_messages"]["tags"]
+
+
+def test_manifest_to_source_config_includes_scan_tool_result_on():
+    m = load_manifest("github")
+    fields = manifest_to_source_config_fields(m, {})
+    assert "scan_tool_result_on" in fields
+    assert "search_code" in fields["scan_tool_result_on"]
+    assert "get_file_contents" in fields["scan_tool_result_on"]
+
+
+def test_source_config_accepts_connector_tool_specs():
+    from harness.config.schema import SourceConfig
+    cfg = SourceConfig(
+        name="slack",
+        connector="slack",
+        credentials={"token": ""},
+        connector_tool_specs={
+            "send_message": {"tags": ["external_write"], "action": "block"},
+            "read_messages": {"tags": ["read"], "action": "allow"},
+        },
+        scan_tool_result_on=["read_messages", "search_messages"],
+    )
+    assert "send_message" in cfg.connector_tool_specs
+    assert cfg.scan_tool_result_on == ["read_messages", "search_messages"]
+
+
+def test_all_tier_a_manifests_have_tool_specs_wired():
+    """Every Tier A manifest must produce non-empty connector_tool_specs."""
+    tier_a = ["slack", "github", "notion", "jira",
+               "gmail", "postgresql", "stripe", "google_drive"]
+    for cid in tier_a:
+        m = load_manifest(cid)
+        fields = manifest_to_source_config_fields(m, {})
+        assert fields["connector_tool_specs"], (
+            f"{cid}: connector_tool_specs is empty"
+        )
+        assert fields["scan_tool_result_on"], (
+            f"{cid}: scan_tool_result_on is empty"
+        )
+
+
+def test_write_tool_specs_have_block_action():
+    """External write tools in all manifests must have action: block in specs."""
+    tier_a = ["slack", "github", "notion", "jira",
+               "gmail", "postgresql", "stripe", "google_drive"]
+    for cid in tier_a:
+        m = load_manifest(cid)
+        fields = manifest_to_source_config_fields(m, {})
+        specs = fields["connector_tool_specs"]
+        violations = [
+            name for name, spec in specs.items()
+            if "external_write" in spec.get("tags", [])
+            and spec.get("action") == "allow"
+        ]
+        assert not violations, (
+            f"{cid}: external_write tools with action=allow: {violations}"
+        )

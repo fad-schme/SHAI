@@ -124,6 +124,10 @@ class SHAI:
         self._source_overrides: dict[str, dict[str, Tool]] = {}
         self._connectivity        = config.connectivity
         self._connectivity_secret = connectivity_secret
+        # Merged lookup: tool_name → True when manifest requires scan_tool_result.
+        # Built at from_yaml() time from all sources with scan_tool_result_on.
+        # Empty = scan all results (default). Non-empty = only listed tools scanned.
+        self._scan_tool_result_on: set[str] = set()
 
     # ── Construction ──────────────────────────────────────────────────────
 
@@ -237,6 +241,9 @@ class SHAI:
                 source._connectivity = config.connectivity
                 source._emitter      = emitter
                 source._tenant_id    = config.tenant_id
+                # Wire connector manifest enforcement data
+                source._connector_tool_specs = dict(src_cfg.connector_tool_specs)
+                source._scan_tool_result_on  = set(src_cfg.scan_tool_result_on)
             else:
                 # LOCAL — backed by the shared tool registry
                 source = LocalSource(

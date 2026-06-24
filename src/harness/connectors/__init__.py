@@ -117,6 +117,11 @@ def manifest_to_source_config_fields(
         "allowed_methods": manifest.allowed_methods,
         "tags":            manifest.tags,
         "required":        manifest.required,
+        "connector_tool_specs": {
+            t.name: {"tags": list(t.tags), "action": t.action}
+            for t in manifest.tools
+        },
+        "scan_tool_result_on": list(manifest.scan_tool_result_on),
     }
     # Operator overrides take precedence
     fields.update({k: v for k, v in overrides.items() if v is not None})

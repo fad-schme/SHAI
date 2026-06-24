@@ -394,12 +394,15 @@ class MCPSource:
         self._creds: dict[str, str] = credentials or {}
 
         # Connectivity — populated when connectivity.enabled in harness.yaml
-        self._allowed_urls:    list[str] = list(allowed_urls or [])
-        self._allowed_methods: list[str] = list(allowed_methods or [])
-        self._connectivity:    Any = None   # ConnectivityConfig — set by harness
-        self._emitter:         Any = None   # AuditEmitter — set by harness
-        self._tenant_id:       str = "default"
-        self._agent_ctx:       Any = None   # AgentContext — set at load() time
+        self._allowed_urls:         list[str] = list(allowed_urls or [])
+        self._allowed_methods:      list[str] = list(allowed_methods or [])
+        self._connectivity:         Any = None   # ConnectivityConfig — set by harness
+        self._emitter:              Any = None   # AuditEmitter — set by harness
+        self._tenant_id:            str = "default"
+        self._agent_ctx:            Any = None   # AgentContext — set at load() time
+        # Connector manifest enforcement
+        self._connector_tool_specs: dict = {}    # tool_name → {tags, action}
+        self._scan_tool_result_on:  set  = set() # tool names requiring scan_tool_result
 
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
@@ -618,7 +621,10 @@ class MCPSource:
                             extra={"source": self.name})
                 continue
             description = mcp_tool.get("description") or None
-            tool_tags = sorted(set(self.tags) | {"mcp"})
+            # Merge source-level tags with per-tool tags from connector manifest
+            spec      = self._connector_tool_specs.get(tool_name, {})
+            spec_tags = spec.get("tags", [])
+            tool_tags = sorted(set(self.tags) | set(spec_tags) | {"mcp"})
             tools.append(Tool(
                 name=tool_name,
                 tags=tool_tags,
