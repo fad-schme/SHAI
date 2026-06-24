@@ -34,6 +34,7 @@ from harness.tools.source import (
     ToolSource,
 )
 from harness.connectivity.config import ConnectivityConfig
+from harness.core.errors import NetworkPolicyError
 from harness.integrations.base import ShaiTool, shai_tool
 from harness.connectivity.token import DispatchToken, TokenError
 from harness.tools.tool import Tool

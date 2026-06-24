@@ -68,6 +68,17 @@ class PolicyEvaluationError(HarnessError):
 class AuditEmissionError(HarnessError):
     """All configured sinks failed. Single sink failure is logged and swallowed."""
 
+class NetworkPolicyError(HarnessError):
+    """Raised by ShaiTransport when an outbound request violates connectivity policy.
+
+    Covers: destination not in allowed_urls, method not in allowed_methods,
+    invalid/tampered dispatch token, no token on strict policy.
+    """
+
+    def __init__(self, message: str, *, op: str = "network_egress") -> None:
+        super().__init__(message, op=op)
+
+
 class MCPInvocationError(HarnessError):
     """MCP server returned a JSON-RPC error during tool invocation.
 

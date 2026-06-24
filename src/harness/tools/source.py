@@ -11,7 +11,7 @@ LocalSource:    Returns a named subset of already-registered tools.
 
 MCPSource:      Connects to an MCP server over SSE, discovers its tool catalog,
                 and exposes a call() method for tool invocation.
-                Requires: httpx>=0.27  (pip install shai[mcp])
+                Requires: httpx>=0.27  (included in shai core)
 
 Transport routing
 -----------------
@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+
+import httpx
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, Iterable, Protocol
@@ -360,7 +362,7 @@ class MCPSource:
     A session_id returned by the server in the SSE stream is included in
     every POST to correlate requests with the session.
 
-    Requires httpx>=0.27 (pip install shai[mcp]).
+    Requires httpx>=0.27 (included in shai core).
 
     Error handling
     --------------
@@ -394,8 +396,12 @@ class MCPSource:
         # Connectivity — populated when connectivity.enabled in harness.yaml
         self._allowed_urls:    list[str] = list(allowed_urls or [])
         self._allowed_methods: list[str] = list(allowed_methods or [])
+        self._connectivity:    Any = None   # ConnectivityConfig — set by harness
+        self._emitter:         Any = None   # AuditEmitter — set by harness
+        self._tenant_id:       str = "default"
+        self._agent_ctx:       Any = None   # AgentContext — set at load() time
 
-        self._client: Any = None          # httpx.AsyncClient
+        self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
         self._tools: list[Tool] = []
         self._lock = asyncio.Lock()
@@ -412,6 +418,7 @@ class MCPSource:
         async with self._lock:
             if self._connected:
                 return list(self._tools)
+            self._agent_ctx = ctx   # used by ShaiTransport for audit events
             await self._connect()
             self._tools = await self._fetch_tools()
             self._connected = True
@@ -481,16 +488,24 @@ class MCPSource:
 
     async def _connect(self) -> None:
         """Open the HTTP client, establish the SSE session, and initialise."""
-        try:
-            import httpx
-        except ImportError as e:
-            raise ConfigError(
-                f"MCPSource requires httpx: pip install shai[mcp] "
-                f"(source: '{self.name}')",
-                op="mcp_connect",
-            ) from e
-
         headers = self._build_headers()
+
+        transport: httpx.AsyncBaseTransport | None = None
+        if (self._connectivity is not None
+                and self._connectivity.enabled
+                and self._emitter is not None):
+            from harness.connectivity.transport import ShaiTransport
+            transport = ShaiTransport(
+                source_name=self.name,
+                allowed_urls=self._allowed_urls,
+                allowed_methods=self._allowed_methods,
+                agent_id=self._agent_ctx.agent_id if self._agent_ctx else "unknown",
+                sub_agent_id=self._agent_ctx.sub_agent_id if self._agent_ctx else None,
+                tenant_id=self._tenant_id or "default",
+                emitter=self._emitter,
+                connectivity=self._connectivity,
+            )
+
         self._client = httpx.AsyncClient(
             base_url=self._url,
             headers=headers,
@@ -500,6 +515,7 @@ class MCPSource:
                 write=self.REQUEST_TIMEOUT_S,
                 pool=self.CONNECT_TIMEOUT_S,
             ),
+            transport=transport,
         )
 
         try:

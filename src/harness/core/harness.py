@@ -211,6 +211,11 @@ class SHAI:
                     allowed_urls=list(src_cfg.allowed_urls),
                     allowed_methods=list(src_cfg.allowed_methods),
                 )
+                # Pass connectivity config + emitter so ShaiTransport
+                # can be wired at _connect() time
+                source._connectivity = config.connectivity
+                source._emitter      = emitter
+                source._tenant_id    = config.tenant_id
             else:
                 # LOCAL — backed by the shared tool registry
                 source = LocalSource(
