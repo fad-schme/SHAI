@@ -1,0 +1,69 @@
+id: slack
+display_name: "Slack"
+categories: [communication, messaging, external]
+
+url: "https://mcp.slack.com/sse"
+allowed_urls:
+  - "https://mcp.slack.com/*"
+  - "https://slack.com/api/*"
+  - "https://edgeapi.slack.com/*"
+allowed_methods: [GET, POST]
+
+tags: [external_mcp, messaging, external]
+
+tools:
+  - name: send_message
+    tags: [external_write, messaging]
+    action: block
+    description: "Send a message to a channel or user"
+  - name: reply_to_thread
+    tags: [external_write, messaging]
+    action: block
+    description: "Reply to a thread"
+  - name: read_messages
+    tags: [read, messaging]
+    action: allow
+    description: "Read messages from a channel"
+  - name: search_messages
+    tags: [read, messaging]
+    action: allow
+    description: "Search messages across workspace"
+  - name: list_channels
+    tags: [read, messaging]
+    action: allow
+    description: "List workspace channels"
+  - name: get_channel_info
+    tags: [read, messaging]
+    action: allow
+    description: "Get channel metadata"
+  - name: react
+    tags: [external_write, messaging]
+    action: alert
+    description: "Add a reaction to a message"
+  - name: list_users
+    tags: [read, messaging]
+    action: allow
+    description: "List workspace members"
+  - name: get_user_info
+    tags: [read, messaging]
+    action: allow
+    description: "Get user profile"
+  - name: set_status
+    tags: [external_write, messaging, sensitive]
+    action: block
+    description: "Set user status"
+
+scan_tool_result_on:
+  - read_messages
+  - search_messages
+  - get_channel_info
+
+auth:
+  type: token
+  credential_key: token
+  secret_env: SLACK_BOT_TOKEN
+
+notes: >
+  Use a Slack bot token (xoxb-) scoped to channels:read, channels:history,
+  chat:write, users:read. send_message and set_status carry external_write
+  and are blocked by default — enable per-agent via policy_rules.

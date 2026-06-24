@@ -153,6 +153,10 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
                   acceptable (e.g. a telemetry source that is nice-to-have).
     """
     name:        str
+    connector:   str | None = None
+    # Optional connector id (e.g. 'slack', 'github'). When set, loads the
+    # pre-built manifest from harness.connectors and merges it with any
+    # fields declared alongside connector: in harness.yaml.
     transport:   Transport = Transport.LOCAL
     url:         str | None = None
     credentials: dict[str, str] = Field(default_factory=dict)
@@ -171,9 +175,11 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
 
     @model_validator(mode="after")
     def _transport_constraints(self) -> "SourceConfig":
-        if self.transport == Transport.MCP and not self.url:
+        # url is not required when a connector manifest provides it
+        if self.transport == Transport.MCP and not self.url and not self.connector:
             raise ValueError(
-                f"source '{self.name}': url is required for mcp transport"
+                f"source '{self.name}': url is required for mcp transport "
+                f"(or set connector: to use a pre-built manifest)"
             )
         return self
 

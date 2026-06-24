@@ -1,0 +1,72 @@
+id: notion
+display_name: "Notion"
+categories: [productivity, knowledge, external]
+
+url: "https://api.notion.com"
+allowed_urls:
+  - "https://api.notion.com/*"
+allowed_methods: [GET, POST, PATCH, DELETE]
+
+tags: [external_mcp, knowledge, external]
+
+tools:
+  - name: search
+    tags: [read, knowledge]
+    action: allow
+    description: "Search pages and databases"
+  - name: get_page
+    tags: [read, knowledge]
+    action: allow
+    description: "Get page content"
+  - name: get_database
+    tags: [read, knowledge]
+    action: allow
+    description: "Get database schema"
+  - name: query_database
+    tags: [read, knowledge]
+    action: allow
+    description: "Query database entries with filters"
+  - name: create_page
+    tags: [external_write, knowledge]
+    action: block
+    description: "Create a new page"
+  - name: update_page
+    tags: [external_write, knowledge]
+    action: block
+    description: "Update page properties or content"
+  - name: append_block
+    tags: [external_write, knowledge]
+    action: block
+    description: "Append blocks to a page"
+  - name: delete_block
+    tags: [external_write, knowledge, sensitive]
+    action: block
+    description: "Delete a block"
+  - name: create_database
+    tags: [external_write, knowledge]
+    action: block
+    description: "Create a new database"
+  - name: create_database_item
+    tags: [external_write, knowledge]
+    action: block
+    description: "Add an item to a database"
+  - name: update_database_item
+    tags: [external_write, knowledge]
+    action: block
+    description: "Update a database item"
+
+scan_tool_result_on:
+  - search
+  - get_page
+  - query_database
+
+auth:
+  type: token
+  credential_key: token
+  secret_env: NOTION_TOKEN
+
+notes: >
+  Use a Notion integration token with read/write access to the required
+  pages and databases. Scope the integration to only the pages it needs —
+  Notion uses a capability model, not OAuth scopes. delete_block is
+  sensitive and blocked by default.

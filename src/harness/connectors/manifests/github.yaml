@@ -1,0 +1,94 @@
+id: github
+display_name: "GitHub"
+categories: [developer_tools, version_control, external]
+
+url: "https://api.github.com"
+allowed_urls:
+  - "https://api.github.com/*"
+  - "https://github.com/*"
+allowed_methods: [GET, POST, PUT, PATCH, DELETE]
+
+tags: [external_mcp, developer_tools, external]
+
+tools:
+  - name: list_repos
+    tags: [read, developer_tools]
+    action: allow
+    description: "List repositories for a user or org"
+  - name: get_repo
+    tags: [read, developer_tools]
+    action: allow
+    description: "Get repository details"
+  - name: search_code
+    tags: [read, developer_tools]
+    action: allow
+    description: "Search code across repositories"
+  - name: get_file_contents
+    tags: [read, developer_tools]
+    action: allow
+    description: "Read file contents from a repo"
+  - name: list_issues
+    tags: [read, developer_tools]
+    action: allow
+    description: "List issues for a repository"
+  - name: get_issue
+    tags: [read, developer_tools]
+    action: allow
+    description: "Get issue details"
+  - name: create_issue
+    tags: [external_write, developer_tools]
+    action: block
+    description: "Create a new issue"
+  - name: update_issue
+    tags: [external_write, developer_tools]
+    action: block
+    description: "Update an existing issue"
+  - name: add_issue_comment
+    tags: [external_write, developer_tools]
+    action: block
+    description: "Add a comment to an issue"
+  - name: list_pull_requests
+    tags: [read, developer_tools]
+    action: allow
+    description: "List pull requests"
+  - name: get_pull_request
+    tags: [read, developer_tools]
+    action: allow
+    description: "Get pull request details and diff"
+  - name: create_pull_request
+    tags: [external_write, developer_tools, sensitive]
+    action: block
+    description: "Create a pull request"
+  - name: merge_pull_request
+    tags: [external_write, developer_tools, sensitive]
+    action: block
+    description: "Merge a pull request"
+  - name: push_files
+    tags: [external_write, developer_tools, sensitive]
+    action: block
+    description: "Push file changes to a branch"
+  - name: create_branch
+    tags: [external_write, developer_tools]
+    action: block
+    description: "Create a new branch"
+  - name: list_commits
+    tags: [read, developer_tools]
+    action: allow
+    description: "List commits on a branch"
+
+scan_tool_result_on:
+  - search_code
+  - get_file_contents
+  - get_pull_request
+  - get_issue
+
+auth:
+  type: token
+  credential_key: token
+  secret_env: GITHUB_TOKEN
+
+notes: >
+  Use a GitHub Personal Access Token or GitHub App token scoped to the
+  minimum required repos. push_files, merge_pull_request, and create_pr
+  carry sensitive — require explicit agent-level allow. scan_tool_result
+  applies to code and PR diff returns (T6 indirect injection risk).

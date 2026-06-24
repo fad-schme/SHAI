@@ -1,0 +1,55 @@
+id: postgresql
+display_name: "PostgreSQL"
+categories: [database, data, internal]
+
+url: "http://localhost:5432"
+allowed_urls:
+  - "http://localhost:*"
+  - "https://*.supabase.co/*"
+  - "postgresql://*"
+allowed_methods: [GET, POST]
+
+tags: [database, data, sensitive]
+
+tools:
+  - name: query
+    tags: [read, database, sensitive]
+    action: allow
+    description: "Execute a read-only SQL query"
+  - name: execute
+    tags: [external_write, database, sensitive]
+    action: block
+    description: "Execute a write SQL statement (INSERT/UPDATE/DELETE)"
+  - name: list_tables
+    tags: [read, database]
+    action: allow
+    description: "List all tables in the database"
+  - name: describe_table
+    tags: [read, database]
+    action: allow
+    description: "Get column definitions and constraints for a table"
+  - name: list_schemas
+    tags: [read, database]
+    action: allow
+    description: "List all schemas"
+  - name: explain_query
+    tags: [read, database]
+    action: allow
+    description: "Get query execution plan"
+
+scan_tool_result_on:
+  - query
+  - execute
+
+auth:
+  type: connection_string
+  credential_key: connection_string
+  secret_env: DATABASE_URL
+
+notes: >
+  ALL query results carry sensitive tag — database content may contain PII.
+  scan_tool_result is enabled on query and execute — results re-enter the
+  LLM context and may contain injection payloads from user-generated data.
+  execute is blocked by default — read-only agents should use query only.
+  Override allowed_urls for remote/cloud databases (Supabase, RDS, etc.).
+  Use a dedicated read-only database user where possible.

@@ -1,0 +1,80 @@
+id: gmail
+display_name: "Gmail"
+categories: [communication, email, external]
+
+url: "https://gmail.googleapis.com"
+allowed_urls:
+  - "https://gmail.googleapis.com/*"
+  - "https://www.googleapis.com/gmail/*"
+  - "https://oauth2.googleapis.com/*"
+allowed_methods: [GET, POST, PUT, DELETE]
+
+tags: [external_mcp, communication, email, external, sensitive]
+
+tools:
+  - name: list_messages
+    tags: [read, email, sensitive]
+    action: allow
+    description: "List messages matching a query"
+  - name: get_message
+    tags: [read, email, sensitive]
+    action: allow
+    description: "Get full message content"
+  - name: search_messages
+    tags: [read, email, sensitive]
+    action: allow
+    description: "Search messages with Gmail query syntax"
+  - name: send_email
+    tags: [external_write, email, sensitive]
+    action: block
+    description: "Send an email"
+  - name: reply_to_email
+    tags: [external_write, email, sensitive]
+    action: block
+    description: "Reply to a message thread"
+  - name: create_draft
+    tags: [external_write, email, sensitive]
+    action: alert
+    description: "Create a draft (not sent)"
+  - name: list_labels
+    tags: [read, email]
+    action: allow
+    description: "List Gmail labels"
+  - name: modify_labels
+    tags: [external_write, email]
+    action: block
+    description: "Add or remove labels from messages"
+  - name: trash_message
+    tags: [external_write, email, sensitive]
+    action: block
+    description: "Move message to trash"
+  - name: list_threads
+    tags: [read, email, sensitive]
+    action: allow
+    description: "List email threads"
+  - name: get_thread
+    tags: [read, email, sensitive]
+    action: allow
+    description: "Get full thread with all messages"
+
+scan_tool_result_on:
+  - list_messages
+  - get_message
+  - search_messages
+  - get_thread
+
+auth:
+  type: oauth2
+  credential_key: token
+  secret_env: GMAIL_OAUTH_TOKEN
+  scopes:
+    - https://www.googleapis.com/auth/gmail.readonly
+    - https://www.googleapis.com/auth/gmail.send
+    - https://www.googleapis.com/auth/gmail.compose
+
+notes: >
+  Gmail carries highly sensitive personal data. ALL tools carry sensitive tag.
+  send_email and reply_to_email are blocked by default — require explicit
+  agent-level allow. scan_tool_result is mandatory on all read tools (T6 risk:
+  email bodies may contain injection payloads). Use OAuth2 — API keys not supported.
+  Minimum scope: gmail.readonly for read-only agents.

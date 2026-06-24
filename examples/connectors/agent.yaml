@@ -1,0 +1,61 @@
+# examples/connectors/agent.yaml
+id: connector_demo_agent
+display_name: "Connector Demo Agent"
+
+allowed_tool_names:
+  - list_channels
+  - read_messages
+  - search_messages
+  - list_repos
+  - get_repo
+  - list_issues
+  - get_issue
+  - search_code
+  - search
+  - get_page
+  - query_database
+  - send_message
+  - create_issue
+  - push_files
+  - create_page
+
+allowed_tags:
+  - read
+  - knowledge
+  - developer_tools
+  - messaging
+  - external_mcp
+  - external
+  - external_write
+  - sensitive
+  - stub
+
+policy_rules:
+  - id: allow_connector_read_tools
+    match:
+      tool_names:
+        - list_channels
+        - read_messages
+        - search_messages
+        - list_repos
+        - get_repo
+        - list_issues
+        - get_issue
+        - search_code
+        - search
+        - get_page
+        - query_database
+    action: allow
+  - id: block_all_writes
+    match:
+      tool_names:
+        - send_message
+        - create_issue
+        - push_files
+        - create_page
+    action: deny
+    reason: "this agent is read-only — no writes permitted"
+
+audit_tags:
+  example: connector_demo
+  env: demo

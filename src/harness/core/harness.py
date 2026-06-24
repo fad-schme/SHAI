@@ -201,6 +201,27 @@ class SHAI:
         # Build SourceRegistry and register all declared sources
         source_registry = SourceRegistry(policy)
         for src_cfg in config.sources:
+            # Resolve connector manifest if specified
+            if src_cfg.connector:
+                from harness.connectors import load_manifest, manifest_to_source_config_fields
+                from harness.config.schema import SourceConfig as _SC
+                try:
+                    manifest = load_manifest(src_cfg.connector)
+                except ValueError as e:
+                    from harness.core.errors import ConfigError as _CE
+                    raise _CE(str(e), op="load_connector") from e
+                # Merge manifest fields with operator overrides
+                # Operator fields take precedence (non-None values in src_cfg)
+                overrides = src_cfg.model_dump(exclude_none=True)
+                overrides.pop("connector", None)
+                overrides.pop("name", None)
+                merged = manifest_to_source_config_fields(manifest, overrides)
+                merged["name"] = src_cfg.name
+                merged["credentials"] = dict(src_cfg.credentials)
+                src_cfg = _SC.model_validate(merged)
+                log.info("connector manifest loaded",
+                         extra={"connector": manifest.id, "source": src_cfg.name})
+
             if src_cfg.transport == "mcp":
                 # Resolve credential values (already resolved by loader pass)
                 source = MCPSource(

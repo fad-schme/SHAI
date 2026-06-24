@@ -1,0 +1,85 @@
+# examples/connectors/harness.yaml
+# Demonstrates shai-connectors: three pre-built manifests in one config.
+# Each connector: line loads a manifest that supplies url, allowed_urls,
+# tags, tool specs, and scan_tool_result_on automatically.
+# The operator only provides credentials and optional overrides.
+
+version: 1
+tenant_id: "connector-demo"
+
+scan_input:
+  enabled: true
+  block_at: high
+  action: block
+  scanners:
+    - name: regex_pii
+      action: redact
+      redact_with: "***"
+    - name: injection_scan
+      action: block
+
+scan_output:
+  enabled: true
+  block_at: high
+  action: block
+  scanners:
+    - name: regex_pii
+      action: redact
+      redact_with: "[REDACTED:{category}]"
+
+scan_tool_result:
+  enabled: true
+  block_at: high
+  action: block
+
+check_tool_call:
+  rate_limit:
+    enabled: true
+    window_seconds: 60
+    max_calls_per_window: 60
+    max_calls_per_tool: 20
+  arg_scanners:
+    - name: regex_pii
+  scan_args_for_tags:
+    - sensitive
+
+policy:
+  rules:
+    - id: allow_local_tools
+      match:
+        transport: [local, skill]
+      action: allow
+    - id: deny_mcp_by_default
+      match:
+        transport: [mcp]
+      action: deny
+      reason: "MCP tools require explicit agent-level allow"
+
+audit_sinks:
+  - name: file
+    config:
+      path: ./logs/connector-demo-audit.jsonl
+
+# ── Connectors — one line each instead of hand-configuring everything ─────
+# Each connector: loads a pre-built manifest: url, allowed_urls, tags,
+# tool security specs, and scan_tool_result_on.
+# In production replace secret:// values with your real env vars.
+
+sources:
+  - name: slack
+    connector: slack
+    credentials:
+      token: ""               # demo only — set to secret://SLACK_BOT_TOKEN in production
+    required: false
+
+  - name: github
+    connector: github
+    credentials:
+      token: ""               # demo only — set to secret://GITHUB_TOKEN in production
+    required: false
+
+  - name: notion
+    connector: notion
+    credentials:
+      token: ""               # demo only — set to secret://NOTION_TOKEN in production
+    required: false

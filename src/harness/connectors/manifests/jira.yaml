@@ -1,0 +1,79 @@
+id: jira
+display_name: "Jira"
+categories: [developer_tools, project_management, external]
+
+url: "https://api.atlassian.com"
+allowed_urls:
+  - "https://api.atlassian.com/*"
+  - "https://*.atlassian.net/*"
+  - "https://*.jira.com/*"
+allowed_methods: [GET, POST, PUT, DELETE]
+
+tags: [external_mcp, developer_tools, project_management, external]
+
+tools:
+  - name: search_issues
+    tags: [read, project_management]
+    action: allow
+    description: "Search issues with JQL"
+  - name: get_issue
+    tags: [read, project_management]
+    action: allow
+    description: "Get issue details, comments, attachments"
+  - name: create_issue
+    tags: [external_write, project_management]
+    action: block
+    description: "Create a new issue"
+  - name: update_issue
+    tags: [external_write, project_management]
+    action: block
+    description: "Update issue fields"
+  - name: transition_issue
+    tags: [external_write, project_management]
+    action: block
+    description: "Move issue to a new status"
+  - name: add_comment
+    tags: [external_write, project_management]
+    action: block
+    description: "Add a comment to an issue"
+  - name: list_projects
+    tags: [read, project_management]
+    action: allow
+    description: "List accessible projects"
+  - name: get_project
+    tags: [read, project_management]
+    action: allow
+    description: "Get project details and metadata"
+  - name: list_boards
+    tags: [read, project_management]
+    action: allow
+    description: "List agile boards"
+  - name: get_sprint
+    tags: [read, project_management]
+    action: allow
+    description: "Get current sprint details"
+  - name: assign_issue
+    tags: [external_write, project_management]
+    action: block
+    description: "Assign issue to a user"
+  - name: delete_issue
+    tags: [external_write, project_management, sensitive]
+    action: block
+    description: "Delete an issue"
+
+scan_tool_result_on:
+  - search_issues
+  - get_issue
+  - get_sprint
+
+auth:
+  type: basic
+  credential_keys: [email, token]
+  secret_envs: [JIRA_EMAIL, JIRA_API_TOKEN]
+  notes: "Use Jira API token from id.atlassian.com/manage-profile/security/api-tokens"
+
+notes: >
+  Atlassian Cloud only. For Server/Data Center adjust allowed_urls to your
+  instance hostname. delete_issue is sensitive and blocked by default.
+  JQL search results may contain sensitive project data — scan_tool_result
+  is enabled on search_issues and get_issue.

@@ -69,6 +69,12 @@ def load_yaml(
 ) -> HarnessConfig:
     """Read harness.yaml, resolve env vars and secret refs, validate.
 
+    Note: secret:// resolution happens at parse time for ALL sources,
+    including required: false ones. If a required: false source has
+    credentials that reference missing env vars, the load will still fail.
+    For optional sources in development/demo contexts, use empty string
+    credentials ('') rather than secret:// references.
+
     provider:
         SecretsProvider to use for secret:// resolution. When None (default),
         secret:// URIs are left as-is — the caller is responsible for

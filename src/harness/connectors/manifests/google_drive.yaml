@@ -1,0 +1,93 @@
+id: google_drive
+display_name: "Google Drive"
+categories: [productivity, storage, external]
+
+url: "https://www.googleapis.com/drive"
+allowed_urls:
+  - "https://www.googleapis.com/drive/*"
+  - "https://www.googleapis.com/upload/drive/*"
+  - "https://docs.googleapis.com/*"
+  - "https://sheets.googleapis.com/*"
+  - "https://slides.googleapis.com/*"
+  - "https://oauth2.googleapis.com/*"
+allowed_methods: [GET, POST, PUT, PATCH, DELETE]
+
+tags: [external_mcp, storage, knowledge, external]
+
+tools:
+  - name: list_files
+    tags: [read, storage]
+    action: allow
+    description: "List files with optional query"
+  - name: get_file
+    tags: [read, storage, sensitive]
+    action: allow
+    description: "Get file metadata"
+  - name: read_file
+    tags: [read, storage, sensitive]
+    action: allow
+    description: "Read file content"
+  - name: search_files
+    tags: [read, storage]
+    action: allow
+    description: "Search files by name or content"
+  - name: create_file
+    tags: [external_write, storage]
+    action: block
+    description: "Create a new file"
+  - name: update_file
+    tags: [external_write, storage, sensitive]
+    action: block
+    description: "Update file content"
+  - name: delete_file
+    tags: [external_write, storage, sensitive]
+    action: block
+    description: "Move file to trash"
+  - name: share_file
+    tags: [external_write, storage, sensitive]
+    action: block
+    description: "Change file sharing permissions"
+  - name: list_folders
+    tags: [read, storage]
+    action: allow
+    description: "List folders"
+  - name: create_folder
+    tags: [external_write, storage]
+    action: block
+    description: "Create a folder"
+  - name: move_file
+    tags: [external_write, storage]
+    action: block
+    description: "Move file to a different folder"
+  - name: copy_file
+    tags: [external_write, storage]
+    action: block
+    description: "Copy a file"
+  - name: read_spreadsheet
+    tags: [read, storage, sensitive]
+    action: allow
+    description: "Read Google Sheets data"
+  - name: write_spreadsheet
+    tags: [external_write, storage, sensitive]
+    action: block
+    description: "Write to Google Sheets"
+
+scan_tool_result_on:
+  - read_file
+  - read_spreadsheet
+  - search_files
+
+auth:
+  type: oauth2
+  credential_key: token
+  secret_env: GOOGLE_OAUTH_TOKEN
+  scopes:
+    - https://www.googleapis.com/auth/drive.readonly
+    - https://www.googleapis.com/auth/drive.file
+
+notes: >
+  Drive file content may contain PII or sensitive business data — read_file
+  and read_spreadsheet carry sensitive and have scan_tool_result enabled.
+  share_file is blocked by default (exfiltration risk — changing permissions
+  could expose files externally). Use drive.readonly scope for read-only agents.
+  delete_file and share_file require explicit agent-level allow.

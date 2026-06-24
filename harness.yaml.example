@@ -72,6 +72,23 @@ audit_signing:
 # Credentials are resolved via SecretsProvider (secret:// URIs).
 #
 # sources:
+#   # Option A — use a pre-built connector manifest (recommended)
+#   - name: slack
+#     connector: slack          # loads manifest: url, allowed_urls, tags, tool specs
+#     credentials:
+#       token: "secret://SLACK_BOT_TOKEN"
+#
+#   - name: github
+#     connector: github
+#     credentials:
+#       token: "secret://GITHUB_TOKEN"
+#
+#   - name: notion
+#     connector: notion
+#     credentials:
+#       token: "secret://NOTION_TOKEN"
+#
+#   # Option B — manual configuration (full control)
 #   - name: slack_mcp
 #     transport: mcp
 #     url: "https://mcp.slack.com/sse"

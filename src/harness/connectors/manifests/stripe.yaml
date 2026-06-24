@@ -1,0 +1,102 @@
+id: stripe
+display_name: "Stripe"
+categories: [payments, financial, external]
+
+url: "https://api.stripe.com"
+allowed_urls:
+  - "https://api.stripe.com/*"
+allowed_methods: [GET, POST, DELETE]
+
+tags: [external_mcp, financial, sensitive, external]
+
+tools:
+  - name: list_customers
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "List customers with optional filter"
+  - name: get_customer
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "Get customer details"
+  - name: create_customer
+    tags: [external_write, financial, sensitive]
+    action: block
+    description: "Create a new customer"
+  - name: list_products
+    tags: [read, financial]
+    action: allow
+    description: "List products"
+  - name: get_product
+    tags: [read, financial]
+    action: allow
+    description: "Get product details"
+  - name: create_product
+    tags: [external_write, financial]
+    action: block
+    description: "Create a product"
+  - name: list_prices
+    tags: [read, financial]
+    action: allow
+    description: "List prices for products"
+  - name: create_price
+    tags: [external_write, financial, sensitive]
+    action: block
+    description: "Create a price"
+  - name: create_payment_link
+    tags: [external_write, financial, sensitive]
+    action: block
+    description: "Create a payment link"
+  - name: create_invoice
+    tags: [external_write, financial, sensitive]
+    action: block
+    description: "Create and send an invoice"
+  - name: list_invoices
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "List invoices"
+  - name: get_invoice
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "Get invoice details"
+  - name: get_balance
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "Get current account balance"
+  - name: list_subscriptions
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "List subscriptions"
+  - name: cancel_subscription
+    tags: [external_write, financial, sensitive]
+    action: block
+    description: "Cancel a subscription"
+  - name: list_disputes
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "List payment disputes"
+  - name: list_charges
+    tags: [read, financial, sensitive]
+    action: allow
+    description: "List charges"
+
+scan_tool_result_on:
+  - list_customers
+  - get_customer
+  - list_invoices
+  - get_invoice
+  - list_charges
+  - list_subscriptions
+
+auth:
+  type: token
+  credential_key: token
+  secret_env: STRIPE_SECRET_KEY
+  notes: "Use restricted API keys — never the full secret key in production"
+
+notes: >
+  Stripe handles financial data — all tools carry sensitive tag.
+  Use Stripe restricted API keys scoped to minimum required permissions.
+  create_payment_link, create_invoice, and cancel_subscription are blocked
+  by default and require explicit agent-level allow with human-in-loop
+  recommended. scan_tool_result is mandatory on customer and financial data
+  (T11 PII exposure risk — names, emails, billing addresses in results).
