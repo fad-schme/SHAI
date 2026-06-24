@@ -5,6 +5,8 @@ Every field maps to a consumer in the codebase.
 """
 from __future__ import annotations
 
+from harness.connectivity.config import ConnectivityConfig
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -156,7 +158,13 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     credentials: dict[str, str] = Field(default_factory=dict)
     tags:        list[str] = Field(default_factory=list)
     tool_names:  list[str] = Field(default_factory=list)  # local sources only: subset of tools to expose
-    required:    bool = True
+    required:        bool       = True
+    allowed_urls:    list[str]  = Field(default_factory=list)
+    # URL prefix patterns this source may reach. Default: [{url}/*] from the url field.
+    # Used to populate DispatchToken.allowed_urls when connectivity.enabled.
+    # Pattern syntax: "https://host/path/*" or exact "https://host/path".
+    allowed_methods: list[str]  = Field(default_factory=list)
+    # HTTP methods permitted. Default: all standard methods when empty.
     # required=True (default): missing or failed source raises ConfigError at load_agent() time.
     # required=False: missing or failed source is logged and skipped — use for
     #                 optional enrichment sources where degraded operation is acceptable.
@@ -196,6 +204,7 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     policy:          PolicyConfig = Field(default_factory=PolicyConfig)
     audit_sinks:     list[AdapterRef] = Field(default_factory=list)
     sources:         list[SourceConfig]  = Field(default_factory=list)
-    audit_signing:   AuditSigningConfig = Field(default_factory=AuditSigningConfig)
+    audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
+    connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
 
 

@@ -381,13 +381,19 @@ class MCPSource:
         self,
         name: str,
         url: str,
-        credentials: dict[str, str] | None = None,
-        tags: list[str] | None = None,
+        credentials:     dict[str, str] | None = None,
+        tags:            list[str] | None = None,
+        allowed_urls:    list[str] | None = None,
+        allowed_methods: list[str] | None = None,
     ) -> None:
         self.name  = name
         self.tags  = list(tags or [])
         self._url  = url.rstrip("/")
         self._creds: dict[str, str] = credentials or {}
+
+        # Connectivity — populated when connectivity.enabled in harness.yaml
+        self._allowed_urls:    list[str] = list(allowed_urls or [])
+        self._allowed_methods: list[str] = list(allowed_methods or [])
 
         self._client: Any = None          # httpx.AsyncClient
         self._session_id: str | None = None
@@ -418,8 +424,16 @@ class MCPSource:
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        *,
+        dispatch_token: str | None = None,
     ) -> Any:
         """Invoke a tool on the MCP server. Returns the tool result.
+
+        dispatch_token:
+            When connectivity.enabled, pass gate.dispatch_token here.
+            ShaiTransport will attach it as X-Shai-Token on the outbound
+            request and emit a NetworkAuditEvent. When None, no token header
+            is added (default — no-op when connectivity is disabled).
 
         Raises MCPInvocationError on server-side errors.
         Raises ConfigError if the source is not connected.
@@ -442,7 +456,7 @@ class MCPSource:
             },
         }
 
-        response = await self._post(payload)
+        response = await self._post(payload, dispatch_token=dispatch_token)
         self._check_jsonrpc_error(response, tool_name)
 
         result = response.get("result", {})
@@ -602,7 +616,7 @@ class MCPSource:
 
     # ── JSON-RPC helpers ──────────────────────────────────────────────────
 
-    async def _post(self, payload: dict) -> dict:
+    async def _post(self, payload: dict, dispatch_token: str | None = None) -> dict:
         """POST a JSON-RPC request to /message?sessionId=<session_id>."""
         params = {"sessionId": self._session_id} if self._session_id else {}
         try:

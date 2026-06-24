@@ -33,6 +33,7 @@ class AuditEvent(BaseModel, frozen=True):
     # Tool call gate fields
     tool_name:  str | None = None
     transport:  str | None = None
+    token_id:   str | None = None   # DispatchToken.token_id — join key for NetworkAuditEvent
 
     # Scan results
     adapters:      list[str] = []
@@ -74,6 +75,7 @@ class AuditEvent(BaseModel, frozen=True):
         deny_reason: str | None = None,
         tool_name: str | None = None,
         transport: str | None = None,
+        token_id: str | None = None,
         disabled: bool = False,
         audit_tags: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
@@ -94,6 +96,7 @@ class AuditEvent(BaseModel, frozen=True):
             sub_agent_id=ctx.sub_agent_id,
             tool_name=tool_name,
             transport=transport,
+            token_id=token_id,
             adapters=adapters or [],
             finding_count=finding_count,
             max_severity=max_severity,

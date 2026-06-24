@@ -52,10 +52,18 @@ class ScanVerdict(BaseModel, frozen=True):
 
 
 class GateDecision(BaseModel, frozen=True):
-    """Result of check_tool_call."""
-    allowed:       bool
-    deny_reason:   str | None = None
-    redacted_args: dict[str, Any] | None = None
+    """Result of check_tool_call.
+
+    dispatch_token:
+        Set when allowed=True and connectivity.enabled=True in harness.yaml.
+        Base64url-encoded signed DispatchToken. Pass to MCPSource.call() so
+        ShaiTransport can attach it as X-Shai-Token on outbound requests.
+        None when connectivity is disabled or the gate denied.
+    """
+    allowed:        bool
+    deny_reason:    str | None = None
+    redacted_args:  dict[str, Any] | None = None
+    dispatch_token: str | None = None
 
     @model_validator(mode="after")
     def _deny_requires_reason(self) -> "GateDecision":

@@ -33,6 +33,8 @@ from harness.tools.source import (
     SourceRegistry,
     ToolSource,
 )
+from harness.connectivity.config import ConnectivityConfig
+from harness.connectivity.token import DispatchToken, TokenError
 from harness.tools.tool import Tool
 
 try:
@@ -79,4 +81,8 @@ __all__ = [
     "PolicyEvaluationError",
     "AuditEmissionError",
     "MCPInvocationError",
+    # Connectivity
+    "ConnectivityConfig",
+    "DispatchToken",
+    "TokenError",
 ]

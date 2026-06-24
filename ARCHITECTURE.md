@@ -310,3 +310,59 @@ HarnessError
 ```
 
 All errors carry structured context fields (`agent_id`, `op`, `boundary`, etc.) as attributes for log formatters.
+
+
+## Known limitations and roadmap
+
+### Tool identity is global-by-name (0.2.x)
+
+`ToolRegistry` is keyed by `tool_name` alone. Transport and source tags are
+stamped at source activation time. If two sources provide a tool with the same
+name, the registry holds one variant; the per-agent `_source_overrides` dict
+holds the other. Policy rules that match on `transport` or `source_tags` will
+evaluate against whichever variant was resolved at `load_agent()` time, not
+against the source the dispatch call actually came from.
+
+**Current mitigation:** `ToolRegistry.register()` raises `ConfigError` on
+same-name conflict with different definitions, surfacing the ambiguity at
+startup.
+
+**Planned fix (0.2.x):** Composite tool identity `(source_name, tool_name)`
+at the agent resolution layer. The LLM call interface is unchanged; the gate
+resolves the source internally and evaluates policy against the
+source-specific `Tool` object.
+
+### shai-connectivity (planned)
+
+Network-layer enforcement via dispatch tokens. See `docs/connectivity.md`.
+
+
+### shai-connectors — manifest registry (0.2.x)
+
+Curated YAML manifests that wrap community MCP servers with correct SHAI
+security configuration: tool tags, `allowed_urls`, scan policies, auth
+schemas. Operators reference a connector by name instead of hand-configuring
+source entries.
+
+```yaml
+sources:
+  - connector: slack
+    credentials:
+      token: "secret://SLACK_BOT_TOKEN"
+```
+
+Initial set: Slack, WhatsApp, Gmail, GitHub, Notion, Linear, Jira,
+Google Drive, Microsoft Teams. Manifests ship in `shai-connectors`;
+MCP servers come from the community or service-hosted endpoints.
+
+### shai-local-connectors — local service MCP servers (0.2.x)
+
+Lightweight MCP servers for locally-installed services that have no hosted
+MCP: Apple Notes, Obsidian, SQLite, filesystem. Distributed as
+`shai-local-connectors`. Pre-wired with `allowed_urls: []` (no outbound
+network), `allowed_paths` scoping, and `sensitive` tags on write tools.
+Local process lifecycle managed by the harness (`load_agent` / `close()`).
+
+### MCPSource live tests
+
+`MCPSource` SSE connection and JSON-RPC handshake are tested with mocks only.

@@ -81,6 +81,7 @@ class SHAI:
         scan_tool_result_enabled: bool,
         tool_result_block_at: Severity,
         source_registry: SourceRegistry,
+        connectivity_secret: bytes | None = None,
     ) -> None:
         self._config              = config
         self._tenant_id           = config.tenant_id
@@ -121,6 +122,8 @@ class SHAI:
         # When a source merges tags onto a tool, the enriched Tool is stored here
         # and takes precedence over the registry entry in _resolve_tools.
         self._source_overrides: dict[str, dict[str, Tool]] = {}
+        self._connectivity        = config.connectivity
+        self._connectivity_secret = connectivity_secret
 
     # ── Construction ──────────────────────────────────────────────────────
 
@@ -159,6 +162,15 @@ class SHAI:
 
         sinks   = _build_sinks(config.audit_sinks)
 
+        # Connectivity: resolve token secret if configured
+        connectivity_secret: bytes | None = None
+        if config.connectivity.enabled:
+            raw = config.connectivity.token_secret
+            if raw.startswith("secret://"):
+                raw = provider.resolve(raw[len("secret://"):]).value
+            connectivity_secret = raw.encode()
+            log.info("connectivity layer enabled — dispatch tokens will be issued")
+
         # R3: resolve signing key if configured
         signing_secret: bytes | None = None
         if config.audit_signing.enabled:
@@ -196,6 +208,8 @@ class SHAI:
                     url=src_cfg.url,
                     credentials=dict(src_cfg.credentials),
                     tags=list(src_cfg.tags),
+                    allowed_urls=list(src_cfg.allowed_urls),
+                    allowed_methods=list(src_cfg.allowed_methods),
                 )
             else:
                 # LOCAL — backed by the shared tool registry
@@ -259,6 +273,7 @@ class SHAI:
             scan_file_scanner_actions=file_actions,
             scan_file_redact_withs=file_redacts,
             scan_tool_result_action=config.scan_tool_result.action,
+            connectivity_secret=connectivity_secret,
         )
 
     # ── Startup ───────────────────────────────────────────────────────────
@@ -436,8 +451,11 @@ class SHAI:
             await self._emitter.emit(event)
             return GateDecision(allowed=False, deny_reason=reason)
 
-        tools        = self._agent_tools.get(ctx.agent_id, {})
-        return await run_gate(
+        tools  = self._agent_tools.get(ctx.agent_id, {})
+        # Look up source name for this tool — needed for dispatch token
+        source_name = self._tool_source_name(name)
+
+        gate = await run_gate(
             name, args, ctx,
             agent_config=agent_config,
             tools=tools,
@@ -447,6 +465,52 @@ class SHAI:
             tenant_id=self._tenant_id,
             scan_args_for_tags=self._scan_args_for_tags,
         )
+
+        # Issue dispatch token when gate allows and connectivity is enabled
+        if gate.allowed and self._connectivity.enabled and self._connectivity_secret:
+            from harness.connectivity.token import (
+                sign_token, encode_token, default_allowed_urls,
+            )
+            tool_obj     = tools.get(name)
+            source_cfg   = next(
+                (s for s in self._config.sources if s.name == source_name),
+                None,
+            )
+            allowed_urls = (
+                list(source_cfg.allowed_urls)
+                if source_cfg and source_cfg.allowed_urls
+                else (default_allowed_urls(source_cfg.url)
+                      if source_cfg and source_cfg.url else [])
+            )
+            allowed_methods = (
+                list(source_cfg.allowed_methods)
+                if source_cfg and source_cfg.allowed_methods
+                else ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            )
+            token = sign_token(
+                agent_id=ctx.agent_id,
+                sub_agent_id=ctx.sub_agent_id,
+                tenant_id=self._tenant_id,
+                tool_name=name,
+                source_name=source_name,
+                allowed_urls=allowed_urls,
+                allowed_methods=allowed_methods,
+                secret=self._connectivity_secret,
+                ttl_seconds=self._connectivity.token_ttl_seconds,
+            )
+            encoded = encode_token(token)
+            # Rebuild GateDecision with token attached
+            gate = GateDecision(
+                allowed=True,
+                redacted_args=gate.redacted_args,
+                dispatch_token=encoded,
+            )
+            log.debug("dispatch token issued",
+                      extra={"agent_id": ctx.agent_id, "tool": name,
+                             "token_id": token.token_id,
+                             "expires_at": token.expires_at.isoformat()})
+
+        return gate
 
     async def scan_file(self, path: str | Path, ctx: AgentContext) -> ScanVerdict:
         """Scan an uploaded file through the file boundary.
@@ -528,6 +592,20 @@ class SHAI:
         return await self._source_registry.get(name)
 
     # ── Internal helpers ──────────────────────────────────────────────────
+    def _tool_source_name(self, tool_name: str) -> str:
+        """Return the source name that owns tool_name, or 'local' if not from a source."""
+        # Check source overrides first (enriched tools carry their source)
+        for agent_id, overrides in self._source_overrides.items():
+            if tool_name in overrides:
+                # Find which source config this tool came from by checking tags
+                for src_cfg in self._config.sources:
+                    if tool_name in src_cfg.tool_names or not src_cfg.tool_names:
+                        return src_cfg.name
+        # Fall back to scanning source configs
+        for src_cfg in self._config.sources:
+            if not src_cfg.tool_names or tool_name in src_cfg.tool_names:
+                return src_cfg.name
+        return "local"
 
     def _resolve_tools(self, cfg: AgentConfig) -> dict[str, Tool]:
         """Build the {name: Tool} dict for an agent at startup.
