@@ -108,8 +108,8 @@ class ShaiTransport(httpx.AsyncBaseTransport):
     Wraps the default httpx transport. Installed on the AsyncClient inside
     MCPSource._connect() when connectivity.enabled=True.
 
-    Thread/task safety: stateless per request. Multiple concurrent MCP
-    calls are safe — each request is independently validated.
+    Thread/task safety: the nonce store uses asyncio.Lock — safe for
+    concurrent MCP calls within the same event loop.
     """
 
     def __init__(
@@ -134,6 +134,11 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         self._emitter         = emitter
         self._connectivity    = connectivity
         self._inner           = inner or httpx.AsyncHTTPTransport()
+        # Nonce store: token_id → expires_at. Prevents replay within TTL window.
+        # Bounded by TTL — expired entries pruned on each access.
+        import asyncio
+        self._used_nonces: dict[str, "datetime"] = {}
+        self._nonce_lock  = asyncio.Lock()
 
     async def handle_async_request(
         self, request: httpx.Request
@@ -176,14 +181,11 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             )
             raise NetworkPolicyError(deny_reason)
 
-        # ── 3. Token handling ─────────────────────────────────────────────
+        # ── 3. Token validation — signature, binding, nonce ──────────────
         if token_raw:
-            # Verify signature and extract metadata for the audit event
             try:
                 secret = self._connectivity.token_secret.encode()
                 token  = verify_token(token_raw, secret)
-                token_id  = token.token_id
-                tool_name = token.tool_name
             except TokenError as e:
                 deny_reason = f"invalid dispatch token: {e}"
                 await self._emit(
@@ -194,6 +196,62 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                     duration_ms=int(time.monotonic() * 1000) - start_ms,
                 )
                 raise NetworkPolicyError(deny_reason) from e
+
+            token_id  = token.token_id
+            tool_name = token.tool_name
+
+            # ── 3a. Source binding — token must be for this source ────────
+            if token.source_name != self._source_name:
+                deny_reason = (
+                    f"token source_name '{token.source_name}' does not match "                    f"transport source '{self._source_name}'"                )
+                await self._emit(
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="denied", deny_reason=deny_reason,
+                    bytes_sent=0, bytes_recv=0,
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+                raise NetworkPolicyError(deny_reason)
+
+            # ── 3b. URL binding — request must match token's allowed_urls ─
+            if token.allowed_urls and not matches_allowed_url(url_str, token.allowed_urls):
+                deny_reason = (
+                    f"destination '{url_str}' not in token.allowed_urls "                    f"for source '{self._source_name}'"                )
+                await self._emit(
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="denied", deny_reason=deny_reason,
+                    bytes_sent=0, bytes_recv=0,
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+                raise NetworkPolicyError(deny_reason)
+
+            # ── 3c. Method binding — request method must match token's list
+            if token.allowed_methods and method not in [m.upper() for m in token.allowed_methods]:
+                deny_reason = (
+                    f"method '{method}' not in token.allowed_methods "                    f"for source '{self._source_name}'"                )
+                await self._emit(
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="denied", deny_reason=deny_reason,
+                    bytes_sent=0, bytes_recv=0,
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+                raise NetworkPolicyError(deny_reason)
+
+            # ── 3d. Nonce check — prevent replay within TTL window ────────
+            deny_reason = await self._check_and_consume_nonce(
+                token_id, token.expires_at
+            )
+            if deny_reason:
+                await self._emit(
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="denied", deny_reason=deny_reason,
+                    bytes_sent=0, bytes_recv=0,
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+                raise NetworkPolicyError(deny_reason)
 
             # Inject token as X-Shai-Token header
             request.headers["X-Shai-Token"] = token_raw
@@ -245,6 +303,30 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             )
 
         return response
+
+    async def _check_and_consume_nonce(
+        self, token_id: str, expires_at: "datetime"
+    ) -> "str | None":
+        """Consume token_id as a one-time nonce. Returns deny_reason or None.
+
+        Prunes expired nonces on every call — the store stays bounded
+        by the number of in-flight requests within the TTL window.
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
+        async with self._nonce_lock:
+            # Prune expired entries
+            expired = [k for k, exp in self._used_nonces.items() if exp <= now]
+            for k in expired:
+                del self._used_nonces[k]
+
+            if token_id in self._used_nonces:
+                return (
+                    f"token_id '{token_id}' has already been used "                    f"(replay prevented)"                )
+            # Consume — mark as used until the token's own expiry
+            self._used_nonces[token_id] = expires_at
+            return None
 
     async def _emit(
         self, *, token_id: str | None, tool_name: str | None,

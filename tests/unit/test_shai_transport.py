@@ -289,3 +289,102 @@ async def test_token_id_matches_issued_token():
 
     event = emitter.emit.call_args[0][0]
     assert event.token_id == tok_obj.token_id
+
+
+# ── Token binding checks ───────────────────────────────────────────────────
+
+async def test_token_wrong_source_denied():
+    """Token issued for 'slack_mcp' must not pass on 'github_mcp' transport."""
+    t = _transport()  # source_name = SOURCE = "slack_mcp"
+    # Token claims source_name = "github_mcp"
+    tok = _token(source_name="github_mcp")
+    req = _request(token=tok)
+    with pytest.raises(NetworkPolicyError, match="source_name"):
+        await t.handle_async_request(req)
+
+
+async def test_token_wrong_source_emits_audit_event():
+    emitter = AsyncMock()
+    emitter.emit = AsyncMock()
+    t = _transport(emitter=emitter)
+    tok = _token(source_name="github_mcp")
+    req = _request(token=tok)
+    with pytest.raises(NetworkPolicyError):
+        await t.handle_async_request(req)
+    event = emitter.emit.call_args[0][0]
+    assert event.status == "denied"
+    assert "source_name" in event.deny_reason
+
+
+async def test_token_url_binding_denied():
+    """Token with allowed_urls scoped to Slack must not reach GitHub."""
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(
+        allowed_urls=["https://api.github.com/*"],
+        inner=inner,
+    )
+    # Token allows only Slack URLs
+    tok = _token(
+        allowed_urls=["https://mcp.slack.com/*"],
+        allowed_methods=["GET", "POST"],
+    )
+    req = _request(url="https://api.github.com/repos", token=tok)
+    with pytest.raises(NetworkPolicyError, match="token.allowed_urls"):
+        await t.handle_async_request(req)
+
+
+async def test_token_method_binding_denied():
+    """Token that allows only GET must block a POST request."""
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(inner=inner)
+    tok = _token(allowed_methods=["GET"])   # POST not permitted
+    req = _request(method="POST", token=tok)
+    with pytest.raises(NetworkPolicyError, match="token.allowed_methods"):
+        await t.handle_async_request(req)
+
+
+async def test_token_replay_denied():
+    """Same token used twice must be rejected on the second use."""
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(inner=inner)
+    tok = _token()
+
+    # First use — allowed
+    req1 = _request(token=tok)
+    await t.handle_async_request(req1)
+
+    # Second use — replay denied
+    req2 = _request(token=tok)
+    with pytest.raises(NetworkPolicyError, match="replay"):
+        await t.handle_async_request(req2)
+
+
+async def test_different_tokens_not_confused():
+    """Two distinct tokens on the same transport are both allowed."""
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(inner=inner)
+
+    tok1 = _token()
+    tok2 = _token()   # different token_id via new sign_token call
+    assert tok1 != tok2
+
+    await t.handle_async_request(_request(token=tok1))
+    await t.handle_async_request(_request(token=tok2))
+    assert inner.handle_async_request.call_count == 2
+
+
+async def test_token_binding_checks_order():
+    """Source binding fires before URL binding — wrong source caught first."""
+    t = _transport()
+    # Token with wrong source AND wrong url — source check fires first
+    tok = _token(
+        source_name="wrong_source",
+        allowed_urls=["https://evil.com/*"],
+    )
+    req = _request(token=tok)
+    with pytest.raises(NetworkPolicyError, match="source_name"):
+        await t.handle_async_request(req)
