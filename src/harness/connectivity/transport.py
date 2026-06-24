@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+import asyncio
 import httpx
 
 from harness.connectivity.token import (
@@ -136,7 +137,6 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         self._inner           = inner or httpx.AsyncHTTPTransport()
         # Nonce store: token_id → expires_at. Prevents replay within TTL window.
         # Bounded by TTL — expired entries pruned on each access.
-        import asyncio
         self._used_nonces: dict[str, "datetime"] = {}
         self._nonce_lock  = asyncio.Lock()
 
@@ -203,7 +203,9 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             # ── 3a. Source binding — token must be for this source ────────
             if token.source_name != self._source_name:
                 deny_reason = (
-                    f"token source_name '{token.source_name}' does not match "                    f"transport source '{self._source_name}'"                )
+                    f"token source_name '{token.source_name}' does not match "
+                    f"transport source '{self._source_name}'"
+                )
                 await self._emit(
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
@@ -216,7 +218,9 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             # ── 3b. URL binding — request must match token's allowed_urls ─
             if token.allowed_urls and not matches_allowed_url(url_str, token.allowed_urls):
                 deny_reason = (
-                    f"destination '{url_str}' not in token.allowed_urls "                    f"for source '{self._source_name}'"                )
+                    f"destination '{url_str}' not in token.allowed_urls "
+                    f"for source '{self._source_name}'"
+                )
                 await self._emit(
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
@@ -229,7 +233,9 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             # ── 3c. Method binding — request method must match token's list
             if token.allowed_methods and method not in [m.upper() for m in token.allowed_methods]:
                 deny_reason = (
-                    f"method '{method}' not in token.allowed_methods "                    f"for source '{self._source_name}'"                )
+                    f"method '{method}' not in token.allowed_methods "
+                    f"for source '{self._source_name}'"
+                )
                 await self._emit(
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
@@ -312,7 +318,6 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         Prunes expired nonces on every call — the store stays bounded
         by the number of in-flight requests within the TTL window.
         """
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
 
         async with self._nonce_lock:

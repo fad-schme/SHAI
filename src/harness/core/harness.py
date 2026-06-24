@@ -274,7 +274,12 @@ class SHAI:
             if rl_cfg.enabled else None
         )
 
-        return cls(
+        # Collect scan_tool_result_on across all connector sources
+        scan_tool_result_on: set[str] = set()
+        for _src_cfg in config.sources:
+            scan_tool_result_on.update(_src_cfg.scan_tool_result_on)
+
+        instance = cls(
             config=config,
             agent_registry=agent_registry,
             tool_registry=tool_registry,
@@ -308,6 +313,8 @@ class SHAI:
             scan_tool_result_action=config.scan_tool_result.action,
             connectivity_secret=connectivity_secret,
         )
+        instance._scan_tool_result_on = scan_tool_result_on
+        return instance
 
     # ── Startup ───────────────────────────────────────────────────────────
 
@@ -574,17 +581,45 @@ class SHAI:
             audit_tags=self._audit_tags_for(ctx),
         )
 
-    async def scan_tool_result(self, result: str, ctx: AgentContext) -> ScanVerdict:
-        """Scan a tool's return value before it re-enters the LLM context.
+    async def scan_tool_result(
+        self,
+        result: str,
+        ctx: AgentContext,
+        *,
+        tool_name: str | None = None,
+    ) -> ScanVerdict:
+        """Scan a tool return value before it re-enters the LLM context.
 
-        Call after every tool dispatch and before passing the result to the LLM.
-        Detects indirect prompt injection embedded in tool outputs (T6).
-
-        Example:
-            result   = await dispatch(tool_name, args)
-            verdict  = await harness.scan_tool_result(result, agent)
-            safe_result = verdict.redacted_text or result
+        tool_name: when provided and a connector manifest has declared
+            scan_tool_result_on, only tools in that set are scanned.
+            Tools not listed emit a disabled=True audit event and return
+            ScanVerdict(allow). When tool_name is None or no manifest
+            declares scan_tool_result_on, all results are scanned (safe default).
         """
+        if (
+            tool_name is not None
+            and self._scan_tool_result_on
+            and tool_name not in self._scan_tool_result_on
+        ):
+            log.debug(
+                "scan_tool_result skipped — tool not in scan_tool_result_on",
+                extra={"tool": tool_name, **ctx.to_log_fields()},
+            )
+            from harness.core.events import AuditEvent
+            from harness.core.verdicts import ScanVerdict, ScanStatus
+            event = AuditEvent.build(
+                boundary=BoundaryName.TOOL_RESULT_SCAN,
+                decision=Decision.ALLOW,
+                ctx=ctx,
+                tenant_id=self._tenant_id,
+                duration_ms=0,
+                disabled=True,
+                adapters=["scan_tool_result_on"],
+                audit_tags=self._audit_tags_for(ctx),
+            )
+            await self._emitter.emit(event)
+            return ScanVerdict(status=ScanStatus.ALLOW)
+
         return await run_tool_result_scan(
             result, ctx,
             scanners=self._tool_result_scanners,
@@ -656,17 +691,24 @@ class SHAI:
 
     # ── Internal helpers ──────────────────────────────────────────────────
     def _tool_source_name(self, tool_name: str) -> str:
-        """Return the source name that owns tool_name, or 'local' if not from a source."""
-        # Check source overrides first (enriched tools carry their source)
-        for agent_id, overrides in self._source_overrides.items():
-            if tool_name in overrides:
-                # Find which source config this tool came from by checking tags
-                for src_cfg in self._config.sources:
-                    if tool_name in src_cfg.tool_names or not src_cfg.tool_names:
-                        return src_cfg.name
-        # Fall back to scanning source configs
+        """Return the source name that owns tool_name, or 'local' if not from MCP.
+
+        Checks connector_tool_specs on MCP sources first (most precise),
+        then falls back to explicit tool_names lists, then to the first
+        MCP source with no tool_names restriction.
+        """
         for src_cfg in self._config.sources:
-            if not src_cfg.tool_names or tool_name in src_cfg.tool_names:
+            if src_cfg.transport != "mcp":
+                continue
+            # Connector manifest explicitly lists this tool
+            if tool_name in src_cfg.connector_tool_specs:
+                return src_cfg.name
+            # Explicit tool_names allowlist
+            if src_cfg.tool_names and tool_name in src_cfg.tool_names:
+                return src_cfg.name
+        # No explicit match — fall back to first unrestricted MCP source
+        for src_cfg in self._config.sources:
+            if src_cfg.transport == "mcp" and not src_cfg.tool_names:
                 return src_cfg.name
         return "local"
 
@@ -718,8 +760,6 @@ def _build_scanners(adapter_refs: list) -> list:
                 log.warning("scanner adapter not found — skipped",
                             extra={"adapter_name": ref.name, "error": str(e)})
     return scanners
-
-
 
 
 def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
