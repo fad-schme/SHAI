@@ -99,6 +99,13 @@ scan_tool_result:
   block_at: high
   action: block
 
+scan_mcp_metadata:
+  enabled: true
+  block_at: medium    # default — metadata injection is high signal
+  action: block
+  scanners:
+    - name: mcp_metadata_scan  # MCPMetadataScanner, mcp_metadata_patterns.yaml
+
 scan_file:
   enabled: false
   block_at: high

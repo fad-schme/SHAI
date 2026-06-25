@@ -52,6 +52,28 @@ scan_file:
 
 ---
 
+## scan_mcp_metadata
+
+Scans tool names, descriptions, and argument schemas received from MCP
+servers before the tools are registered with SHAI.
+
+```yaml
+scan_mcp_metadata:
+  enabled: true
+  block_at: medium    # default medium — metadata injection is high signal
+  action: block
+  scanners:
+    - name: mcp_metadata_scan
+```
+
+`block_at` defaults to `medium` here (unlike other boundaries which default
+to `high`) because almost no legitimate content in tool metadata looks like
+an injection. "ignore all previous instructions" in a tool description has
+no benign interpretation.
+
+When `enabled: false`, tools are registered without metadata scanning.
+The `mcp_metadata_scan` scanner uses `mcp_metadata_patterns.yaml`.
+
 ## check_tool_call
 
 ```yaml

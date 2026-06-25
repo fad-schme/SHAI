@@ -27,6 +27,13 @@ scan_tool_result:
   block_at: high
   action: block
 
+scan_mcp_metadata:
+  enabled: true
+  block_at: medium      # medium is correct — metadata injection is high signal
+  action: block
+  scanners:
+    - name: mcp_metadata_scan
+
 check_tool_call:
   rate_limit:
     enabled: true

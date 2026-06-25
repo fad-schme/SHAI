@@ -13,6 +13,7 @@ from harness.adapters.audit_sinks.stdout import StdoutSink
 from harness.adapters.scanners.rate_limiter import RateLimiter
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
+from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
 from harness.agents.agent_config import AgentConfig
@@ -114,6 +115,9 @@ class SHAI:
         self._tool_result_scanners      = tool_result_scanners
         self._scan_tool_result_enabled  = scan_tool_result_enabled
         self._tool_result_block_at      = tool_result_block_at
+        self._mcp_metadata_scanners:    list = []
+        self._scan_mcp_metadata_enabled = True
+        self._mcp_metadata_block_at     = Severity.MEDIUM
         self._source_registry           = source_registry
         # Per-agent resolved tool sets — populated at load_agent() time
         # key: agent_id, value: {tool_name: Tool} for that agent
@@ -155,9 +159,9 @@ class SHAI:
         config = load_yaml(path, provider=provider)
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
-        input_scanners  = _build_scanners(config.scan_input.scanners)
-        output_scanners = _build_scanners(config.scan_output.scanners)
-        arg_scanners    = _build_scanners(config.check_tool_call.arg_scanners)
+        input_scanners  = _build_text_scanners(config.scan_input.scanners)
+        output_scanners = _build_text_scanners(config.scan_output.scanners)
+        arg_scanners    = _build_text_scanners(config.check_tool_call.arg_scanners)
         file_scanners   = _build_file_scanners(
             config.scan_file.scanners,
             max_size_mb=config.scan_file.max_size_mb,
@@ -192,14 +196,12 @@ class SHAI:
         emitter = AuditEmitter(sinks, signing_secret=signing_secret)
 
         # R2: tool result scanner — uses bundled patterns_for_doc.yaml
-        from pathlib import Path as _Path
-        from harness.adapters.scanners.injection_scan import InjectionScanner as _IS
-        _doc_patterns = _Path(__file__).parent.parent / \
-            "adapters/scanners/patterns_for_doc.yaml"
         tool_result_scanners = (
-            [_IS(patterns_file=_doc_patterns, name="injection_scan_doc")]
+            [_make_injection_doc_scanner()]
             if config.scan_tool_result.enabled else []
         )
+
+        mcp_metadata_scanners = _build_text_scanners(config.scan_mcp_metadata.scanners)
 
         # Build shared registries first — source_registry needs tool_registry
         tool_registry   = ToolRegistry()
@@ -247,6 +249,10 @@ class SHAI:
                 # Wire connector manifest enforcement data
                 source._connector_tool_specs = dict(src_cfg.connector_tool_specs)
                 source._scan_tool_result_on  = set(src_cfg.scan_tool_result_on)
+                # Wire MCP metadata scanner config
+                source._mcp_metadata_scanners     = instance._mcp_metadata_scanners
+                source._scan_mcp_metadata_enabled = instance._scan_mcp_metadata_enabled
+                source._mcp_metadata_block_at     = instance._mcp_metadata_block_at
             else:
                 # LOCAL — backed by the shared tool registry
                 source = LocalSource(
@@ -316,7 +322,10 @@ class SHAI:
             scan_tool_result_action=config.scan_tool_result.action,
             connectivity_secret=connectivity_secret,
         )
-        instance._scan_tool_result_on = scan_tool_result_on
+        instance._scan_tool_result_on        = scan_tool_result_on
+        instance._mcp_metadata_scanners      = mcp_metadata_scanners
+        instance._scan_mcp_metadata_enabled  = config.scan_mcp_metadata.enabled
+        instance._mcp_metadata_block_at      = config.scan_mcp_metadata.block_at
         return instance
 
     # ── Startup ───────────────────────────────────────────────────────────
@@ -452,6 +461,61 @@ class SHAI:
             scanners=self._input_scanners,
             scanner_actions=self._scan_input_scanner_actions,
             scanner_redact_withs=self._scan_input_redact_withs,
+            boundary_action=self._scan_input_action,
+            emitter=self._emitter,
+            tenant_id=self._tenant_id,
+            enabled=self._scan_input_enabled,
+            block_at=self._block_at,
+            audit_tags=self._audit_tags_for(ctx),
+        )
+
+    async def scan_pii(self, text: str, ctx: AgentContext) -> ScanVerdict:
+        """Run only the RegexPIIScanner on text.
+
+        Runs the full scan pipeline (action, block_at, audit event) but with
+        only the PII scanner — not the full input scanner stack.
+        Useful when you need targeted PII detection on content that doesn't
+        need injection scanning (e.g. a structured API response).
+        """
+        pii_scanners = [
+            s for s in self._input_scanners
+            if getattr(s, "name", "") == "regex_pii"
+        ]
+        if not pii_scanners:
+            pii_scanners = self._input_scanners   # fallback: run all
+        return await run_scan(
+            text, ctx,
+            boundary=BoundaryName.INPUT_SCAN,
+            scanners=pii_scanners,
+            scanner_actions=self._scan_input_scanner_actions[:len(pii_scanners)],
+            scanner_redact_withs=self._scan_input_redact_withs[:len(pii_scanners)],
+            boundary_action=self._scan_input_action,
+            emitter=self._emitter,
+            tenant_id=self._tenant_id,
+            enabled=self._scan_input_enabled,
+            block_at=self._block_at,
+            audit_tags=self._audit_tags_for(ctx),
+        )
+
+    async def scan_injection(self, text: str, ctx: AgentContext) -> ScanVerdict:
+        """Run only the InjectionScanner on text.
+
+        Runs the full scan pipeline but with only the injection scanner.
+        Useful for targeted injection detection on a specific input surface
+        (e.g. a URL parameter, a tool name, a structured field).
+        """
+        inj_scanners = [
+            s for s in self._input_scanners
+            if getattr(s, "name", "").startswith("injection_scan")
+        ]
+        if not inj_scanners:
+            inj_scanners = self._input_scanners   # fallback: run all
+        return await run_scan(
+            text, ctx,
+            boundary=BoundaryName.INPUT_SCAN,
+            scanners=inj_scanners,
+            scanner_actions=[None] * len(inj_scanners),
+            scanner_redact_withs=[None] * len(inj_scanners),
             boundary_action=self._scan_input_action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
@@ -665,6 +729,40 @@ class SHAI:
         )
 
 
+    @property
+    def scanners(self) -> "dict[str, object]":
+        """Return all active scanner instances keyed by name.
+
+        Provides visibility into which scanners are running and their
+        configuration. Useful for inspection, testing, and debugging.
+
+        Returns a flat dict across all boundaries — scanners used in
+        multiple boundaries appear once (the input_scanner instance).
+
+            harness.scanners
+            # {
+            #   'regex_pii':          RegexPIIScanner(...),
+            #   'injection_scan':     InjectionScanner(...),
+            #   'injection_scan_doc': InjectionScanner(patterns_for_doc),
+            #   'file_scanner':       FileScanner(...),
+            #   'mcp_metadata_scan':  MCPMetadataScanner(...),
+            #   'rate_limiter':       RateLimiter(...),
+            # }
+        """
+        result: dict[str, object] = {}
+        for scanner in (
+            self._input_scanners
+            + self._output_scanners
+            + self._tool_result_scanners
+            + self._file_scanners
+            + self._arg_scanners
+        ):
+            name = getattr(scanner, "name", type(scanner).__name__)
+            result[name] = scanner
+        if self._rate_limiter is not None:
+            result["rate_limiter"] = self._rate_limiter
+        return result
+
     def collect_events(self):
         """Context manager that collects AuditEvents emitted during the block.
 
@@ -768,15 +866,52 @@ class SHAI:
 
 
 # ── Module-level adapter builders ─────────────────────────────────────────
+#
+# Each scanner is a named, standalone class. _build_text_scanners resolves
+# them from AdapterRef declarations in harness.yaml. The named factories
+# below make the mapping explicit — no magic string dispatch.
 
-def _build_scanners(adapter_refs: list) -> list:
-    _REFERENCE = {
-        "regex_pii":       lambda cfg: RegexPIIScanner(**cfg),
-        "injection_scan":  lambda cfg: InjectionScanner(**cfg),
-    }
+def _make_pii_scanner(cfg: dict) -> RegexPIIScanner:
+    """Build a RegexPIIScanner from an AdapterRef config dict."""
+    return RegexPIIScanner(**cfg)
+
+
+def _make_injection_scanner(cfg: dict) -> InjectionScanner:
+    """Build an InjectionScanner from an AdapterRef config dict."""
+    return InjectionScanner(**cfg)
+
+
+def _make_injection_doc_scanner() -> InjectionScanner:
+    """Build an InjectionScanner using patterns_for_doc.yaml.
+
+    Used for tool_result scanning and file content scanning — tuned for
+    structured content (lower false-positive rate than injection_patterns.yaml).
+    """
+    from pathlib import Path as _Path
+    doc_patterns = _Path(__file__).parent.parent / "adapters/scanners/patterns_for_doc.yaml"
+    return InjectionScanner(
+        patterns_file=doc_patterns if doc_patterns.exists() else None,
+        name="injection_scan_doc",
+    )
+
+
+# Named registry — explicit, no magic strings
+_SCANNER_FACTORIES: dict[str, "Any"] = {
+    "regex_pii":          _make_pii_scanner,
+    "injection_scan":     _make_injection_scanner,
+    "mcp_metadata_scan":  lambda cfg: MCPMetadataScanner(**cfg),
+}
+
+
+def _build_text_scanners(adapter_refs: list) -> list:
+    """Build text scanners from AdapterRef declarations in harness.yaml.
+
+    Built-in scanners (regex_pii, injection_scan) are resolved via the
+    named factory table above. Custom scanners are resolved via entry points.
+    """
     scanners = []
     for ref in adapter_refs:
-        factory = _REFERENCE.get(ref.name)
+        factory = _SCANNER_FACTORIES.get(ref.name)
         if factory:
             scanners.append(factory(ref.config))
         else:
@@ -790,6 +925,11 @@ def _build_scanners(adapter_refs: list) -> list:
     return scanners
 
 
+# Keep _build_scanners as an alias for backward compatibility
+# (used in test fixtures and any external code that calls it directly)
+_build_scanners = _build_text_scanners
+
+
 def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
     """Build file scanners — always includes FileScanner as the structural pass.
 
@@ -798,16 +938,8 @@ def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
     Additional scanners declared in config are appended after.
     """
     from harness.adapters.scanners.file_scanner import FileScanner
-    from harness.adapters.scanners.injection_scan import InjectionScanner
-    from pathlib import Path as _Path
 
-    patterns_for_doc = _Path(__file__).parent.parent / \
-        "adapters/scanners/patterns_for_doc.yaml"
-
-    text_scanner = InjectionScanner(
-        patterns_file=patterns_for_doc if patterns_for_doc.exists() else None,
-        name="injection_scan_doc",
-    )
+    text_scanner = _make_injection_doc_scanner()
     scanners = [FileScanner(max_size_mb=max_size_mb, text_scanner=text_scanner)]
 
     for ref in adapter_refs:

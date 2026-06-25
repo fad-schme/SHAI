@@ -207,14 +207,36 @@ class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
         return [RuleConfig.model_validate(r) for r in self.rules]
 
 
+class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
+    """Configuration for the scan_mcp_metadata boundary.
+
+    Scans tool names, descriptions, and argument schemas received from
+    MCP servers' tools/list response before registration.
+
+    block_at defaults to MEDIUM (unlike other boundaries which default to HIGH)
+    because almost no legitimate content in tool metadata looks like an injection.
+    A tool description containing 'ignore all previous instructions' has no
+    benign interpretation.
+
+    Default scanner: mcp_metadata_scan (MCPMetadataScanner).
+    """
+    enabled:  bool       = True
+    block_at: Severity   = Severity.MEDIUM
+    action:   ScanAction = ScanAction.BLOCK
+    scanners: list[AdapterRef] = Field(
+        default_factory=lambda: [AdapterRef(name="mcp_metadata_scan")]
+    )
+
+
 class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     version:         int = 1
     tenant_id:       str = "default"
     scan_input:      BoundaryConfig
     scan_file:       FileScanConfig       = Field(default_factory=lambda: FileScanConfig(enabled=False))
-    scan_tool_result: ToolResultScanConfig = Field(default_factory=ToolResultScanConfig)
-    check_tool_call: ToolCallGateConfig = Field(default_factory=ToolCallGateConfig)
-    scan_output:     BoundaryConfig
+    scan_tool_result:    ToolResultScanConfig    = Field(default_factory=ToolResultScanConfig)
+    scan_mcp_metadata:   MCPMetadataScanConfig   = Field(default_factory=MCPMetadataScanConfig)
+    check_tool_call:     ToolCallGateConfig      = Field(default_factory=ToolCallGateConfig)
+    scan_output:         BoundaryConfig
     policy:          PolicyConfig = Field(default_factory=PolicyConfig)
     audit_sinks:     list[AdapterRef] = Field(default_factory=list)
     sources:         list[SourceConfig]  = Field(default_factory=list)

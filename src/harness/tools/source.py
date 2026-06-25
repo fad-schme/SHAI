@@ -401,8 +401,12 @@ class MCPSource:
         self._tenant_id:            str = "default"
         self._agent_ctx:            Any = None   # AgentContext — set at load() time
         # Connector manifest enforcement
-        self._connector_tool_specs: dict = {}    # tool_name → {tags, action}
-        self._scan_tool_result_on:  set  = set() # tool names requiring scan_tool_result
+        self._connector_tool_specs:       dict  = {}    # tool_name → {tags, action}
+        self._scan_tool_result_on:        set   = set() # tool names requiring scan_tool_result
+        # MCP metadata scanner — stamped by harness at construction
+        self._mcp_metadata_scanners:      list  = []    # MCPMetadataScanner instances
+        self._scan_mcp_metadata_enabled:  bool  = True
+        self._mcp_metadata_block_at:      object = None  # Severity
 
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
@@ -488,6 +492,66 @@ class MCPSource:
                 self._client = None
 
     # ── Connection ────────────────────────────────────────────────────────
+
+    async def _scan_mcp_metadata(
+        self, mcp_tool: dict, tool_name: str
+    ) -> "tuple[bool, list]":
+        """Run configured MCPMetadataScanner instances on a tool dict.
+
+        Returns (blocked, findings). blocked=True means the tool must not
+        be registered. findings is the combined list across all scanners.
+        Called only when scan_mcp_metadata.enabled and scanners are present.
+        """
+        from harness.core.types import Severity
+
+        all_findings = []
+        for scanner in self._mcp_metadata_scanners:
+            try:
+                result = await scanner.scan_tool(mcp_tool, source_name=self.name)
+                all_findings.extend(result.findings)
+            except Exception as e:
+                log.warning("mcp metadata scanner error — skipped",
+                            extra={"source": self.name, "tool": tool_name,
+                                   "scanner": getattr(scanner, "name", "?"),
+                                   "error": str(e)})
+
+        if not all_findings:
+            return False, []
+
+        # Block if any finding meets or exceeds the configured block_at severity
+        block_at = self._mcp_metadata_block_at
+        if block_at is None:
+            block_at = Severity.MEDIUM
+
+        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH]
+        try:
+            threshold_idx = severity_order.index(block_at)
+        except ValueError:
+            threshold_idx = 1  # default to MEDIUM
+
+        should_block = any(
+            severity_order.index(f.severity) >= threshold_idx
+            for f in all_findings
+            if f.severity in severity_order
+        )
+
+        if should_block:
+            log.warning(
+                "mcp tool blocked — injection payload in metadata",
+                extra={
+                    "source":   self.name,
+                    "tool":     tool_name,
+                    "findings": len(all_findings),
+                    "max_sev":  str(max(
+                        (severity_order.index(f.severity)
+                         for f in all_findings
+                         if f.severity in severity_order),
+                        default=0,
+                    )),
+                },
+            )
+
+        return should_block, all_findings
 
     async def _connect(self) -> None:
         """Open the HTTP client, establish the SSE session, and initialise."""
@@ -619,10 +683,6 @@ class MCPSource:
 
         mcp_tools = response.get("result", {}).get("tools", [])
 
-        # Build metadata scanner once per fetch
-        from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
-        meta_scanner = MCPMetadataScanner()
-
         tools: list[Tool] = []
         blocked_count = 0
 
@@ -634,35 +694,19 @@ class MCPSource:
                 continue
 
             # Scan metadata for injection payloads before registering
-            scan_result = await meta_scanner.scan_tool(
-                mcp_tool, source_name=self.name
-            )
-            if meta_scanner.should_block(scan_result):
-                blocked_count += 1
-                log.warning(
-                    "mcp tool blocked — injection payload in metadata",
-                    extra={
-                        "source":    self.name,
-                        "tool":      tool_name,
-                        "findings":  len(scan_result.findings),
-                        "max_sev":   str(max(
-                            (f.severity for f in scan_result.findings),
-                            default="unknown",
-                        )),
-                    },
+            if self._scan_mcp_metadata_enabled and self._mcp_metadata_scanners:
+                blocked, findings = await self._scan_mcp_metadata(
+                    mcp_tool, tool_name
                 )
-                continue
-
-            if scan_result.findings:
-                # Low-severity findings — register tool but warn
-                log.warning(
-                    "mcp tool metadata flagged (below block threshold)",
-                    extra={
-                        "source":   self.name,
-                        "tool":     tool_name,
-                        "findings": len(scan_result.findings),
-                    },
-                )
+                if blocked:
+                    blocked_count += 1
+                    continue
+                if findings:
+                    log.warning(
+                        "mcp tool metadata flagged (below block threshold)",
+                        extra={"source": self.name, "tool": tool_name,
+                               "findings": len(findings)},
+                    )
 
             description = mcp_tool.get("description") or None
             # Merge source-level tags with per-tool tags from connector manifest
