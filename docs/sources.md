@@ -109,7 +109,7 @@ sources:
 
 ---
 
-## MCPSource (`transport: mcp`)
+## MCPSource — SHAI Gateway (`transport: mcp`)
 
 Connects to an MCP server over SSE (Server-Sent Events), runs the JSON-RPC initialize handshake, and fetches the tool catalog with `tools/list`. Returned tools are stamped `transport=Transport.MCP`.
 

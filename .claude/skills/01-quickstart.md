@@ -10,7 +10,7 @@ SHAI sits between your agent and its tools. It:
 - Emits one structured audit event per boundary call, always
 
 ```
-user text → scan_input → LLM → check_tool_call → tool → scan_tool_result → LLM → scan_output → response
+user text → Ingress Scan → LLM → Tool Governance → tool → Tool Stream Control → LLM → Egress Scan → response
 ```
 
 SHAI does **not** own the LLM loop. The agent decides when to call the LLM

@@ -52,7 +52,7 @@ scan_file:
 
 ---
 
-## scan_mcp_metadata
+## MCP Governance (`scan_mcp_metadata`)
 
 Scans tool names, descriptions, and argument schemas received from MCP
 servers before the tools are registered with SHAI.
@@ -74,7 +74,7 @@ no benign interpretation.
 When `enabled: false`, tools are registered without metadata scanning.
 The `mcp_metadata_scan` scanner uses `mcp_metadata_patterns.yaml`.
 
-## check_tool_call
+## Tool Governance (`check_tool_call`)
 
 ```yaml
 check_tool_call:

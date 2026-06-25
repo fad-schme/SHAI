@@ -1,4 +1,4 @@
-# Agents
+# Capabilities — Agents and Subagents
 
 An agent is a named identity with a declared capability set. Every boundary call carries an `AgentContext` that identifies which agent (and optionally which subagent) is making the call.
 

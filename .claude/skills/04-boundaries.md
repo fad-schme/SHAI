@@ -5,7 +5,7 @@ SHAI enforces security at four boundaries. Every call emits exactly one
 
 ---
 
-## scan_input
+## Ingress Scan (`scan_input`)
 
 ```python
 verdict = await harness.scan_input(user_text, ctx)
@@ -23,7 +23,34 @@ safe_text = verdict.redacted_text or user_text
 
 ---
 
-## check_tool_call
+## Named scanner methods
+
+Each scanner is also callable individually through the facade:
+
+```python
+from harness import SHAI, RegexPIIScanner, InjectionScanner, MCPMetadataScanner
+
+# Run only PII detection — no injection scan overhead
+verdict = await harness.scan_pii(text, ctx)
+
+# Run only injection detection — targeted surface scanning
+verdict = await harness.scan_injection(text, ctx)
+
+# Inspect active scanners
+print(harness.scanners)
+# {
+#   'regex_pii':          RegexPIIScanner,
+#   'injection_scan':     InjectionScanner,
+#   'injection_scan_doc': InjectionScanner(patterns_for_doc),
+#   'file_scanner':       FileScanner,
+#   'rate_limiter':       RateLimiter,
+# }
+```
+
+`scan_input` still runs all configured scanners together — the named methods
+are for cases where you need a single scanner on a specific surface.
+
+## Tool Governance (`check_tool_call`)
 
 ```python
 gate = await harness.check_tool_call(tool_name, tool_args, ctx)
@@ -59,7 +86,7 @@ gate.dispatch_token  # str | None — pass to source.call()
 
 ---
 
-## scan_tool_result
+## Tool Stream Control (`scan_tool_result`)
 
 ```python
 # Basic — always scans
@@ -87,7 +114,7 @@ This is the safe default — backward compatible.
 
 ---
 
-## scan_output
+## Egress Scan (`scan_output`)
 
 ```python
 out_verdict = await harness.scan_output(llm_response, ctx)
@@ -104,7 +131,7 @@ return out_verdict.redacted_text or llm_response
 
 ---
 
-## scan_file
+## Ingress Scan — File (`scan_file`)
 
 ```python
 verdict = await harness.scan_file("/tmp/upload.pdf", ctx)
@@ -131,6 +158,25 @@ if verdict.blocked:
 - `tenant_id` comes from config, never from the caller.
 
 ---
+
+## Scanner catalog
+
+| Class | Import | Catalog | Used in |
+|---|---|---|---|
+| `RegexPIIScanner` | `harness.adapters.scanners.regex_pii` | Built-in patterns | `scan_input`, `scan_output`, arg scanning |
+| `InjectionScanner` | `harness.adapters.scanners.injection_scan` | `injection_patterns.yaml` | `scan_input` |
+| `InjectionScanner` (doc) | same class, different catalog | `patterns_for_doc.yaml` | `scan_tool_result`, `FileScanner` content pass |
+| `FileScanner` | `harness.adapters.scanners.file_scanner` | structural + doc patterns | `scan_file` |
+| `MCPMetadataScanner` | `harness.adapters.scanners.mcp_metadata_scanner` | `mcp_metadata_patterns.yaml` | MCP `tools/list` registration |
+| `RateLimiter` | `harness.adapters.scanners.rate_limiter` | — (config-driven) | `check_tool_call` pre-gate |
+
+**`injection_patterns.yaml` vs `patterns_for_doc.yaml`:**
+- `injection_patterns.yaml` — tuned for user text input. More sensitive, 17 rules.
+  Used by `InjectionScanner` at `scan_input`.
+- `patterns_for_doc.yaml` — tuned for document/structured content. Lower false-positive
+  rate for code, PDF text, spreadsheet data. Used by `scan_tool_result` and `FileScanner`.
+- `mcp_metadata_patterns.yaml` — tuned for MCP tool metadata. Most sensitive — almost
+  nothing legitimate looks like an injection in a tool description.
 
 ## collect_events() — capture events in-process
 

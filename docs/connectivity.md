@@ -1,4 +1,4 @@
-# SHAI Connectivity Layer
+# SHAI Gateway — Connectivity Layer
 
 ## The gap SHAI closes today — and the gap it does not
 

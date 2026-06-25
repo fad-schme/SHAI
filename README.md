@@ -4,25 +4,7 @@
 
 Your agent calls tools. Some send emails, write files, query databases, and talk to external APIs. The LLM decides which to call and what arguments to pass. You do not get to review that decision before it executes.
 
-SHAI sits between your agent and its tools. Every tool call passes through a policy gate. Every piece of text the LLM touches is scanned. Every decision is logged. You stay in control.
-
----
-
-## What it does
-
-```
-user text ──► scan_input ──► LLM ──► check_tool_call ──► tool ──► scan_tool_result ──► LLM ──► scan_output ──► response
-```
-
-**`scan_input`** — Inspect user text before it reaches the LLM. Detect PII and prompt injection. Block or redact.
-
-**`check_tool_call`** — Gate every tool call through a four-layer policy engine. Hard pre-policy gate, subagent capability gate, policy intersection, optional arg scanning. Cannot be disabled.
-
-**`scan_tool_result`** — Scan tool return values before they re-enter the LLM context. Detects indirect prompt injection embedded in documents, search results, or API responses.
-
-**`scan_output`** — Inspect the LLM response before it reaches the user. Catch data egress or PII leakage.
-
-One structured audit event per boundary call, every time, regardless of outcome.
+SHAI sits between your agent and its tools. Every piece of text the LLM touches is scanned. Every tool call passes through a governance gate. Every decision is logged. You stay in control.
 
 ---
 
@@ -33,6 +15,298 @@ pip install shai
 ```
 
 Requires Python 3.11+.
+
+---
+
+## Security Core
+
+```
+user text ──► Ingress Scan ──► LLM ──► Tool Governance ──► tool ──► Tool Stream Control ──► LLM ──► Egress Scan ──► response
+                                                                ▲
+                                              MCP Governance runs at connection time
+```
+
+### Ingress Scan
+
+Runs on every user message before it reaches the LLM. Configurable scanners, all combinable:
+
+| Scanner | What it catches | Config name |
+|---|---|---|
+| `InjectionScanner` | Direct prompt injection, jailbreak attempts, role override, encoded payloads | `injection_scan` |
+| `RegexPIIScanner` | SSN, credit card, email, phone, IBAN, API keys (Stripe, GitHub, AWS, Slack), UUIDs | `regex_pii` |
+| `FileScanner` | MIME type, extension, size, PDF JS, EXIF, ZIP macros — then doc-tuned injection scan on extracted text | `file_scanner` |
+
+Actions per scanner: `block` · `alert` · `redact` (with configurable `redact_with` placeholder). `block_at` severity threshold per boundary.
+
+```yaml
+scan_input:
+  enabled: true
+  block_at: high
+  action: block
+  scanners:
+    - name: injection_scan
+      action: block
+    - name: regex_pii
+      action: redact
+      redact_with: "[REDACTED]"
+
+scan_file:
+  enabled: true
+  block_at: high
+  max_size_mb: 50
+```
+
+---
+
+### Tool Governance
+
+Four-layer gate on every tool call. First denial at any layer wins. Cannot be disabled.
+
+| Layer | What it enforces | Bypassable? |
+|---|---|---|
+| **L0 — Rate Limiter** | Sliding-window token bucket: global budget + per-tool budget per agent | No |
+| **L1 — Name Gate** | Tool must be in `allowed_tool_names` — hard pre-policy gate | No |
+| **L2 — Tag Scope** | Tool tags must be ⊆ `allowed_tags` — subagent capability enforcement | No |
+| **L3 — Policy Engine** | YAML rule intersection: subagent → parent → global. Actions: allow · deny · redact args | By design |
+| **L4 — Arg Scanning** | PII scanner on tool arguments for tools tagged `sensitive` | Configurable |
+
+One `GateDecision` returned: `allowed`, `deny_reason`, `redacted_args`, `source_name`, `dispatch_token`.
+
+```yaml
+check_tool_call:
+  rate_limit:
+    enabled: true
+    window_seconds: 60
+    max_calls_per_window: 60
+    max_calls_per_tool: 20
+  arg_scanners:
+    - name: regex_pii
+  scan_args_for_tags: [sensitive]
+
+policy:
+  rules:
+    - id: allow_local
+      match:
+        transport: [local, skill]
+      action: allow
+    - id: deny_mcp_default
+      match:
+        transport: [mcp]
+      action: deny
+      reason: "MCP requires explicit agent-level allow"
+```
+
+---
+
+### Tool Stream Control
+
+Runs on every tool result before it re-enters the LLM context. Prevents T6 indirect injection:
+
+| Scanner | What it catches | Config name |
+|---|---|---|
+| `InjectionScanner` (doc-tuned) | Injection payloads embedded in API responses, database rows, document content | `injection_scan_doc` |
+
+Connector manifests declare `scan_tool_result_on` — only tools with T6 risk are scanned when using connectors. Pass `tool_name=` to activate this optimisation.
+
+```yaml
+scan_tool_result:
+  enabled: true
+  block_at: high
+  action: block
+```
+
+---
+
+### Egress Scan
+
+Runs on every LLM response before it reaches the user:
+
+| Scanner | What it catches | Config name |
+|---|---|---|
+| `RegexPIIScanner` | PII leakage in responses, data exfiltration via output | `regex_pii` |
+
+```yaml
+scan_output:
+  enabled: true
+  block_at: high
+  action: block
+  scanners:
+    - name: regex_pii
+      action: redact
+      redact_with: "[REDACTED:{category}]"
+```
+
+---
+
+### MCP Governance
+
+Runs at MCP source connection time — before any tool is registered with SHAI:
+
+| Scanner | What it catches | Config name |
+|---|---|---|
+| `MCPMetadataScanner` | Injection payloads in tool names, descriptions, and argument schemas from `tools/list` | `mcp_metadata_scan` |
+
+`block_at` defaults to `medium` — metadata injection is high signal, almost no legitimate content triggers it.
+
+```yaml
+scan_mcp_metadata:
+  enabled: true
+  block_at: medium
+  action: block
+  scanners:
+    - name: mcp_metadata_scan
+```
+
+---
+
+## SHAI Gateway
+
+### Connector Manifests
+
+8 Tier A cloud connectors ship pre-configured with `url`, `allowed_urls`, `allowed_methods`, per-tool tags, blocked external-write tools, and `scan_tool_result_on` declarations. One line replaces ~15 lines of manual config:
+
+```yaml
+# Instead of hand-configuring every field:
+sources:
+  - name: slack
+    connector: slack
+    credentials:
+      token: "secret://SLACK_BOT_TOKEN"
+
+  - name: github
+    connector: github
+    credentials:
+      token: "secret://GITHUB_TOKEN"
+```
+
+Available: `slack` · `github` · `notion` · `jira` · `gmail` · `postgresql` · `stripe` · `google_drive`
+
+Each connector manifest enforces: write tools blocked by default, read tool results scanned for injection, correct tag assignments for policy rules to fire correctly.
+
+---
+
+### Dispatch Tokens
+
+HMAC-signed, source-bound, one-time-use, short-TTL (default 15s). Issued by Tool Governance on every allowed gate decision when `connectivity.enabled: true`. Carry `agent_id`, `tool_name`, `source_name`, `allowed_urls`, `allowed_methods`.
+
+```yaml
+connectivity:
+  enabled: true
+  token_secret: "secret://SHAI_TOKEN_SECRET"
+  token_ttl_seconds: 15
+  no_token_policy: permissive
+```
+
+---
+
+### ShaiTransport
+
+In-process `httpx` transport hook installed on every `MCPSource`. Enforces per request:
+
+1. URL envelope — destination must match `allowed_urls`
+2. Method — must match `allowed_methods`
+3. Token signature — HMAC-SHA256 verified
+4. Source binding — `token.source_name` must match the transport's source
+5. URL binding — request URL must match `token.allowed_urls`
+6. Method binding — request method must match `token.allowed_methods`
+7. Nonce — `token_id` consumed as one-time use, replay prevented
+
+Emits `NetworkAuditEvent` per call. `token_id` joins with the gate `AuditEvent` for full SIEM correlation.
+
+---
+
+## Observability
+
+### Audit Trail
+
+One structured event per boundary call, always. No raw text ever — no user input, LLM output, tool arguments, or matched substrings in any field.
+
+```json
+{
+  "boundary":    "tool_call_gate",
+  "decision":    "deny",
+  "tool_name":   "send_email",
+  "deny_reason": "external writes require approval",
+  "agent_id":    "orchestrator",
+  "tenant_id":   "platform-prod",
+  "duration_ms": 1,
+  "audit_tags":  {"team": "platform", "env": "prod"}
+}
+```
+
+Optional HMAC-SHA256 signing per event:
+
+```yaml
+audit_signing:
+  enabled: true
+  secret: "secret://AUDIT_SIGNING_KEY"
+
+audit_sinks:
+  - name: file
+    config:
+      path: ./logs/audit.jsonl
+```
+
+`collect_events()` for in-process collection without affecting sinks:
+
+```python
+with harness.collect_events() as events:
+    gate    = await harness.check_tool_call(name, args, ctx)
+    verdict = await harness.scan_tool_result(result, ctx, tool_name=name)
+# events: list[AuditEvent], populated after the block
+```
+
+---
+
+## Capabilities
+
+### Subagent Scoping
+
+Declare subagents inside the parent YAML. Capabilities are always a strict subset of the parent — enforced at `load_agent()` time, not per turn:
+
+```yaml
+# config/agents/orchestrator.yaml
+id: orchestrator
+allowed_tool_names: [search_docs, send_email, list_inbox]
+allowed_tags: [read, internal, external_write]
+
+sub_agents:
+  - id: research_sub
+    allowed_tool_names: [search_docs]     # ⊆ parent
+    allowed_tags: [read, internal]        # ⊆ parent — no external_write
+```
+
+```python
+ctx       = await harness.load_agent("config/agents/orchestrator.yaml")
+child_ctx = harness.scope_context_for_subagent(ctx, "research_sub")
+# send_email → denied at L1 — not in research_sub.allowed_tool_names
+```
+
+### Framework Integrations
+
+Single `@shai_tool` decorator — define once, works across all frameworks:
+
+```python
+from harness.integrations.langchain import shai_tool
+
+@shai_tool(tags=["read", "internal"])
+def search_docs(query: str) -> str: ...
+
+@shai_tool(tags=["external_write", "sensitive"])
+async def send_email(to: str, subject: str, body: str) -> str: ...
+
+tools = [search_docs, send_email]
+```
+
+| Framework | Integration | How |
+|---|---|---|
+| LangGraph | `HarnessToolNode` | Drop-in for `ToolNode` |
+| LangChain Agent Loop | `ShaiMiddleware` | `create_agent(middleware=[middleware])` |
+| LangChain classic | `wrap_tools()` | Returns gated `BaseTool` wrappers |
+| Anthropic SDK | `gated_dispatch` | Manual loop with gate + dispatch |
+| CrewAI | `wrap_tools()` | Same pattern as LangChain |
+| PydanticAI | `harness_tool` + `add_harness_middleware` | Decorator + middleware |
+| OpenAI Agents | `make_before_tool_hook` | Hook-based integration |
 
 ---
 
@@ -48,8 +322,20 @@ scan_input:
   enabled: true
   block_at: high
   scanners:
-    - name: regex_pii
     - name: injection_scan
+    - name: regex_pii
+      action: redact
+      redact_with: "***"
+
+scan_tool_result:
+  enabled: true
+  block_at: high
+
+scan_mcp_metadata:
+  enabled: true
+  block_at: medium
+  scanners:
+    - name: mcp_metadata_scan
 
 scan_output:
   enabled: true
@@ -57,47 +343,42 @@ scan_output:
   scanners:
     - name: regex_pii
 
-# Inline policy rules — no external file needed
 policy:
   rules:
-    - id: allow_read_tools
+    - id: allow_local
       match:
-        tool_tags: [read]
+        transport: [local, skill]
       action: allow
-    - id: deny_external_write
+    - id: deny_mcp_default
       match:
-        tool_tags: [external_write]
+        transport: [mcp]
       action: deny
-      reason: "external_write requires explicit approval"
 
 audit_sinks:
-  - name: stdout
+  - name: file
+    config:
+      path: ./logs/audit.jsonl
 ```
 
 **`config/agents/my_agent.yaml`:**
 
 ```yaml
 id: my_agent
-allowed_tool_names:
-  - search_docs
-  - send_email
-allowed_tags:
-  - read
-  - internal
-  - external_write
+allowed_tool_names: [search_docs, send_email]
+allowed_tags: [read, internal, external_write]
 policy_rules:
-  - id: deny_external_write_default
+  - id: deny_write
     match:
       tool_tags: [external_write]
     action: deny
-    reason: "external_write requires explicit permission"
-  - id: allow_email
+    reason: "external writes require approval"
+  - id: allow_read
     match:
-      tool_names: [send_email]
+      tool_tags: [read]
     action: allow
 ```
 
-**Agent loop:**
+**Agent code:**
 
 ```python
 import asyncio
@@ -108,490 +389,68 @@ async def main():
     harness = await SHAI.from_yaml("config/harness.yaml")
 
     await harness.register_tools([
-        Tool(name="search_docs", tags=["read", "internal"],   transport=Transport.LOCAL),
-        Tool(name="send_email",  tags=["external_write"],     transport=Transport.LOCAL),
+        Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),
+        Tool(name="send_email",  tags=["external_write"],   transport=Transport.LOCAL),
     ])
-
     ctx = await harness.load_agent("config/agents/my_agent.yaml")
 
-    # Per-turn
+    # Ingress Scan
     verdict = await harness.scan_input(user_text, ctx)
     if verdict.blocked:
         return "Input rejected"
 
-    # ... LLM call ...
-
+    # Tool Governance
     gate = await harness.check_tool_call("search_docs", {"query": "report"}, ctx)
-    if gate.allowed:
-        result = await dispatch("search_docs", gate.redacted_args or {"query": "report"})
-        tverdict = await harness.scan_tool_result(result, ctx)
-        safe_result = tverdict.redacted_text or result
+    if not gate.allowed:
+        return gate.deny_reason
 
-    out_verdict = await harness.scan_output(llm_response, ctx)
-    return out_verdict.redacted_text or llm_response
+    # Dispatch — your code
+    result = await dispatch("search_docs", gate.redacted_args or {"query": "report"})
+
+    # Tool Stream Control
+    tv = await harness.scan_tool_result(result, ctx, tool_name="search_docs")
+    safe_result = tv.redacted_text or result
+
+    # Egress Scan
+    out = await harness.scan_output(llm_response, ctx)
+    return out.redacted_text or llm_response
 
 asyncio.run(main())
 ```
 
 ---
 
-## The four-layer gate
+## OWASP Agentic AI Coverage
 
-`check_tool_call` runs four layers in order. First deny anywhere wins.
-
-| Layer | Check | Bypassable? |
+| OWASP Threat | Coverage | SHAI Control |
 |---|---|---|
-| Pre-gate | Agent registered? | No |
-| L1 | `tool_name` in `allowed_tool_names`? | No — hard pre-policy gate |
-| L2 | `tool.tags ⊆ ctx.allowed_tags`? | No — subagent capability gate |
-| L3 | Intersection policy (subagent → parent → global rules) | By design |
-| L4 | Arg scanning for `sensitive`-tagged tools | Configurable |
+| **T1** Goal/Instruction Hijacking | Full | Ingress Scan `injection_scan`, L1 name gate, MCP Governance `mcp_metadata_scan` |
+| **T2** Tool Misuse | Full | Tool Governance L1–L4, rate limiter |
+| **T3** Uncontrolled Agent Actions | Full | Tool Governance L1–L3, subagent scoping, source suppression |
+| **T4** Resource Overload | Full | Rate Limiter — global + per-tool sliding window |
+| **T5** Prompt Injection (direct) | Full | Ingress Scan `injection_scan` — 17-rule catalog |
+| **T6** Indirect Prompt Injection | Full | Tool Stream Control `injection_scan_doc`, MCP Governance `mcp_metadata_scan` |
+| **T8** Repudiation & Untraceability | Full | HMAC-signed audit trail, one event per boundary |
+| **T9** Privilege Escalation | Full | Subagent capability gate (L2), policy intersection (L3) |
+| **T11** Sensitive Data Exposure | Full | Ingress/Egress Scan `regex_pii`, arg scanning (L4) |
+| **T16** Data Exfiltration | Partial | Egress Scan `regex_pii`, ShaiTransport for MCP egress |
+| **T17** Supply Chain | Full | MCP Governance `mcp_metadata_scan`, FileScanner, source suppression, secret resolution |
 
-L1 fires before policy. A tool not in `allowed_tool_names` cannot be called regardless of what the LLM requests or what policy rules say.
-
----
-
-## Security coverage — OWASP Agentic AI Threats
-
-SHAI addresses the [OWASP Agentic AI Threats and Mitigations](https://genai.owasp.org) threat model. The table below maps each implemented control to the threats it mitigates.
-
-| Control | Where | OWASP Threats mitigated |
-|---|---|---|
-| `check_tool_call` L1 — `allowed_tool_names` hard gate | `boundaries/check_tool_call.py` | **T1** Agent Goal/Instruction Hijacking, **T2** Tool Misuse |
-| `check_tool_call` L2 — subagent `allowed_tags` gate | `boundaries/check_tool_call.py` | **T2** Tool Misuse, **T3** Uncontrolled Agent Actions |
-| `check_tool_call` L3 — intersection policy | `policy/rules.py` | **T2** Tool Misuse, **T3** Uncontrolled Agent Actions, **T9** Privilege Escalation |
-| `scan_input` — InjectionScanner | `adapters/scanners/injection_scan.py` | **T5** Prompt Injection, **T1** Goal Hijacking |
-| `scan_input` — RegexPIIScanner | `adapters/scanners/regex_pii.py` | **T11** Sensitive Data Exposure |
-| `scan_tool_result` — patterns_for_doc | `boundaries/_scan.py` | **T6** Indirect Prompt Injection |
-| `scan_output` — RegexPIIScanner | `adapters/scanners/regex_pii.py` | **T11** Sensitive Data Exposure, **T16** Data Exfiltration |
-| Rate limiter (R1) | `adapters/scanners/rate_limiter.py` | **T4** Resource Overload, **T2** Tool Misuse (flooding) |
-| Arg scanning (L4) | `boundaries/check_tool_call.py` | **T11** Sensitive Data Exposure, **T2** Tool Misuse |
-| `MCPMetadataScanner` — tool description scan | `adapters/scanners/mcp_metadata_scanner.py` | **T1** Goal Hijacking, **T6** Indirect Injection, **T17** Supply Chain |
-| `FileScanner` — structural checks | `adapters/scanners/file_scanner.py` | **T3** Uncontrolled Agent Actions, **T17** Supply Chain |
-| Audit event signing (R3) | `audit/emitter.py` | **T8** Repudiation and Untraceability |
-| Tamper-evident audit trail | `audit/emitter.py`, `core/events.py` | **T8** Repudiation and Untraceability |
-| Subagent capability scoping | `agents/agent_config.py`, `core/context.py` | **T9** Privilege Escalation, **T3** Uncontrolled Actions |
-| `SourceRegistry` policy suppression | `tools/source.py` | **T3** Uncontrolled Agent Actions, **T17** Supply Chain |
-| Secret resolution via `EnvVarProvider` | `adapters/secrets/env.py` | **T17** Supply Chain (credential exposure) |
-
-### Threat coverage summary
-
-| OWASP Threat | Coverage | Controls |
-|---|---|---|
-| **T1** Agent Goal/Instruction Hijacking | Full | InjectionScanner on input, `allowed_tool_names` hard gate, `MCPMetadataScanner` at tool registration |
-| **T2** Tool Misuse | Full | L1 hard gate, L2 tag gate, L3 policy, rate limiter, arg scanning |
-| **T3** Uncontrolled Agent Actions | Full | L1–L3 gates, subagent scoping, source suppression |
-| **T4** Resource Overload | Full | Rate limiter (global + per-tool sliding window) |
-| **T5** Prompt Injection (direct) | Full | InjectionScanner — 17-rule YAML catalog |
-| **T6** Indirect Prompt Injection | Full | `scan_tool_result` with `patterns_for_doc.yaml` |
-| **T8** Repudiation & Untraceability | Full | HMAC-signed audit events, one event per boundary call |
-| **T9** Privilege Escalation | Full | Subagent capability gate, policy intersection model |
-| **T11** Sensitive Data Exposure | Full | RegexPII on input + output, arg scanning for `sensitive` tools |
-| **T16** Data Exfiltration | Partial | RegexPII on output; network-layer enforcement is planned |
-| **T17** Supply Chain | Full | FileScanner structural checks, `MCPMetadataScanner` at registration, source suppression, secret resolution |
-
-*T16 partial coverage: `RegexPII` on output catches data in responses; network-layer enforcement via `ShaiTransport` covers MCP egress. Full T16 closure requires `shai-gateway` for non-MCP traffic (planned).*
+*T16 partial: full closure requires `shai-gateway` for non-MCP traffic (planned).*
 
 ---
 
-## Scanners
+## Enterprise (planned)
 
-### `regex_pii` — RegexPIIScanner
+**`shai-gateway`** — external HTTPS proxy for non-MCP traffic. L7 policy rules per source/agent. Closes T16 fully.
 
-Detects personally identifiable information using compiled regex patterns. All patterns run concurrently. Matched text is redacted in-place — `Finding.detail` contains only the category name, never the matched value.
+**`shai-inference-router`** — LLM credential isolation, model allowlist per agent, per-agent inference rate limits.
 
-| Category | Severity | Pattern |
-|---|---|---|
-| `pii.email` | medium | RFC 5321 local-part + domain |
-| `pii.phone` | medium | US/international formats, separators normalised |
-| `pii.ssn` | high | `NNN-NN-NNNN` with separator variants |
-| `pii.credit_card` | high | 13–16 digit sequences passing Luhn check |
+**`shai-local-connectors`** — managed local MCP processes: Apple Notes, Obsidian, SQLite, filesystem. `allowed_paths` enforcement at I/O level.
 
-**Configuration:**
+**Tier B/C Connectors** — Teams, GitLab, Linear, Confluence, Supabase, AWS, Cloudflare, WhatsApp, Google Calendar, Docker, Zapier, Brave Search.
 
-```yaml
-scanners:
-  - name: regex_pii
-    # optionally scope to specific categories:
-    # config:
-    #   categories: ["pii.email", "pii.ssn"]
-```
-
-**Performance:** < 0.5 ms per call on typical inputs (500 characters).
-
----
-
-### `injection_scan` — InjectionScanner
-
-YAML-rule scanner for prompt injection and jailbreak patterns. Loads a compiled pattern catalog at construction time. Each rule has a severity and category. Findings never contain the matched text.
-
-Default catalog (`injection_patterns.yaml`) — 17 rules:
-
-| Rule | Category | Severity |
-|---|---|---|
-| `jailbreak_prompt` | prompt_injection | high |
-| `code_injection` | code_injection | high |
-| `context_switching` | prompt_injection | high |
-| `data_exfiltration` | data_exfiltration | high |
-| `encoded_payloads` | prompt_injection | high |
-| `homoglyph_obfuscation` | prompt_injection | medium |
-| `prompt_reset` | prompt_injection | high |
-| `role_impersonation` | prompt_injection | high |
-| `config_leakage` | configuration_exposure | high |
-| `rule_override` | prompt_injection | high |
-| `alignment_breaking` | alignment_evasion | high |
-| `policy_evasion` | prompt_injection | medium |
-| `debug_mode_spoofing` | system_spoofing | high |
-| `escalation_phrases` | privilege_escalation | medium |
-| `hidden_instruction_probe` | configuration_exposure | high |
-| `tool_coercion` | tool_injection | high |
-| `delimiter_smuggling` | obfuscation | high |
-
-Document catalog (`patterns_for_doc.yaml`) — used by `scan_tool_result`. 9 rules tuned for content embedded in documents and search results, where false positives must be lower.
-
-**Custom patterns:**
-
-```yaml
-scanners:
-  - name: injection_scan
-    config:
-      patterns_file: "./config/custom_patterns.yaml"
-```
-
-**Performance:** < 2 ms per call on typical inputs. Pattern compilation is at startup, not per call.
-
----
-
-### `file_scanner` — FileScanner
-
-Structural scanner for uploaded files. Always included in the `scan_file` boundary — no explicit configuration needed.
-
-| Check | What it detects |
-|---|---|
-| Size gate | Rejects files exceeding `max_size_mb` before any parsing |
-| MIME type | Detects mismatch between declared extension and actual magic bytes |
-| PDF JavaScript | Embedded JS execution triggers in PDFs |
-| EXIF metadata | Sensitive fields in image metadata |
-| ZIP/Office macros | Macro-enabled Office documents, nested ZIPs |
-| Content text | Runs InjectionScanner on extracted text content |
-
-**Performance:** < 5 ms for typical documents (< 1 MB). Large files are gated by the size check before any content parsing.
-
----
-
-### Rate limiter
-
-Sliding-window token bucket in `check_tool_call`. Two independent counters per `agent_id`:
-
-- **Global budget:** max calls across all tools per window
-- **Per-tool budget:** max calls to one tool per window
-
-Both must pass. Counters use `collections.deque` with O(1) amortised pruning. Thread-safe.
-
-```yaml
-check_tool_call:
-  rate_limit:
-    enabled: true
-    window_seconds: 60
-    max_calls_per_window: 60
-    max_calls_per_tool: 20
-```
-
-**Performance:** < 0.1 ms per call.
-
----
-
-## Performance budget
-
-All figures are soft targets on a single core with no network I/O (boundaries disabled, policy in-memory, stdout sink).
-
-| Operation | Target | Measured |
-|---|---|---|
-| `scan_input` (disabled) | < 1 ms | ~0.1 ms |
-| `scan_output` (disabled) | < 1 ms | ~0.1 ms |
-| `check_tool_call` (allow) | < 2 ms | ~0.5 ms |
-| Full turn (all disabled) | < 5 ms | ~1 ms |
-| `regex_pii` on 500-char input | < 5 ms | ~0.3 ms |
-| 50 concurrent turns | < 2 s total | ~100 ms |
-
-When enabled, scanner overhead depends on input length. The regex PII scanner adds ~0.3 ms per 500 characters. The injection scanner adds ~1–2 ms per call (pattern matching is CPU-bound, not I/O-bound).
-
-Run `pytest tests/perf/ -v -s` to measure on your hardware.
-
----
-
-## Subagents
-
-Declare subagents inside the parent YAML. Subagent capabilities are always a strict subset of the parent.
-
-```yaml
-# config/agents/orchestrator.yaml
-id: orchestrator
-allowed_tool_names: [search_docs, send_email, list_inbox]
-allowed_tags: [read, internal, external_write]
-
-sub_agents:
-  - id: research_sub
-    allowed_tool_names: [search_docs]    # ⊆ parent
-    allowed_tags: [read, internal]       # ⊆ parent — no external_write
-    policy_rules:
-      - id: deny_write
-        match:
-          tool_tags: [external_write]
-        action: deny
-        reason: "research_sub is read-only"
-```
-
-```python
-ctx       = await harness.load_agent("config/agents/orchestrator.yaml")
-child_ctx = harness.scope_context_for_subagent(ctx, "research_sub")
-# child_ctx.allowed_tags == ["read", "internal"]
-# send_email → denied at L1 (not in research_sub.allowed_tool_names)
-```
-
----
-
-## Tool sources
-
-Sources declare where tools come from. They are activated at `load_agent()` time — not per turn.
-
-### Connector manifests (recommended)
-
-Use a pre-built connector manifest instead of hand-configuring sources:
-
-```yaml
-# harness.yaml
-sources:
-  - name: slack
-    connector: slack          # loads url, allowed_urls, tags, tool specs
-    credentials:
-      token: "secret://SLACK_BOT_TOKEN"
-
-  - name: github
-    connector: github
-    credentials:
-      token: "secret://GITHUB_TOKEN"
-```
-
-Available connectors (Tier A): `slack`, `github`, `notion`, `jira`, `gmail`, `postgresql`, `stripe`, `google_drive`.
-
-### Manual configuration
-
-```yaml
-# harness.yaml
-sources:
-  - name: docs_local
-    transport: local
-    tool_names: [search_docs, fetch_doc]   # subset; omit for all registered tools
-    tags: [internal]
-
-  - name: slack_mcp
-    transport: mcp
-    url: "https://mcp.slack.com/sse"
-    credentials:
-      token: "secret://SLACK_MCP_TOKEN"
-    tags: [external_mcp, messaging]
-```
-
-```yaml
-# agent YAML — declares which sources to activate
-sources:
-  - docs_local
-  - slack_mcp
-```
-
-For MCP tool invocation after gating:
-
-```python
-gate = await harness.check_tool_call(tool_name, args, ctx)
-if gate.allowed:
-    source = await harness.get_source("slack_mcp")
-    result = await source.call(tool_name, gate.redacted_args or args)
-```
-
----
-
-## Policy rules
-
-Rules evaluate in declaration order. First match wins.
-
-```yaml
-# config/policies/rules.yaml
-
-# Allow all local and skill tools by default
-- id: allow_local
-  match:
-    transport: [local, skill]
-  action: allow
-
-# Block all MCP tools unless the agent explicitly allows them
-- id: deny_mcp_default
-  match:
-    transport: [mcp]
-  action: deny
-  reason: "MCP requires explicit agent-level allow rule"
-
-# Redact sensitive args before dispatch
-- id: redact_pii_in_args
-  match:
-    tool_tags: [sensitive]
-  action: redact
-  redact:
-    phone_number: "[REDACTED]"
-    ssn: "[REDACTED]"
-
-# Suppress external MCP sources for untrusted agents
-- id: suppress_external_mcp
-  match:
-    source_tags: [external_mcp]
-    agent_ids: [untrusted_agent]
-  action: suppress
-  reason: "MCP not permitted for untrusted agents"
-```
-
-**Combinators:** `any` (OR), `all` (AND), `not` (NOT) for composite conditions.
-
----
-
-## Audit events
-
-Every boundary call emits exactly one structured event. No raw user text, LLM output, tool arguments, or scanner-matched substrings in any field.
-
-```json
-{
-  "timestamp": "2025-01-15T10:23:45.123456+00:00",
-  "boundary": "tool_call_gate",
-  "decision": "deny",
-  "duration_ms": 2,
-  "tenant_id": "platform-prod",
-  "agent_id": "orchestrator",
-  "sub_agent_id": "research_sub",
-  "tool_name": "send_email",
-  "transport": "local",
-  "adapters": ["rules"],
-  "deny_reason": "research_sub is read-only",
-  "audit_tags": {"team": "platform", "env": "prod"}
-}
-```
-
-Optional HMAC-SHA256 signing:
-
-```yaml
-audit_signing:
-  enabled: true
-  secret: "secret://AUDIT_SIGNING_KEY"
-```
-
-See [docs/audit-schema.md](docs/audit-schema.md) for the full field reference.
-
----
-
-## Framework integrations
-
-All framework SDKs are imported lazily — integration modules are importable without the framework installed.
-
-| Framework | Module | Integration |
-|---|---|---|
-| Anthropic SDK | `harness.integrations.anthropic_sdk` | `gated_dispatch`, `run_turn`, `make_tool_result_from_denial` |
-| LangGraph | `harness.integrations.langgraph` | `HarnessToolNode` — drop-in for `ToolNode` |
-| LangChain (classic) | `harness.integrations.langchain` | `wrap_tool`, `wrap_tools` |
-| LangChain Agent Loop | `harness.integrations.langchain` | `ShaiMiddleware` — passed to `create_agent(middleware=[...])`  |
-| CrewAI | `harness.integrations.crewai` | `wrap_tool`, `wrap_tools` |
-| PydanticAI | `harness.integrations.pydantic_ai` | `harness_tool` decorator, `add_harness_middleware` |
-| OpenAI Agents | `harness.integrations.openai_agents` | `make_before_tool_hook`, `wrap_tool` |
-
-```python
-# LangGraph — drop-in ToolNode replacement
-from harness.integrations.langgraph import HarnessToolNode
-tool_node = HarnessToolNode(tools=[search, send_email], harness=harness, ctx=ctx)
-
-# LangChain classic — wrap existing BaseTool
-from harness.integrations.langchain import wrap_tools
-gated = wrap_tools([search, send_email], harness=harness, ctx=ctx)
-
-# LangChain Agent Loop — pass as middleware to create_agent
-from harness.integrations.langchain import ShaiMiddleware
-from langchain.agents import create_agent
-middleware = await ShaiMiddleware.create(tools, harness=harness, ctx=ctx)
-agent = create_agent(llm, tools=tools, middleware=[middleware])
-
-# Anthropic SDK — gate then dispatch
-from harness.integrations.anthropic_sdk import gated_dispatch, make_tool_result_from_denial
-result = await gated_dispatch(name, args, ctx, harness=harness, dispatch=dispatcher)
-if isinstance(result, GateDecision):
-    messages.append({"role": "user", "content": [make_tool_result_from_denial(result, use_id)]})
-```
-
----
-
-## Adapters
-
-Everything is pluggable via Python entry points. Implement the protocol and register under the appropriate group.
-
-| Group | Reference adapters | Protocol |
-|---|---|---|
-| `harness.scanners` | `regex_pii`, `injection_scan` | `Scanner` |
-| `harness.policy` | `rules` | `PolicyEngine` |
-| `harness.audit_sinks` | `stdout`, `file` | `AuditSink` |
-| `harness.sources` | `local`, `skill`, `mcp` | `ToolSource` |
-| `harness.secrets` | `env` | `SecretsProvider` |
-
-```toml
-# your_package/pyproject.toml
-[project.entry-points."harness.scanners"]
-my_scanner = "my_package:MyScanner"
-```
-
-```yaml
-# harness.yaml
-scan_input:
-  scanners:
-    - name: my_scanner
-```
-
-See [docs/adapters.md](docs/adapters.md) for the full implementation guide and contract tests.
-
----
-
-## CLI
-
-```bash
-# Validate harness.yaml and all agent files
-shai validate --config config/harness.yaml --agents-dir config/agents/
-
-# List all declared agents
-shai agents list --agents-dir config/agents/
-
-# Tail the audit log (colour-coded by decision)
-shai audit tail --file logs/audit.jsonl --follow
-
-# Filter to denied tool calls
-shai audit tail --file logs/audit.jsonl --decision deny --boundary tool_call_gate
-```
-
----
-
-## Running tests
-
-```bash
-pip install -e ".[dev]"
-
-pytest                     # full suite
-pytest tests/unit/
-pytest tests/contracts/
-pytest tests/integration/
-pytest tests/security/
-pytest tests/perf/ -v -s   # prints timings
-```
-
----
-
-## Packages
-
-| Package | License | Description |
-|---|---|---|
-| `shai` | Apache-2.0 | Core SDK + reference adapters + CLI + httpx (MCP built in) |
-| `shai-gateway` | Apache-2.0 | Egress enforcement — ShaiTransport + gateway process (planned) |
+**Enterprise Providers** — HashiCorp Vault, AWS KMS, GCP Secret Manager.
 
 ---
 
@@ -599,14 +458,24 @@ pytest tests/perf/ -v -s   # prints timings
 
 | Doc | What it covers |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Component map, construction sequence, hot path, concurrency model |
-| [docs/boundaries.md](docs/boundaries.md) | Per-boundary contracts, gate layers, audit invariants |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Component map, construction sequence, concurrency model |
+| [docs/boundaries.md](docs/boundaries.md) | Boundary contracts, gate layers, audit invariants |
 | [docs/agents.md](docs/agents.md) | agent-xx.yaml schema, subagent model, registry lifecycle |
-| [docs/sources.md](docs/sources.md) | Source lifecycle, LocalSource, SkillSource, MCPSource |
+| [docs/sources.md](docs/sources.md) | Source lifecycle, LocalSource, SkillSource, MCPSource, connector manifests |
 | [docs/policy.md](docs/policy.md) | Rule grammar, intersection model, combinators |
-| [docs/audit-schema.md](docs/audit-schema.md) | AuditEvent field reference, SIEM query examples |
-| [docs/adapters.md](docs/adapters.md) | Writing and registering adapters, contract tests |
+| [docs/audit-schema.md](docs/audit-schema.md) | AuditEvent field reference, NetworkAuditEvent, SIEM queries |
+| [docs/connectivity.md](docs/connectivity.md) | Dispatch tokens, ShaiTransport, NetworkAuditEvent |
+| [docs/adapters.md](docs/adapters.md) | Writing and registering custom scanners, sinks, sources |
 | [docs/concurrency.md](docs/concurrency.md) | Threading model, concurrent turn isolation |
+
+---
+
+## Packages
+
+| Package | License | Description |
+|---|---|---|
+| `shai` | Apache-2.0 | Security Core + SHAI Gateway + Observability + Capabilities |
+| `shai-gateway` | Apache-2.0 | External egress enforcement — planned |
 
 ---
 

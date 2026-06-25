@@ -14,17 +14,23 @@ to call the LLM, when to dispatch tools, when to stop. SHAI governs the
 security boundaries around that loop.
 
 ```
-user text → scan_input → LLM → check_tool_call → tool → scan_tool_result → LLM → scan_output → response
+user text → Ingress Scan → LLM → Tool Governance → tool → Tool Stream Control → LLM → Egress Scan → response
+                                                        ▲
+                                      MCP Governance runs at connection time
 ```
+
+**Four pillars:** Security Core · SHAI Gateway · Observability · Capabilities
 
 **What SHAI is not:**
 - No LLM client. No agent loop. No memory primitives.
 - No tool execution — the harness gates; the agent dispatches.
-- No network-level enforcement — that is the planned `shai-connectivity` layer.
 
 ---
 
 ## 2. Public API
+
+*Boundary methods use the canonical names in code. The product terms map as: `scan_input` = Ingress Scan, `check_tool_call` = Tool Governance, `scan_tool_result` = Tool Stream Control, `scan_output` = Egress Scan, `scan_mcp_metadata` = MCP Governance.*
+
 
 ```python
 from harness import SHAI, Tool, AgentContext

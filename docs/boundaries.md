@@ -1,6 +1,6 @@
-# Boundaries
+# Boundary Reference
 
-Four boundaries surround every agent turn. Each emits exactly one `AuditEvent` per call regardless of outcome. No raw text in any event field.
+Four security boundaries surround every agent turn. Each emits exactly one `AuditEvent` per call regardless of outcome. No raw text in any event field.
 
 ```
 user text ──► scan_input ──► LLM ──► check_tool_call ──► tool ──► scan_tool_result ──► LLM ──► scan_output ──► response
@@ -8,7 +8,7 @@ user text ──► scan_input ──► LLM ──► check_tool_call ──►
 
 ---
 
-## scan_input
+## Ingress Scan — `scan_input`
 
 Inspects user text before it reaches the LLM. Detects PII, prompt injection, and custom patterns.
 
@@ -28,7 +28,7 @@ safe_text = verdict.redacted_text or user_text
 
 ---
 
-## check_tool_call
+## Tool Governance — `check_tool_call`
 
 The mandatory gate. Cannot be disabled. Four layers in strict order. First deny anywhere wins. Exactly one `AuditEvent` per call.
 
@@ -66,7 +66,7 @@ result = await dispatch(name, effective_args)
 
 ---
 
-## scan_tool_result
+## Tool Stream Control — `scan_tool_result`
 
 Scans tool return values before they re-enter the LLM context. Detects indirect prompt injection embedded in documents, search results, or API responses.
 
@@ -90,7 +90,7 @@ scan_tool_result:
 
 ---
 
-## scan_output
+## Egress Scan — `scan_output`
 
 Identical structure to `scan_input`. Inspects the LLM's final response before it reaches the user. Catches accidental PII egress or data leakage in the response.
 
@@ -114,7 +114,7 @@ These hold on every code path, including error and disabled paths:
 
 ---
 
-## scan_file
+## Ingress Scan — `scan_file`
 
 Inspects uploaded files. Structurally identical to `scan_input` — same pipeline, same audit invariants.
 
