@@ -35,6 +35,7 @@ from harness.tools.source import (
 )
 from harness.connectivity.config import ConnectivityConfig
 from harness.core.errors import NetworkPolicyError
+from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.integrations.base import ShaiTool, shai_tool
 from harness.connectivity.token import DispatchToken, TokenError
 from harness.tools.tool import Tool

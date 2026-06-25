@@ -547,3 +547,12 @@ No sources declared in fixtures — tests register tools directly via `register_
 ├── 2026-06-23-11-20-52-shai-harness-dev-session.txt
 └── journal.txt
 ```
+
+Live codebase — fully preserved. /home/claude/harness/ is the working directory on the server attached to this project. It persists between sessions within this project. All source files, tests, configs, and examples are there exactly as they stand now.
+Session history — the transcripts are at /mnt/transcripts/ and are readable from any new session in this project. There are currently five transcript files plus a journal.txt:
+2026-06-22-09-13-32-shai-harness-architecture-dev.txt
+2026-06-22-11-35-41-shai-harness-dev-session.txt
+2026-06-22-14-52-51-shai-harness-dev-session.txt
+2026-06-23-09-42-13-shai-harness-dev-session.txt
+2026-06-23-11-20-52-shai-harness-dev-session.txt
+journal.txt

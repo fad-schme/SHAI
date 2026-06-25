@@ -601,7 +601,12 @@ class MCPSource:
     # ── Tool catalog ──────────────────────────────────────────────────────
 
     async def _fetch_tools(self) -> list[Tool]:
-        """Fetch the tool list from the MCP server and convert to SHAI Tools."""
+        """Fetch the tool list from the MCP server and convert to SHAI Tools.
+
+        Each tool's metadata (name, description, argument descriptions) is
+        scanned by MCPMetadataScanner before registration. Tools with
+        injection payloads in their metadata are blocked and logged.
+        """
         request_id = str(uuid.uuid4())
         payload = {
             "jsonrpc": "2.0",
@@ -613,13 +618,52 @@ class MCPSource:
         self._check_jsonrpc_error(response, "tools/list")
 
         mcp_tools = response.get("result", {}).get("tools", [])
+
+        # Build metadata scanner once per fetch
+        from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
+        meta_scanner = MCPMetadataScanner()
+
         tools: list[Tool] = []
+        blocked_count = 0
+
         for mcp_tool in mcp_tools:
             tool_name = mcp_tool.get("name", "").strip()
             if not tool_name:
                 log.warning("mcp tool with empty name skipped",
                             extra={"source": self.name})
                 continue
+
+            # Scan metadata for injection payloads before registering
+            scan_result = await meta_scanner.scan_tool(
+                mcp_tool, source_name=self.name
+            )
+            if meta_scanner.should_block(scan_result):
+                blocked_count += 1
+                log.warning(
+                    "mcp tool blocked — injection payload in metadata",
+                    extra={
+                        "source":    self.name,
+                        "tool":      tool_name,
+                        "findings":  len(scan_result.findings),
+                        "max_sev":   str(max(
+                            (f.severity for f in scan_result.findings),
+                            default="unknown",
+                        )),
+                    },
+                )
+                continue
+
+            if scan_result.findings:
+                # Low-severity findings — register tool but warn
+                log.warning(
+                    "mcp tool metadata flagged (below block threshold)",
+                    extra={
+                        "source":   self.name,
+                        "tool":     tool_name,
+                        "findings": len(scan_result.findings),
+                    },
+                )
+
             description = mcp_tool.get("description") or None
             # Merge source-level tags with per-tool tags from connector manifest
             spec      = self._connector_tool_specs.get(tool_name, {})
@@ -633,7 +677,9 @@ class MCPSource:
             ))
 
         log.debug("mcp tools fetched",
-                  extra={"source": self.name, "count": len(tools)})
+                  extra={"source": self.name,
+                         "count": len(tools),
+                         "blocked": blocked_count})
         return tools
 
     # ── JSON-RPC helpers ──────────────────────────────────────────────────
