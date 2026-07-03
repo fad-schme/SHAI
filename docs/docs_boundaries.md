@@ -10,30 +10,14 @@ user text ──► scan_input ──► LLM ──► check_tool_call ──►
 
 ## Ingress Scan — `scan_input`
 
-Inspects user text before it reaches the LLM. Detects PII, prompt injection, jailbreak attempts, and agentic identity spoofing.
+Inspects user text before it reaches the LLM. Detects PII, prompt injection, and custom patterns.
 
 | Behaviour | Detail |
 |---|---|
 | Disabled | Emits `AuditEvent(disabled=True, decision=allow)`. Returns `ScanVerdict(blocked=False)`. |
-| Normalization | Before scanners run, text is canonicalized into views (surface form + decoded variants). Scanners match against all views. Configured under `normalization:`. |
-| Session pre-check | Before scanners run, the threat accumulator checks whether this session has a risk score ≥ `session.escalation_threshold`. If so, returns immediately with `BLOCK` or `WARN` per `on_escalation` — scanners never run. Audit event carries `extra.signals=["session_escalation"]`. |
 | Scanners | Run concurrently via `asyncio.gather`. Per-scanner exceptions are logged and treated as empty findings — pipeline never raises. |
 | Block threshold | `block_at` severity (default `high`). Any finding at or above blocks. |
 | Redaction | Last scanner's `redacted_text` wins. Use `verdict.redacted_text or original`. |
-| Session post-record | After verdict, the threat accumulator records the turn outcome (status + finding categories) for future cross-turn analysis. |
-
-**Recommended scanner stack:**
-
-```yaml
-scan_input:
-  enabled: true
-  block_at: high
-  scanners:
-    - name: injection_scan       # prompt injection, tool coercion, exfiltration
-    - name: jailbreak_scan       # guardrail-integrity: persona override, refusal suppression, etc.
-    - name: identity_spoof_scan  # agentic identity: claimed orchestrator/system authority
-    - name: regex_pii            # PII and credentials (with optional redaction)
-```
 
 ```python
 verdict = await harness.scan_input(user_text, ctx)
@@ -46,7 +30,39 @@ safe_text = verdict.redacted_text or user_text
 
 ## Tool Governance — `check_tool_call`
 
-The mandatory gate. Cannot be disabled. Four layers in strict order. First deny anywhere wins. Exactly one `AuditEvent` per call.
+The mandatory gate. Cannot be disabled. Two pre-gate checks run before the four layers. First deny anywhere wins. Exactly one `AuditEvent` per call.
+
+### R1 — Rate limiter
+
+Sliding-window token bucket, per agent and per tool. Configured under `check_tool_call.rate_limit` in `harness.yaml`.
+
+### R2 — Session execution budget
+
+`SessionBudget` enforces per-session limits before policy runs. All controls are opt-in — nothing fires when limits are unset. Keyed by `(agent_id, session_id)`.
+
+| Control | Config key | Behaviour |
+|---|---|---|
+| Step counter | `max_steps` | Blocks when total tool invocations in the session reaches the limit |
+| Token burn-down | `max_tokens_per_session` | Tracks cumulative tokens; `tool_cost_weights` multiplies cost per named tool |
+| Per-prompt fan-out | `max_tool_calls_per_prompt` | Resets when `prompt_id` changes; skipped when `prompt_id` is `None` |
+| Loop detection | `loop_detection_window` / `loop_similarity_threshold` | Jaccard similarity check against a rolling fingerprint window; `window=0` disables |
+
+Configured globally in `harness.yaml` under `check_tool_call.execution_budget:`. Per-agent overrides live in `agent-xx.yaml` under `limits:` and are merged on top of global defaults at `load_agent()` time.
+
+```yaml
+check_tool_call:
+  execution_budget:
+    max_steps: 30
+    max_tokens_per_session: 50000
+    max_tool_calls_per_prompt: 10
+    tool_cost_weights:
+      web_search: 3
+      database_query: 2
+    loop_detection_window: 5
+    loop_similarity_threshold: 0.95
+```
+
+Denied budget calls emit a standard `tool_call_gate` `AuditEvent` with `decision=deny` and the specific limit in `deny_reason`.
 
 ### Pre-gate — agent registered?
 

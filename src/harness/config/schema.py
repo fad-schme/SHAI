@@ -43,6 +43,54 @@ class AdapterRef(BaseModel, frozen=True, extra="forbid"):
 
 
 
+class NormalizationConfig(BaseModel, frozen=True, extra="forbid"):
+    """De-obfuscation applied to text before scanners run, in every scan boundary.
+
+    Produces additional plaintext *views* of the input (decoded / de-fragmented
+    forms) so pattern scanners cannot be bypassed by base64, rot13, hex, URL
+    encoding, unicode homoglyphs, invisible characters, or fragmentation.
+    Scanners run across all views; the raw text the agent sees is never mutated.
+
+    Enabled by default: a disabled normalizer reopens the encoded-payload bypass.
+    """
+    enabled:           bool  = True
+    decode:            bool  = True   # base64 / hex / url / rot13 substring decode
+    max_depth:         int   = 2      # recursion depth for nested encodings
+    entropy_threshold: float = 3.5    # min entropy for a base64 decode candidate
+    max_bytes:         int   = 262144 # inputs larger than this are folded, not decoded
+
+
+class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
+    """Cross-turn threat accumulator — detects crescendo / multi-turn escalation.
+
+    SQLite-backed: risk scores persist across process restarts so a slow
+    crescendo that spans hours is still detected.
+
+    Disabled by default — requires explicit opt-in because it creates a
+    SQLite file at `path` and runs a DB check on every scan_input call.
+    Enable in harness.yaml once the deployment path is configured.
+
+    on_escalation:
+      block — hard stop (default); scanners never run for this turn
+      flag  — WARN verdict; content passes through; audit event emitted
+    """
+    enabled:              bool  = False
+    backend:              str   = "sqlite"
+    path:                 str   = "state/sessions.db"
+    escalation_threshold: float = 0.70
+    window_size:          int   = 10
+    reframe_similarity:   float = 0.72
+    ttl_hours:            float = 72.0
+    on_escalation:        str   = "block"   # "block" | "flag"
+
+    @field_validator("on_escalation")
+    @classmethod
+    def _valid_action(cls, v: str) -> str:
+        if v not in ("block", "flag"):
+            raise ValueError("on_escalation must be 'block' or 'flag'")
+        return v
+
+
 class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
     """Configuration for a text-scanning boundary.
 
@@ -99,11 +147,54 @@ class RateLimitConfig(BaseModel, frozen=True, extra="forbid"):
             raise ValueError("rate limits must be positive")
         return v
 
+class ExecutionBudgetConfig(BaseModel, frozen=True, extra="forbid"):
+    """Per-session execution budget.  Mitigates T4 (DoS / Unbounded Consumption).
+
+    All limits default to None (disabled).  Set any limit to enable enforcement.
+
+    max_steps:                 maximum total tool calls per session
+    max_tokens_per_session:    cumulative token ceiling per session
+    max_tool_calls_per_prompt: fan-out ceiling per user turn
+    tool_cost_weights:         {tool_name: int} cost multiplier applied to token tracking
+    loop_detection_window:     how many recent fingerprints to check for duplicates
+    loop_similarity_threshold: Jaccard similarity at which a call is flagged as a loop
+    """
+    max_steps:                  int | None        = None
+    max_tokens_per_session:     int | None        = None
+    max_tool_calls_per_prompt:  int | None        = None
+    tool_cost_weights:          dict[str, int]    = Field(default_factory=dict)
+    loop_detection_window:      int               = 0    # 0 = disabled
+    loop_similarity_threshold:  float             = 0.95
+
+    @field_validator("max_steps", "max_tokens_per_session", "max_tool_calls_per_prompt",
+                     mode="before")
+    @classmethod
+    def _positive_or_none(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError("budget limits must be positive")
+        return v
+
+    @field_validator("loop_detection_window")
+    @classmethod
+    def _non_negative_window(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("loop_detection_window must be >= 0")
+        return v
+
+    @field_validator("loop_similarity_threshold")
+    @classmethod
+    def _valid_threshold(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("loop_similarity_threshold must be between 0.0 and 1.0")
+        return v
+
+
 class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     """No enabled flag — the gate is mandatory."""
-    arg_scanners:       list[AdapterRef] = Field(default_factory=list)
-    scan_args_for_tags: list[str]        = Field(default_factory=lambda: ["sensitive"])
-    rate_limit:         RateLimitConfig  = Field(default_factory=RateLimitConfig)
+    arg_scanners:       list[AdapterRef]      = Field(default_factory=list)
+    scan_args_for_tags: list[str]             = Field(default_factory=lambda: ["sensitive"])
+    rate_limit:         RateLimitConfig       = Field(default_factory=RateLimitConfig)
+    execution_budget:   ExecutionBudgetConfig = Field(default_factory=ExecutionBudgetConfig)
 
 
 
@@ -231,6 +322,8 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
 class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     version:         int = 1
     tenant_id:       str = "default"
+    normalization:        NormalizationConfig      = Field(default_factory=NormalizationConfig)
+    session:              ThreatAccumulatorConfig  = Field(default_factory=ThreatAccumulatorConfig)
     scan_input:      BoundaryConfig
     scan_file:       FileScanConfig       = Field(default_factory=lambda: FileScanConfig(enabled=False))
     scan_tool_result:    ToolResultScanConfig    = Field(default_factory=ToolResultScanConfig)

@@ -50,7 +50,7 @@ from harness.core.verdicts import Finding
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_PATTERNS = Path(__file__).parent / "injection_patterns.yaml"
+_DEFAULT_PATTERNS = Path(__file__).parent / "l10n" / "injection_patterns.yaml"
 
 # ── Compiled catalog types ────────────────────────────────────────────────
 
@@ -185,6 +185,30 @@ def _normalize(text: str) -> str:
 
 # ── Scanner ───────────────────────────────────────────────────────────────
 
+# ── L10N catalog merge ────────────────────────────────────────────────────
+
+def _compile_catalog_with_l10n(path: Path) -> list[_CompiledRule]:
+    """Load the primary catalog and auto-merge its .l10n.yaml sibling when present.
+
+    The sibling file is derived by inserting '.l10n' before '.yaml':
+        injection_patterns.yaml → injection_patterns.l10n.yaml
+
+    Both files must live in the same directory (the l10n/ folder). The merged
+    catalog is the primary rules first, then the multilingual rules appended.
+    If no sibling exists the primary catalog is returned unchanged.
+    """
+    rules = _compile_catalog(path)
+    l10n_path = path.parent / (path.stem + ".l10n.yaml")
+    if l10n_path.exists():
+        l10n_rules = _compile_catalog(l10n_path)
+        rules = rules + l10n_rules
+        log.info(
+            "l10n catalog merged: %d additional rules from %s",
+            len(l10n_rules), l10n_path.name,
+        )
+    return rules
+
+
 class InjectionScanner:
     """YAML-driven injection-pattern scanner.
 
@@ -202,7 +226,7 @@ class InjectionScanner:
     ) -> None:
         self.name        = name
         self._path       = Path(patterns_file) if patterns_file else _DEFAULT_PATTERNS
-        self._catalog    = _compile_catalog(self._path)
+        self._catalog    = _compile_catalog_with_l10n(self._path)
         self._functions  = _load_scoring_functions()
 
     async def scan(self, text: str, ctx: AgentContext) -> ScanResult:

@@ -39,12 +39,14 @@ from typing import TYPE_CHECKING
 
 from harness.adapters.scanners.base import ScanResult
 from harness.core.events import AuditEvent, now_ms
+from harness.core.normalize import canonicalize
 from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import Finding, ScanVerdict
 
 if TYPE_CHECKING:
     from harness.adapters.scanners.base import Scanner
     from harness.audit.emitter import AuditEmitter
+    from harness.config.schema import NormalizationConfig
     from harness.core.context import AgentContext
 
 log = logging.getLogger(__name__)
@@ -87,6 +89,42 @@ def _apply_redaction(
     return text
 
 
+async def _scan_views(
+    scanner: "Scanner",
+    views: list[str],
+    ctx: "AgentContext",
+) -> ScanResult:
+    """Run one scanner across every normalization view and merge results.
+
+    Findings from all views are concatenated then de-duplicated by
+    (category, severity) so a payload detected in multiple views (e.g. the
+    surface form and its base64 decode) produces one finding, not several.
+
+    redacted_text is taken only from the surface-form scan (views[0]); redaction
+    positions from a decoded view do not map back onto the original text, and
+    the pipeline never substitutes a decoded view for what the agent sees.
+    """
+    results = await asyncio.gather(
+        *[scanner.scan(view, ctx) for view in views],
+        return_exceptions=True,
+    )
+
+    merged: list[Finding] = []
+    seen: set[tuple[str, int]] = set()
+    surface_redacted: str | None = None
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            raise r  # surfaced to run_scan's per-scanner exception handling
+        if i == 0:
+            surface_redacted = r.redacted_text
+        for f in r.findings:
+            key = (f.category, f.severity._index())
+            if key not in seen:
+                seen.add(key)
+                merged.append(f)
+    return ScanResult(findings=merged, redacted_text=surface_redacted)
+
+
 async def run_scan(
     text: str,
     ctx: "AgentContext",
@@ -100,6 +138,7 @@ async def run_scan(
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
+    normalization: "NormalizationConfig | None" = None,
     audit_tags: dict[str, str] | None = None,
 ) -> ScanVerdict:
     """Run scanners concurrently, apply action logic, emit one AuditEvent.
@@ -126,8 +165,22 @@ async def run_scan(
         await emitter.emit(event)
         return ScanVerdict(status=ScanStatus.ALLOW)
 
+    if normalization is not None and normalization.enabled:
+        norm = canonicalize(
+            text,
+            decode=normalization.decode,
+            max_depth=normalization.max_depth,
+            entropy_threshold=normalization.entropy_threshold,
+            max_bytes=normalization.max_bytes,
+        )
+        views = norm.views
+        transforms = norm.transforms
+    else:
+        views = [text]
+        transforms = []
+
     raw_results = await asyncio.gather(
-        *[scanner.scan(text, ctx) for scanner in scanners],
+        *[_scan_views(scanner, views, ctx) for scanner in scanners],
         return_exceptions=True,
     )
 
@@ -218,6 +271,7 @@ async def run_scan(
         finding_count=len(all_findings),
         max_severity=max_sev,
         audit_tags=audit_tags or {},
+        extra={"normalization": transforms} if transforms else None,
     )
     await emitter.emit(event)
 
@@ -240,6 +294,7 @@ async def run_file_scan(
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
+    normalization: "NormalizationConfig | None" = None,
     audit_tags: dict[str, str] | None = None,
 ) -> ScanVerdict:
     """Run file scanners. Delegates to run_scan with FILE_SCAN boundary name."""
@@ -255,6 +310,7 @@ async def run_file_scan(
         tenant_id=tenant_id,
         enabled=enabled,
         block_at=block_at,
+        normalization=normalization,
         audit_tags=audit_tags,
     )
 
@@ -271,6 +327,7 @@ async def run_tool_result_scan(
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
+    normalization: "NormalizationConfig | None" = None,
     audit_tags: dict[str, str] | None = None,
 ) -> ScanVerdict:
     """Scan a tool return value. Delegates to run_scan with TOOL_RESULT_SCAN."""
@@ -286,5 +343,6 @@ async def run_tool_result_scan(
         tenant_id=tenant_id,
         enabled=enabled,
         block_at=block_at,
+        normalization=normalization,
         audit_tags=audit_tags,
     )

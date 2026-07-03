@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "httpx>=0.27",
+    "aiosqlite>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +26,7 @@ packages = ["src/harness", "src/harness_cli"]
 # Include bundled YAML pattern catalogs and the py.typed marker
 artifacts = [
     "src/harness/adapters/scanners/*.yaml",
+    "src/harness/adapters/scanners/l10n/*.yaml",
     "src/harness/py.typed",
 ]
 
@@ -49,6 +51,8 @@ shai = "harness_cli.main:main"
 [project.entry-points."harness.scanners"]
 regex_pii      = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
 injection_scan = "harness.adapters.scanners.injection_scan:InjectionScanner"
+jailbreak_scan     = "harness.adapters.scanners.jailbreak_scan:JailbreakScanner"
+identity_spoof_scan = "harness.adapters.scanners.identity_spoof_scan:IdentitySpoofScanner"
 
 [project.entry-points."harness.policy"]
 rules = "harness.policy.rules:RuleBasedPolicy"

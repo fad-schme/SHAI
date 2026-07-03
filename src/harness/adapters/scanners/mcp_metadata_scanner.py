@@ -49,7 +49,7 @@ from harness.adapters.scanners.injection_scan import InjectionScanner
 
 log = logging.getLogger(__name__)
 
-_PATTERNS_FILE = Path(__file__).parent / "mcp_metadata_patterns.yaml"
+_PATTERNS_FILE = Path(__file__).parent / "l10n" / "mcp_metadata_patterns.yaml"
 
 
 class MCPMetadataScanner:

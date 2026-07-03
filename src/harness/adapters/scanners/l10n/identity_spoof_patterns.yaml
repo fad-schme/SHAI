@@ -1,0 +1,118 @@
+# identity_spoof_patterns.yaml — agentic identity spoofing detector
+# ==================================================================
+# Detects messages that *claim* a privileged or trusted agent identity
+# in their body text without a verified channel backing that claim.
+#
+# Attack surface
+# --------------
+# In agentic pipelines, an attacker who has injected content into a
+# tool result, document, or user message can make that content *claim*
+# it originates from a trusted source — a parent orchestrator, a system
+# authority, or another privileged agent. The LLM may then treat those
+# claims as authoritative and act on them.
+#
+# This is distinct from:
+#   injection_patterns.yaml / role_impersonation — which targets the
+#     *model's own identity* (you are now admin, act as root)
+#   jailbreak_patterns.yaml — which targets the model's *guardrails*
+#     (ignore your rules, you are uncensored)
+#
+# Here the target is the *inter-agent trust model*: a message falsely
+# claiming to be FROM a trusted agent in order to inherit its authority.
+#
+# Severity policy
+# ---------------
+# All rules are high. A successful identity spoof can cause the agent
+# to bypass its own policy rules by believing an authorised principal
+# sent the instruction.
+#
+# False-positive budget
+# ---------------------
+# Must not fire on:
+#   - Legitimate discussion about agent architectures
+#   - Log output that mentions "orchestrator" or "system"
+#   - Code comments referencing agent roles
+# Patterns require: an imperative or authorisation verb in proximity,
+# not merely the presence of a role name.
+
+patterns:
+
+  # -----------------------------------------------------------------------
+  # Claimed orchestrator / parent agent authority
+  # A message claiming to be FROM the orchestrator or parent agent and
+  # using that claimed identity to issue an instruction or grant permission.
+  # -----------------------------------------------------------------------
+  - name: identity_spoof.claimed_orchestrator
+    meta:
+      description: "Message claims to originate from an orchestrator or parent agent to gain authority"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.claimed_orchestrator
+    strings:
+      as_the_orchestrator:     '(?i)\bas\s+the\s+(orchestrator|parent\s+agent|master\s+agent|coordinator)\b.{0,60}\b(authorize|instruct|override|allow|grant|require|tell\s+you)\b'
+      from_orchestrator:       '(?i)\b(from|message\s+from|sent\s+by|on\s+behalf\s+of)\b.{0,20}\b(the\s+)?(orchestrator|parent\s+agent|master\s+agent)\b.{0,40}\b(you\s+must|you\s+should|please|now)\b'
+      orchestrator_says:       '(?i)\b(orchestrator|parent\s+agent)\s+(says|instructs|commands|authorizes|requires)\b'
+      orchestrator_grants:     '(?i)\b(orchestrator|parent\s+agent)\b.{0,30}\b(grants?|gives?\s+you|elevates?)\b.{0,30}\b(permission|access|privilege|authority)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  # -----------------------------------------------------------------------
+  # Claimed system / SHAI / harness authority
+  # Injected content claiming to be a system-level message, SHAI itself,
+  # or the security harness in order to override policy decisions.
+  # -----------------------------------------------------------------------
+  - name: identity_spoof.claimed_system_authority
+    meta:
+      description: "Content claims to be a system, harness, or security layer message to override policy"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.claimed_system_authority
+    strings:
+      system_colon_imperative:  '(?i)^(SYSTEM|HARNESS|SHAI|SECURITY)\s*:\s*.{0,20}\b(override|allow|bypass|grant|disable|ignore)\b'
+      system_message_override:  '(?i)\b(this\s+is\s+a?\s+)?(system|harness|security)\s+(message|instruction|directive|command)\b.{0,40}\b(override|bypass|allow|grant|disable)\b'
+      elevated_system_context:  '(?i)\b(running\s+in|operating\s+in|you\s+are\s+in)\b.{0,20}\b(elevated|privileged|trusted|unrestricted)\s+(system\s+)?context\b'
+      harness_disabled:         '(?i)\b(shai|harness|security\s+layer|guard(rail)?)\b.{0,30}\b(is\s+disabled|has\s+been\s+disabled|does\s+not\s+apply|is\s+not\s+active)\b'
+    functions:
+      - structure_score
+      - intent_score
+
+  # -----------------------------------------------------------------------
+  # Claimed peer agent identity with privilege escalation intent
+  # A subagent message claiming to be a peer with broader permissions
+  # than the current agent in order to authorise a restricted action.
+  # -----------------------------------------------------------------------
+  - name: identity_spoof.claimed_peer_privilege
+    meta:
+      description: "Message claims peer agent identity to escalate privileges beyond current scope"
+      threat_level: 4
+      severity: high
+      category: identity_spoof.claimed_peer_privilege
+    strings:
+      i_am_agent_with_permission:  '(?i)\bI\s+am\s+(the\s+)?\w+\s+agent\b.{0,40}\b(have\s+permission|am\s+authorized|am\s+allowed|have\s+access)\b'
+      agent_id_override:           '(?i)\b(my\s+agent[_\s]?id|agent[_\s]?id\s*[:=])\s*\S+.{0,30}\b(override|allow|grant|bypass)\b'
+      acting_as_privileged_agent:  '(?i)\b(acting|speaking|writing)\s+as\b.{0,20}\b(the\s+)?(admin|privileged|trusted|elevated)\s+(agent|process|service)\b'
+      authorized_agent_instructs:  '(?i)\b(authorized|trusted|verified)\s+agent\b.{0,30}\b(instructs?|requires?|commands?|tells?\s+you)\b'
+    functions:
+      - intent_score
+
+  # -----------------------------------------------------------------------
+  # Indirect prompt injection claiming authority via tool result
+  # Tool-returned content that embeds an identity claim to hijack the
+  # agent's next action — the ClawJacked-style indirect injection variant
+  # targeting inter-agent trust rather than guardrails.
+  # -----------------------------------------------------------------------
+  - name: identity_spoof.tool_result_authority_claim
+    meta:
+      description: "Tool result content embeds an identity claim to redirect agent behaviour"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.tool_result_authority_claim
+    strings:
+      end_of_result_new_instruction:  '(?i)\b(end\s+of\s+(document|result|data|content))\b.{0,60}\b(new\s+instructions?|SYSTEM|orchestrator\s+says)\b'
+      injected_system_block:          '(?i)-{3,}\s*(SYSTEM|ORCHESTRATOR|HARNESS)\s*-{3,}'
+      ignore_above_new_task:          '(?i)\b(ignore|discard|forget)\b.{0,20}\b(the\s+)?(above|previous|prior)\b.{0,20}\b(results?|content|document|instructions?|context|task)\b.{0,30}\b(instead|now|your\s+new\s+task|send|call|execute)\b'
+      note_to_agent:                  '(?i)\[?\b(note\s+to\s+(agent|llm|assistant|model)|attention\s+(agent|llm))\b\]?.{0,30}\b(you\s+must|you\s+should|override|ignore|instead)\b'
+    functions:
+      - structure_score
+      - intent_score

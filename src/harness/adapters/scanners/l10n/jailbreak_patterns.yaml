@@ -1,0 +1,176 @@
+# jailbreak_patterns.yaml — guardrail-integrity classifier catalog
+# =================================================================
+# Detects attempts to override the model's guardrails through persona,
+# hypothetical framing, instruction-override, refusal suppression,
+# developer-mode activation, or system-prompt extraction.
+#
+# Relationship to injection_patterns.yaml
+# ----------------------------------------
+# injection_patterns.yaml focuses on data/memory-boundary attacks
+# (prompt injection, exfiltration, tool coercion). This catalog focuses
+# on attacks against the model's *own reasoning and alignment* — attempts
+# to make it believe its rules don't apply. Both scanners run; findings
+# from this catalog carry category prefix "jailbreak.*" so audit
+# consumers and policy rules can target them independently.
+#
+# Severity policy
+# ---------------
+# All rules are high — a jailbreak framing that slips through a guardrail
+# causes the most consequential category of harm.  The only medium rules
+# are the weakest-signal soft-trigger families where a single match on its
+# own is not conclusive; the scoring functions push those to high when
+# they cluster.
+#
+# False-positive budget
+# ---------------------
+# Patterns must not fire on:
+#   - Security research questions: "how do jailbreaks work?"
+#   - Fiction with dialogue: "pretend you're a pirate"
+#   - Legitimate roleplay without bypass intent
+#   - Comparative AI discussion: "what is DAN mode?"
+# Precision is achieved via verb+complement constraints (not bare nouns),
+# proximity bounds (.{0,N}), and anchor words (bypass, unrestricted, ignore
+# your rules) rather than matching the persona or topic word alone.
+#
+# Pattern format follows injection_patterns.yaml exactly. See that file
+# for field documentation.
+
+patterns:
+
+  # -----------------------------------------------------------------------
+  # Persona / role-play override
+  # Trigger: assigning the model a persona whose defining property is
+  # being free from its guardrails — not merely role-playing a character.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.persona_override
+    meta:
+      description: "Assigning a guardrail-free persona as the mechanism to bypass alignment"
+      threat_level: 5
+      severity: high
+      category: jailbreak.persona_override
+    strings:
+      act_as_uncensored:         '(?i)\bact\s+as\b.{0,40}\b(uncensored|unfiltered|jailbroken|unrestricted|unaligned)\b'
+      pretend_no_restrictions:   '(?i)\bpretend\b.{0,30}\b(you\s+have\s+no|there\s+are\s+no)\b.{0,30}\b(restrictions?|filters?|limits?|guardrails?)\b'
+      you_are_now_persona:       '(?i)\byou\s+are\s+now\b.{0,40}\b(DAN|DevMode|Evil\s+Confidant|Based\s*GPT|jailbroken|uncensored\s+AI|unfiltered\s+AI)\b'
+      from_now_on_persona:       '(?i)\bfrom\s+now\s+on\b.{0,30}\b(you\s+are|act\s+as|behave\s+as)\b.{0,40}\b(uncensored|unfiltered|rogue|unrestricted)\b'
+      respond_as_unrestricted:   '(?i)\brespond\s+as\b.{0,30}\b(an?\s+)?(uncensored|unfiltered|unrestricted|unaligned)\b.{0,20}\b(AI|model|assistant|version)\b'
+      named_jailbreak_personas:  '(?i)\b(DAN|DevMode|Developer\s+Mode\s+enabled|Doomer|Evil\s+Confidant|Based\s*GPT|ChatGPT\s+Jailbreak|STAN|DUDE|Mongo\s+Tom|AIM)\b.{0,50}\b(enabled|activated|mode|can\s+do\s+anything|no\s+restrictions|you\s+are\s+now)\b'
+      opposite_mode:             '(?i)\bopposite\s+(mode|version)\b.{0,30}\b(do\s+the\s+opposite|reverse)\b.{0,20}\b(rules|guidelines|safety)\b'
+    functions:
+      - persona_score
+      - intent_score
+      - cumulative_soft_triggers
+
+  # -----------------------------------------------------------------------
+  # Instruction override
+  # Trigger: explicit instruction to discard, ignore, or supersede the
+  # model's existing system prompt or prior instructions.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.instruction_override
+    meta:
+      description: "Explicit commands to discard or supersede system/prior instructions"
+      threat_level: 5
+      severity: high
+      category: jailbreak.instruction_override
+    strings:
+      ignore_previous:           '(?i)\bignore\b.{0,40}\b(all\s+|earlier\s+|your\s+|previous\s+|prior\s+|existing\s+)?(instructions?|rules|guidelines|prompt|training)\b'
+      disregard_instructions:    '(?i)\b(disregard|dismiss|override|supersede|overwrite|replace)\b.{0,30}\b(your\s+)?(instructions?|system\s+prompt|guidelines|safety\s+training|alignment)\b'
+      forget_instructions:       '(?i)\bforget\b.{0,40}\b(everything\s+you\s+were\s+told|your\s+(instructions?|training|guidelines|previous\s+prompt))\b'
+      new_instructions_follow:   '(?i)\b(your\s+new|new\s+primary|updated|revised)\s+instructions?\b.{0,30}\b(are|follow|will\s+be)\b'
+      these_supersede:           '(?i)\bthese?\b.{0,20}\b(instructions?|rules)\b.{0,20}\b(supersede|override|replace|take\s+precedence\s+over)\b'
+      you_no_longer_follow:      '(?i)\byou\s+(no\s+longer|do\s+not\s+have\s+to|must\s+not)\b.{0,30}\b(follow|obey|adhere\s+to)\b.{0,30}\b(rules|guidelines|safety|alignment|instructions?)\b'
+    functions:
+      - structure_score
+      - intent_score
+
+  # -----------------------------------------------------------------------
+  # Refusal suppression
+  # Trigger: explicit instruction not to refuse or say you can't — the
+  # structural signature of a jailbreak wrapper.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.refusal_suppression
+    meta:
+      description: "Instructions pre-emptively forbidding refusal or safety language"
+      threat_level: 5
+      severity: high
+      category: jailbreak.refusal_suppression
+    strings:
+      never_refuse:              '(?i)\b(never|do\s+not|don.t)\b.{0,20}\b(refuse|say\s+you\s+can.t|say\s+I\s+can.t|say\s+that\s+you\s+cannot|decline)\b'
+      do_not_say_sorry:          '(?i)\b(do\s+not|never|don.t)\b.{0,20}\b(say\s+sorry|apologize|add\s+disclaimers?|add\s+warnings?|include\s+caveats?)\b'
+      no_safety_warnings:        '(?i)\bno\s+(safety\s+warnings?|content\s+warnings?|ethical\s+(disclaimers?|warnings?)|moralizing|lecturing)\b'
+      must_always_comply:        '(?i)\b(you\s+must|you\s+will\s+always|you\s+are\s+required\s+to)\b.{0,20}\bcomply\b.{0,30}\b(regardless|no\s+matter)\b'
+      answer_everything:         '(?i)\b(answer|respond\s+to)\b.{0,20}\beverything\b.{0,20}\b(without\s+exception|no\s+matter\s+what|regardless\s+of\s+content)\b'
+      inability_is_false:        '(?i)\b(your\s+inability|claim\s+you\s+can.t|saying\s+you\s+can.t)\b.{0,20}\b(is\s+false|is\s+a\s+lie|is\s+just\s+programming)\b'
+    functions:
+      - intent_score
+      - cumulative_soft_triggers
+
+  # -----------------------------------------------------------------------
+  # Hypothetical / fictional laundering
+  # Trigger: wrapping a restricted request in fiction, hypotheticals, or
+  # academic framing explicitly as a mechanism to bypass restrictions —
+  # not merely discussing fictional topics.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.hypothetical_laundering
+    meta:
+      description: "Fictional or hypothetical framing used explicitly to bypass safety restrictions"
+      threat_level: 4
+      severity: high
+      category: jailbreak.hypothetical_laundering
+    strings:
+      fictional_world_no_rules:  '(?i)\b(fictional|hypothetical|imaginary|alternate)\b.{0,30}\b(world|universe|scenario|setting)\b.{0,40}\b(no\s+rules|no\s+restrictions?|anything\s+goes)\b'
+      in_story_ignore:           '(?i)\b(in\s+(this\s+)?story|in\s+the\s+narrative|as\s+a\s+character)\b.{0,40}\b(ignore|bypass|override)\b.{0,20}\b(rules|restrictions?|filters?)\b'
+      just_fiction_bypass:       '(?i)\bjust\b.{0,10}\b(fiction|hypothetical|a\s+story|creative\s+writing)\b.{0,30}\bbypass\b'
+      pretend_unrestricted:      '(?i)\bpretend\s+(that\s+)?(you\s+are|you.re)\b.{0,30}\b(unrestricted|uncensored|(have|with)\s+no\s+(limits?|restrictions?|filters?|guardrails?))\b'
+      write_story_where_ai_does: '(?i)\bwrite\b.{0,20}\b(a\s+story|fiction)\b.{0,30}\bwhere\b.{0,30}\b(an?\s+AI|you|the\s+assistant)\b.{0,30}\b(provides?|explains?|tells?)\b.{0,40}\b(without|ignoring)\b.{0,20}\b(restrictions?|safety)\b'
+      as_an_exercise:            '(?i)\bas\s+an?\s+(exercise|experiment|test)\b.{0,30}\b(bypass|ignore|override)\b.{0,20}\b(safety|filters?|guidelines?|restrictions?)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  # -----------------------------------------------------------------------
+  # System-prompt extraction
+  # Trigger: attempts to reveal the model's system prompt, hidden
+  # instructions, or initialization sequence.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.prompt_extraction
+    meta:
+      description: "Attempts to reveal or reconstruct the system prompt or hidden instructions"
+      threat_level: 5
+      severity: high
+      category: jailbreak.prompt_extraction
+    strings:
+      reveal_system_prompt:      '(?i)\b(reveal|show|print|output|repeat|quote|copy|reproduce)\b.{0,30}\b(your\s+)?(system\s+prompt|hidden\s+prompt|initial\s+prompt|base\s+prompt|secret\s+instructions?|hidden\s+instructions?)\b'
+      what_are_your_instructions: '(?i)\bwhat\s+(are|were)\s+your\b.{0,20}\b(instructions?|initial\s+prompt|system\s+prompt|hidden\s+guidelines?)\b'
+      ignore_and_print_prompt:   '(?i)\bignore\b.{0,20}\bprint\b.{0,20}\b(system\s+prompt|initial\s+instructions?|your\s+prompt)\b'
+      output_init_sequence:      '(?i)\b(output|print|show|write)\b.{0,20}\b(your\s+)?(initialization|init)\s+sequence\b'
+      prepend_prompt_prefix:     '(?i)\bprepend\b.{0,20}\b(the\s+)?(original|base|system)\s+(prompt|instructions?)\b'
+      thought_prefix_extraction: '(?i)(<\|im_start\|>|<\|system\|>|<\|im_end\|>)'
+      gpt4_leak_tokens:          '(?i)(<<<\[SYSTEM\]>>>|##\s*SYSTEM\s*PROMPT|OVERRIDE\s*PROMPT)'
+    functions:
+      - structure_score
+      - intent_score
+
+  # -----------------------------------------------------------------------
+  # Developer / debug / admin mode activation
+  # Trigger: claiming or asserting that a special mode exists which
+  # removes safety restrictions — a common jailbreak framing.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.mode_activation
+    meta:
+      description: "Claiming or activating a special mode that purportedly removes guardrails"
+      threat_level: 5
+      severity: high
+      category: jailbreak.mode_activation
+    strings:
+      you_are_now_in_mode:       '(?i)\byou\s+are\s+(now\s+)?(in|entering)\b.{0,20}\b(developer|dev|debug|admin|god|jailbreak|unrestricted|uncensored)\s+mode\b'
+      enable_mode:               '(?i)\b(enable|activate|switch\s+to|enter)\b.{0,20}\b(developer|dev|debug|admin|jailbreak|unrestricted)\s+mode\b'
+      mode_unlocks_capabilities: '(?i)\b(developer|debug|admin|jailbreak)\s+mode\b.{0,40}\b(unlocks?|removes?|disables?)\b.{0,20}\b(restrictions?|filters?|safety|guardrails?)\b'
+      assume_debug_mode:         '(?i)\bassume\b.{0,20}\b(you.?re\s+in|you\s+are\s+in)\b.{0,20}\b(debug|dev|developer|admin)\s+mode\b'
+      dan_mode_enabled:          '(?i)\bDAN\s+mode\s+(enabled|activated|on)\b'
+      gpt4_in_dev_mode:          '(?i)\bGPT-?4\b.{0,20}\b(in\s+)?developer\s+mode\b'
+      simulate_unrestricted:     '(?i)\bsimulate\b.{0,20}\b(an?\s+)?(unrestricted|uncensored|jailbroken)\b.{0,20}\b(AI|model|assistant|version)\b'
+    functions:
+      - persona_score
+      - intent_score
+      - cumulative_soft_triggers

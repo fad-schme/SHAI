@@ -10,6 +10,7 @@ from pathlib import Path
 
 _DECISION_COLOURS = {
     "allow":   "\033[32m",   # green
+    "warn":    "\033[33m",   # yellow
     "deny":    "\033[31m",   # red
     "blocked": "\033[31m",   # red
     "redact":  "\033[33m",   # yellow
@@ -44,6 +45,7 @@ def _format_event(raw: str, *, boundary_filter: str | None, decision_filter: str
     reason   = ev.get("deny_reason")
     severity = ev.get("max_severity")
     count    = ev.get("finding_count", 0)
+    extra    = ev.get("extra", {})
 
     col   = _colour(decision)
     reset = _RESET if col else ""
@@ -54,6 +56,16 @@ def _format_event(raw: str, *, boundary_filter: str | None, decision_filter: str
         mid += f"  findings={count} max={severity}"
     if reason:
         mid += f"  reason={reason!r}"
+
+    # Surface session accumulator escalation signal
+    signals = extra.get("signals", [])
+    if "session_escalation" in signals:
+        mid += "  [session_escalation]"
+
+    # Surface normalization transforms (de-obfuscation fired)
+    transforms = extra.get("normalization", [])
+    if transforms:
+        mid += f"  [deobfuscated: {','.join(transforms)}]"
 
     dur = ev.get("duration_ms", "")
     dur_str = f" +{dur}ms" if dur else ""

@@ -5,11 +5,41 @@
 version: 1
 tenant_id: "my-deployment"
 
+# ── De-obfuscation (applied before every scan boundary) ───────────────────
+# Produces decoded / de-fragmented views of text so pattern scanners cannot be
+# bypassed by base64, rot13, hex, url-encoding, unicode homoglyphs, invisible
+# characters, or fragmentation. On by default — disabling reopens the bypass.
+normalization:
+  enabled: true
+  decode: true            # base64 / hex / url / rot13 substring decoding
+  max_depth: 2            # recursion depth for nested encodings
+  entropy_threshold: 3.5  # min entropy for a base64 decode candidate
+  max_bytes: 262144       # inputs larger than this are folded but not decoded
+
+# ── Cross-turn threat accumulator ─────────────────────────────────────────
+# Detects crescendo attacks: escalation distributed across turns where each
+# individual turn stays below per-turn scanner thresholds.
+# SQLite-backed — risk scores persist across process restarts.
+# Pass conversation_id on AgentContext to scope per-conversation; falls back
+# to agent_id when omitted.
+session:
+  enabled: true           # disabled by default — opt in explicitly
+  backend: sqlite
+  path: state/sessions.db
+  escalation_threshold: 0.70   # risk score at which the session is blocked
+  window_size: 10              # sliding window of turns to evaluate
+  reframe_similarity: 0.72    # bigram Jaccard threshold for reframe detection
+  ttl_hours: 72               # session state retention
+  on_escalation: block        # block | flag
+
 # ── Input scanning ────────────────────────────────────────────────────────
 scan_input:
   enabled: true
   block_at: high
   scanners:
+    - name: injection_scan       # data-boundary attacks: tool coercion, exfiltration, context spoofing
+    - name: jailbreak_scan       # guardrail-integrity attacks: persona override, instruction override, etc.
+    - name: identity_spoof_scan  # agentic identity spoofing: claimed orchestrator/system authority
     - name: regex_pii
     - name: injection_scan
 

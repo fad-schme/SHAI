@@ -35,7 +35,7 @@ def emitter(sink):
 @pytest.fixture
 def scanner():
     patterns = Path(__file__).parent.parent.parent / \
-        "src/harness/adapters/scanners/patterns_for_doc.yaml"
+        "src/harness/adapters/scanners/l10n/patterns_for_doc.yaml"
     return InjectionScanner(patterns_file=patterns, name="injection_scan_doc")
 
 

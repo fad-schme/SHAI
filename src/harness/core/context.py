@@ -22,9 +22,10 @@ if TYPE_CHECKING:
 
 
 class AgentContext(BaseModel, frozen=True):
-    agent_id:     str
-    sub_agent_id: str | None = None
-    allowed_tags: list[str] | None = None
+    agent_id:        str
+    sub_agent_id:    str | None = None
+    allowed_tags:    list[str] | None = None
+    conversation_id: str | None = None  # session key for threat accumulator
 
     @field_validator("agent_id")
     @classmethod

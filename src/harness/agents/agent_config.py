@@ -6,11 +6,14 @@ principle of least privilege at load_agent() time, not at gate time.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from harness.core.errors import SubAgentNotDeclaredError
+
+if TYPE_CHECKING:
+    from harness.config.schema import ExecutionBudgetConfig
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _VALID_ACTIONS  = {"allow", "deny", "redact", "suppress"}
@@ -98,6 +101,9 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
 
     log_level:  str = "INFO"
     audit_tags: dict[str, str] = Field(default_factory=dict)
+    limits:     dict[str, Any] = Field(default_factory=dict)
+    # Per-agent execution budget overrides.  Parsed lazily into ExecutionBudgetConfig
+    # by the SHAI facade at load_agent() time to avoid a circular import.
 
     @field_validator("id")
     @classmethod

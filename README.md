@@ -41,7 +41,7 @@ User Input -> Ingress Scan -> LLM -> Tool Governance -> Tool -> Tool Result Scan
 Core protection areas:
 
 - **Ingress Scan**: checks user messages and files before they reach the model
-- **Tool Governance**: enforces allowlists, tags, rate limits, and policy rules on every tool call
+- **Tool Governance**: enforces allowlists, tags, rate limits, session budgets, and policy rules on every tool call
 - **Tool Result Scan**: inspects tool output before it returns to model context
 - **Output Scan**: checks final responses for leakage or unsafe content
 - **MCP Governance**: validates MCP metadata before tools are even registered
@@ -72,8 +72,11 @@ Start with the live quickstart in the docs:
 
 ## Included out of the box
 
-- input scanning for prompt injection and PII
+- input normalization and de-obfuscation (base64, rot13, homoglyphs, fragmentation)
+- input scanning for prompt injection, jailbreak attempts, agentic identity spoofing, and PII
 - tool-call governance with layered policy enforcement
+- session execution budgets (step counter, token burn-down, fan-out limiter, loop detection)
+- cross-turn threat accumulator (crescendo attack detection, SQLite-backed, persistent across restarts)
 - tool-result scanning for indirect injection risk
 - output scanning for leakage control
 - MCP metadata scanning
@@ -84,14 +87,15 @@ Start with the live quickstart in the docs:
 
 | OWASP threat | Coverage | SHAI control |
 |---|---|---|
-| `T1` Goal and instruction hijacking | Partial | ingress scanning, MCP metadata scanning, tool governance |
+| `T1` Goal and instruction hijacking | **Full** | normalization, injection scan, jailbreak scan, identity spoof scan, MCP metadata scanning, tool governance |
 | `T2` Tool misuse | Full | allowlists, tag scoping, policy rules, rate limits |
 | `T3` Uncontrolled agent actions | Full | layered tool governance, scoped permissions, policy enforcement |
-| `T4` Resource overload | Full | rate limits and bounded tool access |
-| `T5` Direct prompt injection | Full | ingress scanning |
+| `T4` Resource overload | Full | rate limits, session budgets (step counter, token burn-down, fan-out ceiling, loop detection) |
+| `T5` Direct prompt injection | **Full** | normalization + injection scan + jailbreak scan + identity spoof scan |
 | `T6` Indirect prompt injection | Full | tool-result scanning, MCP governance |
+| `T7` Escalation via multi-turn | **Full** | cross-turn threat accumulator (crescendo detection) |
 | `T8` Repudiation and untraceability | Full | audit events at every boundary |
-| `T9` Privilege escalation | Full | subagent scoping, layered tool governance |
+| `T9` Privilege escalation | Full | subagent scoping, layered tool governance, identity spoof scan |
 | `T11` Sensitive data exposure | Full | PII scanning on input, tool args, and output |
 | `T16` Data exfiltration | Partial | output scanning and governed connectivity paths |
 | `T17` Supply chain compromise | Partial | MCP metadata scanning, source governance, and file scanning |

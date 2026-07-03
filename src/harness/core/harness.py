@@ -11,6 +11,8 @@ from typing import Any
 
 from harness.adapters.audit_sinks.stdout import StdoutSink
 from harness.adapters.scanners.rate_limiter import RateLimiter
+from harness.boundaries.session_budget import SessionBudget, ExecutionLimits
+from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
@@ -112,6 +114,20 @@ class SHAI:
         self._scan_file_redact_withs        = scan_file_redact_withs
         self._scan_tool_result_action       = scan_tool_result_action
         self._rate_limiter              = rate_limiter
+        self._session_budget            = SessionBudget()
+        self._threat_accumulator: ThreatAccumulator | None = (
+            ThreatAccumulator(
+                db_path=config.session.path,
+                escalation_threshold=config.session.escalation_threshold,
+                window_size=config.session.window_size,
+                reframe_similarity=config.session.reframe_similarity,
+                ttl_hours=config.session.ttl_hours,
+                on_escalation=config.session.on_escalation,
+            )
+            if config.session.enabled else None
+        )
+        # Per-agent ExecutionLimits — populated at load_agent() time
+        self._agent_limits: dict[str, ExecutionLimits] = {}
         self._tool_result_scanners      = tool_result_scanners
         self._scan_tool_result_enabled  = scan_tool_result_enabled
         self._tool_result_block_at      = tool_result_block_at
@@ -396,6 +412,7 @@ class SHAI:
         self._source_overrides[cfg.id] = overrides
 
         self._agent_tools[cfg.id] = self._resolve_tools(cfg)
+        self._agent_limits[cfg.id] = self._build_execution_limits(cfg)
         log.info("agent loaded",
                  extra={"agent_id": cfg.id,
                         "tools": len(self._agent_tools[cfg.id]),
@@ -415,6 +432,7 @@ class SHAI:
                 overrides[tool.name] = tool
         self._source_overrides[cfg.id] = overrides
         self._agent_tools[cfg.id] = self._resolve_tools(cfg)
+        self._agent_limits[cfg.id] = self._build_execution_limits(cfg)
         log.info("agent reloaded",
                  extra={"agent_id": cfg.id,
                         "tools": len(self._agent_tools[cfg.id])})
@@ -426,8 +444,10 @@ class SHAI:
         await self._agent_registry.deregister(config)
         self._agent_tools.pop(agent_id, None)
         self._source_overrides.pop(agent_id, None)
+        self._agent_limits.pop(agent_id, None)
         if self._rate_limiter is not None:
             self._rate_limiter.reset(agent_id)
+        self._session_budget.reset(agent_id)
 
     async def list_agents(self) -> list[AgentConfig]:
         return await self._agent_registry.list()
@@ -455,7 +475,30 @@ class SHAI:
     # ── Per-turn boundaries ───────────────────────────────────────────────
 
     async def scan_input(self, text: str, ctx: AgentContext) -> ScanVerdict:
-        return await run_scan(
+        session_id = ctx.conversation_id or ctx.agent_id
+
+        # Accumulator pre-check: escalated sessions blocked before scanners run.
+        if self._threat_accumulator is not None:
+            escalated, reason = await self._threat_accumulator.check(session_id)
+            if escalated:
+                from harness.core.events import AuditEvent, now_ms
+                cfg = self._config.session
+                status = ScanStatus.BLOCK if cfg.on_escalation == "block" else ScanStatus.WARN
+                decision = Decision.BLOCKED if status == ScanStatus.BLOCK else Decision.WARN
+                event = AuditEvent.build(
+                    boundary=BoundaryName.INPUT_SCAN,
+                    decision=decision,
+                    ctx=ctx,
+                    tenant_id=self._tenant_id,
+                    duration_ms=0,
+                    deny_reason=reason,
+                    audit_tags=self._audit_tags_for(ctx),
+                    extra={"signals": ["session_escalation"]},
+                )
+                await self._emitter.emit(event)
+                return ScanVerdict(status=status)
+
+        verdict = await run_scan(
             text, ctx,
             boundary=BoundaryName.INPUT_SCAN,
             scanners=self._input_scanners,
@@ -466,8 +509,18 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
+            normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
+
+        # Accumulator post-record: update session state with this turn's outcome.
+        if self._threat_accumulator is not None:
+            categories = [f.category for f in verdict.findings]
+            await self._threat_accumulator.record(
+                session_id, text, verdict.status.value, categories
+            )
+
+        return verdict
 
     async def scan_pii(self, text: str, ctx: AgentContext) -> ScanVerdict:
         """Run only the RegexPIIScanner on text.
@@ -494,6 +547,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
+            normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
 
@@ -521,6 +575,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
+            normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
 
@@ -530,6 +585,31 @@ class SHAI:
         # R1: rate limit check before the gate runs
         if self._rate_limiter is not None:
             allowed, reason = self._rate_limiter.check(ctx.agent_id, name)
+            if not allowed:
+                from harness.core.events import AuditEvent, now_ms
+
+                event = AuditEvent.build(
+                    boundary=BoundaryName.TOOL_CALL_GATE,
+                    decision=Decision.DENY,
+                    ctx=ctx,
+                    tenant_id=self._tenant_id,
+                    duration_ms=0,
+                    tool_name=name,
+                    deny_reason=reason,
+                    audit_tags=self._audit_tags_for(ctx),
+                )
+                await self._emitter.emit(event)
+                return GateDecision(allowed=False, deny_reason=reason)
+
+        # R2: session execution budget check
+        limits = self._agent_limits.get(ctx.agent_id)
+        if limits is not None and limits.any_enabled():
+            session_id = getattr(ctx, "session_id", ctx.agent_id)
+            prompt_id  = getattr(ctx, "prompt_id", None)
+            allowed, reason = self._session_budget.check(
+                ctx.agent_id, session_id, name, args, limits,
+                prompt_id=prompt_id,
+            )
             if not allowed:
                 from harness.core.events import AuditEvent, now_ms
 
@@ -658,6 +738,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_file_enabled,
             block_at=self._file_block_at,
+            normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
 
@@ -710,6 +791,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_tool_result_enabled,
             block_at=self._tool_result_block_at,
+            normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
 
@@ -725,6 +807,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_output_enabled,
             block_at=self._block_at,
+            normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
 
@@ -864,6 +947,46 @@ class SHAI:
         except Exception:
             return {}
 
+    def _build_execution_limits(self, cfg: AgentConfig) -> ExecutionLimits:
+        """Merge global execution_budget defaults with per-agent limits: overrides."""
+        from harness.config.schema import ExecutionBudgetConfig
+
+        # Global defaults from harness.yaml check_tool_call.execution_budget
+        global_budget: ExecutionBudgetConfig = self._config.check_tool_call.execution_budget
+
+        # Agent-level overrides from agent-xx.yaml limits: block
+        agent_raw: dict = cfg.limits  # validated as dict[str, Any] by AgentConfig
+
+        # Parse agent overrides through the same schema for validation
+        if agent_raw:
+            # Merge: agent values override global values
+            merged = {
+                "max_steps":                 global_budget.max_steps,
+                "max_tokens_per_session":    global_budget.max_tokens_per_session,
+                "max_tool_calls_per_prompt": global_budget.max_tool_calls_per_prompt,
+                "tool_cost_weights":         dict(global_budget.tool_cost_weights),
+                "loop_detection_window":     global_budget.loop_detection_window,
+                "loop_similarity_threshold": global_budget.loop_similarity_threshold,
+            }
+            merged.update(agent_raw)
+            try:
+                effective = ExecutionBudgetConfig.model_validate(merged)
+            except Exception as e:
+                log.warning("agent limits config invalid — using global defaults",
+                            extra={"agent_id": cfg.id, "error": str(e)})
+                effective = global_budget
+        else:
+            effective = global_budget
+
+        return ExecutionLimits(
+            max_steps=effective.max_steps,
+            max_tokens_per_session=effective.max_tokens_per_session,
+            max_tool_calls_per_prompt=effective.max_tool_calls_per_prompt,
+            tool_cost_weights=dict(effective.tool_cost_weights),
+            loop_detection_window=effective.loop_detection_window,
+            loop_similarity_threshold=effective.loop_similarity_threshold,
+        )
+
 
 # ── Module-level adapter builders ─────────────────────────────────────────
 #
@@ -888,7 +1011,7 @@ def _make_injection_doc_scanner() -> InjectionScanner:
     structured content (lower false-positive rate than injection_patterns.yaml).
     """
     from pathlib import Path as _Path
-    doc_patterns = _Path(__file__).parent.parent / "adapters/scanners/patterns_for_doc.yaml"
+    doc_patterns = _Path(__file__).parent.parent / "adapters/scanners/l10n/patterns_for_doc.yaml"
     return InjectionScanner(
         patterns_file=doc_patterns if doc_patterns.exists() else None,
         name="injection_scan_doc",
@@ -897,9 +1020,15 @@ def _make_injection_doc_scanner() -> InjectionScanner:
 
 # Named registry — explicit, no magic strings
 _SCANNER_FACTORIES: dict[str, "Any"] = {
-    "regex_pii":          _make_pii_scanner,
-    "injection_scan":     _make_injection_scanner,
-    "mcp_metadata_scan":  lambda cfg: MCPMetadataScanner(**cfg),
+    "regex_pii":           _make_pii_scanner,
+    "injection_scan":      _make_injection_scanner,
+    "mcp_metadata_scan":   lambda cfg: MCPMetadataScanner(**cfg),
+    "jailbreak_scan":      lambda cfg: __import__(
+        "harness.adapters.scanners.jailbreak_scan", fromlist=["JailbreakScanner"]
+    ).JailbreakScanner(**cfg),
+    "identity_spoof_scan": lambda cfg: __import__(
+        "harness.adapters.scanners.identity_spoof_scan", fromlist=["IdentitySpoofScanner"]
+    ).IdentitySpoofScanner(**cfg),
 }
 
 

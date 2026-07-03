@@ -22,9 +22,33 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"FAIL\nError: {e}", file=sys.stderr)
         return 1
 
-    print(f"  tenant_id:  {config.tenant_id}")
-    print(f"  policy:     {config.policy.name}")
-    print(f"  audit_sinks: {[s.name for s in config.audit_sinks]}")
+    print(f"  tenant_id:    {config.tenant_id}")
+    print(f"  policy:       {config.policy.name}")
+    print(f"  audit_sinks:  {[s.name for s in config.audit_sinks]}")
+
+    # Normalization
+    norm = config.normalization
+    print(f"  normalization: enabled={norm.enabled}" + (
+        f"  decode={norm.decode}  max_depth={norm.max_depth}" if norm.enabled else ""
+    ))
+
+    # Session accumulator
+    sess = config.session
+    print(f"  session:       enabled={sess.enabled}" + (
+        f"  backend={sess.backend}  threshold={sess.escalation_threshold}"
+        f"  window={sess.window_size}  on_escalation={sess.on_escalation}"
+        if sess.enabled else ""
+    ))
+
+    # Scan boundaries — list configured scanners
+    for boundary_name, boundary_cfg in [
+        ("scan_input",  config.scan_input),
+        ("scan_output", config.scan_output),
+    ]:
+        scanners = [s.name for s in getattr(boundary_cfg, "scanners", [])]
+        print(f"  {boundary_name}: enabled={boundary_cfg.enabled}" + (
+            f"  scanners={scanners}" if scanners else ""
+        ))
 
     # ── 2. Validate agent files ───────────────────────────────────────────
     agents_dir: Path | None = None

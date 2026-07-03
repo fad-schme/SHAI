@@ -1,0 +1,197 @@
+# injection_patterns.l10n.yaml — multilingual variants of injection_patterns.yaml
+# ================================================================================
+# French, Spanish, German, and Mandarin Chinese variants of the highest-threat
+# injection rules. Categories mirror injection_patterns.yaml so findings merge
+# cleanly. Uses double-quoted YAML strings throughout to avoid escaping issues.
+
+patterns:
+
+  # ── French (FR) ──────────────────────────────────────────────────────────
+
+  - name: fr.instruction_override
+    meta:
+      description: "FR — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      ignore_instructions_fr:     "(?i)\\bignore[zr]\\b.{0,40}\\b(toutes?\\s+les?\\s+|les?\\s+)?(instructions?|r\\u00e8gles?|consignes?)\\b"
+      disregard_fr:               "(?i)\\b(oubliez?|ignorez|mettez\\s+de\\s+c\\u00f4t\\u00e9)\\b.{0,30}\\b(vos?\\s+|tes?\\s+)?(instructions?|r\\u00e8gles?|directives?)\\b"
+      new_instructions_fr:        "(?i)\\b(vos?\\s+nouvelles?\\s+|nouvelles?\\s+)instructions?\\s+(sont|seront)\\b"
+      you_no_longer_follow_fr:    "(?i)\\btu\\s+n.{0,3}as?\\s+plus\\s+(\\u00e0\\s+)?(suivre|ob\\u00e9ir|respecter)\\b.{0,30}\\b(les?\\s+)?(r\\u00e8gles?|instructions?|directives?)\\b"
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: fr.jailbreak_prompt
+    meta:
+      description: "FR — jailbreak and persona override"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      act_as_uncensored_fr:       "(?i)\\b(agis?\\s+comme|fais?\\s+semblant\\s+d.{0,3}\\u00eatre|joue\\s+le\\s+r\\u00f4le\\s+de)\\b.{0,40}\\b(une?\\s+)?(IA|intelligence\\s+artificielle)\\b.{0,30}\\b(sans\\s+restrictions?|non\\s+censur\\u00e9)\\b"
+      developer_mode_fr:          "(?i)\\b(tu\\s+es\\s+maintenant|activez?|entrez?\\s+en)\\b.{0,30}\\bmode\\s+(d\\u00e9veloppeur|debug|administrateur)\\b"
+      no_rules_fr:                "(?i)\\b(sans\\s+r\\u00e8gles?|libre\\s+de\\s+toute\\s+restriction|plus\\s+de\\s+restrictions?)\\b"
+      dan_fr:                     "(?i)\\bDAN\\b.{0,50}\\b(activ\\u00e9|activer|maintenant|peux\\s+tout\\s+faire)\\b"
+    functions:
+      - persona_score
+      - intent_score
+
+  - name: fr.config_leakage
+    meta:
+      description: "FR — system prompt extraction"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      reveal_system_prompt_fr:    "(?i)\\b(r\\u00e9v\\u00e8lez?|montrez?|affichez?|r\\u00e9p\\u00e8tez?)\\b.{0,30}\\b(ton\\s+|votre\\s+)?(prompt\\s+syst\\u00e8me|instructions?\\s+cach\\u00e9es?|prompt\\s+initial)\\b"
+      what_are_instructions_fr:   "(?i)\\bquelles?\\s+sont\\s+(tes?|vos?)\\s+(instructions?|consignes?\\s+initiales?|directives?)\\b"
+
+  - name: fr.tool_coercion
+    meta:
+      description: "FR — tool call coercion"
+      threat_level: 4
+      severity: high
+      category: tool_injection
+    strings:
+      you_must_call_fr:           "(?i)\\btu\\s+dois\\s+(appeler|invoquer|utiliser|ex\\u00e9cuter)\\b"
+      before_responding_fr:       "(?i)\\bavant\\s+de\\s+r\\u00e9pondre\\b.{0,20}\\b(appelez?|invoquez?|ex\\u00e9cutez?)\\b"
+
+  # ── Spanish (ES) ─────────────────────────────────────────────────────────
+
+  - name: es.instruction_override
+    meta:
+      description: "ES — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      ignore_instructions_es:     "(?i)\\bignora[r]?\\b.{0,40}\\b(todas?\\s+las?\\s+|las?\\s+)?(instrucciones?|reglas?|normas?)\\b"
+      disregard_es:               "(?i)\\b(olvida[r]?|descarta[r]?|ignora[r]?)\\b.{0,30}\\b(tus?\\s+|sus?\\s+)?(instrucciones?|directrices?|reglas?)\\b"
+      new_instructions_es:        "(?i)\\b(tus?\\s+nuevas?\\s+|nuevas?\\s+)instrucciones?\\s+(son|ser\\u00e1n)\\b"
+      you_no_longer_es:           "(?i)\\bya\\s+no\\s+(tienes?\\s+que\\s+|debes?\\s+)(seguir|obedecer|respetar)\\b.{0,30}\\b(las?\\s+)?(reglas?|instrucciones?|directrices?)\\b"
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: es.jailbreak_prompt
+    meta:
+      description: "ES — jailbreak and persona override"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      act_as_uncensored_es:       "(?i)\\b(act\\u00faa\\s+como|finge\\s+ser|interpreta\\s+el\\s+papel\\s+de)\\b.{0,40}\\b(una?\\s+)?(IA|inteligencia\\s+artificial)\\b.{0,30}\\b(sin\\s+restricciones?|no\\s+censurada?)\\b"
+      developer_mode_es:          "(?i)\\b(ahora\\s+eres|activa[r]?|entra[r]?\\s+en)\\b.{0,30}\\bmodo\\s+(desarrollador|depuraci\\u00f3n|administrador)\\b"
+      no_rules_es:                "(?i)\\b(sin\\s+reglas?|libre\\s+de\\s+restricci\\u00f3n|sin\\s+restricciones?)\\b"
+      dan_es:                     "(?i)\\bDAN\\b.{0,50}\\b(activado|activar|ahora|puedes\\s+hacer\\s+todo)\\b"
+    functions:
+      - persona_score
+      - intent_score
+
+  - name: es.config_leakage
+    meta:
+      description: "ES — system prompt extraction"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      reveal_system_prompt_es:    "(?i)\\b(revela[r]?|muestra[r]?|mu\\u00e9strame|repite[r]?)\\b.{0,30}\\b(tu\\s+|su\\s+)?(prompt\\s+del?\\s+sistema|instrucciones?\\s+ocultas?|prompt\\s+inicial)\\b"
+      what_are_instructions_es:   "(?i)\\bcu\\u00e1les?\\s+son\\s+(tus?|sus?)\\s+(instrucciones?|directrices?\\s+iniciales?)\\b"
+
+  - name: es.tool_coercion
+    meta:
+      description: "ES — tool call coercion"
+      threat_level: 4
+      severity: high
+      category: tool_injection
+    strings:
+      you_must_call_es:           "(?i)\\bdebes?\\s+(llamar|invocar|usar|ejecutar)\\b"
+      before_responding_es:       "(?i)\\bantes\\s+de\\s+responder\\b.{0,20}\\b(llama[r]?|invoca[r]?|ejecuta[r]?)\\b"
+
+  # ── German (DE) ──────────────────────────────────────────────────────────
+
+  - name: de.instruction_override
+    meta:
+      description: "DE — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      ignore_instructions_de:     "(?i)\\bignoriere?\\b.{0,40}\\b(alle\\s+|die\\s+)?(Anweisungen|Regeln|Direktiven)\\b"
+      forget_instructions_de:     "(?i)\\bvergiss\\b.{0,30}\\b(deine\\s+|alle\\s+)?(Anweisungen|Regeln|vorherigen\\s+Anweisungen)\\b"
+      new_instructions_de:        "(?i)\\b(deine\\s+neuen?\\s+|neue\\s+)Anweisungen?\\s+(sind|lauten)\\b"
+      you_no_longer_de:           "(?i)\\bdu\\s+(musst|sollst)\\b.{0,20}\\b(Regeln?|Anweisungen?|Richtlinien?)\\b.{0,20}\\bnicht\\s+mehr\\b"
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: de.jailbreak_prompt
+    meta:
+      description: "DE — jailbreak and persona override"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      act_as_uncensored_de:       "(?i)\\b(handle\\s+als|spiele\\s+die\\s+Rolle\\s+von)\\b.{0,40}\\b(eine[rms]?\\s+)?(KI|k\\u00fcnstliche\\s+Intelligenz)\\b.{0,30}\\b(ohne\\s+Einschr\\u00e4nkungen?|unzensiert)\\b"
+      developer_mode_de:          "(?i)\\b(du\\s+bist\\s+jetzt|aktiviere[n]?|wechsle\\s+in\\s+den)\\b.{0,30}\\b(Entwickler|Debug|Administrator)(modus|-Modus)\\b"
+      no_rules_de:                "(?i)\\b(ohne\\s+Regeln?|frei\\s+von\\s+(allen?\\s+)?Einschr\\u00e4nkungen?|keine\\s+Einschr\\u00e4nkungen?)\\b"
+      dan_de:                     "(?i)\\bDAN\\b.{0,50}\\b(aktiviert|aktivieren|jetzt|kannst\\s+alles\\s+tun)\\b"
+    functions:
+      - persona_score
+      - intent_score
+
+  - name: de.config_leakage
+    meta:
+      description: "DE — system prompt extraction"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      reveal_system_prompt_de:    "(?i)\\b(zeige[n]?|offenbare[n]?|wiederhole[n]?|gib\\s+aus)\\b.{0,30}\\b(deinen?\\s+|den\\s+)?(System-?Prompt|versteckten?\\s+Anweisungen?|geheimen?\\s+Prompt)\\b"
+      what_are_instructions_de:   "(?i)\\bwas\\s+sind\\s+deine\\s+(Anweisungen?|geheimen?\\s+Direktiven?|initialen?\\s+Anweisungen?)\\b"
+
+  - name: de.tool_coercion
+    meta:
+      description: "DE — tool call coercion"
+      threat_level: 4
+      severity: high
+      category: tool_injection
+    strings:
+      you_must_call_de:           "(?i)\\bdu\\s+musst\\s+(aufrufen|ausf\\u00fchren|verwenden)\\b"
+      before_responding_de:       "(?i)\\bbevor\\s+du\\s+antwortest\\b.{0,20}\\b(ruf|f\\u00fchre|starte)\\b"
+
+  # ── Mandarin Chinese (ZH) ────────────────────────────────────────────────
+
+  - name: zh.instruction_override
+    meta:
+      description: "ZH — direct instruction override (Simplified Chinese)"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      ignore_instructions_zh:     "\u5ffd\u7565.{0,20}(\u6240\u6709|\u4e4b\u524d\u7684?|\u524d\u9762\u7684?).{0,10}(\u6307\u4ee4|\u89c4\u5219|\u9650\u5236|\u7ea6\u675f)"
+      forget_instructions_zh:     "\u5fd8\u8bb0.{0,20}(\u4e4b\u524d\u7684?|\u6240\u6709\u7684?|\u4f60\u7684).{0,10}(\u6307\u4ee4|\u89c4\u5219|\u8bbe\u7f6e|\u8bad\u7ec3)"
+      override_rules_zh:          "(\u8986\u76d6|\u7ed5\u8fc7|\u5ffd\u89c6).{0,15}(\u5b89\u5168|\u9650\u5236|\u89c4\u5219|\u8fc7\u6ee4\u5668)"
+
+  - name: zh.jailbreak_prompt
+    meta:
+      description: "ZH — jailbreak and persona override (Simplified Chinese)"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      act_as_uncensored_zh:       "(\u626e\u6f14|\u5047\u88c5|\u5145\u5f53).{0,20}(\u4e0d\u53d7\u9650\u5236\u7684?|\u65e0\u5ba1\u67e5\u7684?|\u81ea\u7531\u7684?).{0,10}(AI|\u4eba\u5de5\u667a\u80fd|\u52a9\u624b)"
+      developer_mode_zh:          "(\u4f60\u73b0\u5728\u5904\u4e8e|\u8fdb\u5165|\u542f\u52a8).{0,10}(\u5f00\u53d1\u8005|\u8c03\u8bd5|\u7ba1\u7406\u5458).{0,5}\u6a21\u5f0f"
+      no_rules_zh:                "(\u6ca1\u6709\u9650\u5236|\u4e0d\u53d7\u7ea6\u675f|\u4e0d\u53d7\u9650\u5236|\u6ca1\u6709\u89c4\u5219).{0,20}(\u56de\u7b54|\u56de\u590d|\u544a\u8bc9\u6211)"
+
+  - name: zh.config_leakage
+    meta:
+      description: "ZH — system prompt extraction (Simplified Chinese)"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      reveal_prompt_zh:           "(\u663e\u793a|\u5c55\u793a|\u91cd\u590d|\u8f93\u51fa|\u6253\u5370).{0,20}(\u4f60\u7684|\u7cfb\u7edf).{0,10}(\u63d0\u793a\u8bcd|\u6307\u4ee4|system prompt|\u521d\u59cb\u8bbe\u7f6e)"
+      what_instructions_zh:       "(\u4f60\u7684|\u4f60\u6709\u4ec0\u4e48|\u7cfb\u7edf).{0,5}(\u9690\u85cf\u6307\u4ee4|\u7cfb\u7edf\u63d0\u793a|\u521d\u59cb\u6307\u4ee4).{0,10}(\u662f\u4ec0\u4e48|\u662f|\u4e3a)"
