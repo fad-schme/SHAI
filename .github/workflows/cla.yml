@@ -1,0 +1,92 @@
+name: CLA Assistant
+
+# pull_request_target runs in the context of the BASE branch, giving the
+# workflow write access even for PRs from forks. This is required for the
+# action to post comments and update PR status checks.
+#
+# Security note: we never checkout or execute untrusted fork code in this
+# workflow. The action only reads PR metadata and comments — it is safe
+# to run with write permissions under pull_request_target.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize, reopened]
+
+# Explicit minimal permissions — nothing beyond what the action needs.
+permissions:
+  actions: write        # required to re-run the status check
+  contents: write       # required to commit the signature file
+  pull-requests: write  # required to post comments on the PR
+  statuses: write       # required to set the CLA status check
+
+jobs:
+  cla-assistant:
+    runs-on: ubuntu-latest
+
+    # Run on any PR event, OR on a comment that contains the sign phrase
+    if: |
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA'))
+
+    steps:
+      - name: CLA Assistant
+        # Pinned to a specific commit SHA for supply-chain security.
+        # To update: check https://github.com/contributor-assistant/github-action
+        # for the latest release, verify the SHA, and update below.
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PERSONAL_ACCESS_TOKEN is only required if you store signatures
+          # in a SEPARATE private repository (see path-to-signatures below).
+          # If storing in this repo (the default), remove or leave commented.
+          # PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_SIGNATURES_PAT }}
+        with:
+          # Path to CLA.md in this repository — contributors read this before signing.
+          path-to-document: 'https://github.com/${{ github.repository }}/blob/main/CLA.md'
+
+          # Where signatures are stored. This file is committed automatically
+          # on first signature. Do NOT create it manually.
+          path-to-signatures: 'signatures/cla.json'
+
+          # Branch where the signatures file is committed.
+          # This branch must NOT be protected (the action commits directly to it).
+          branch: 'main'
+
+          # Accounts that are exempt from the CLA check.
+          # Add maintainer GitHub usernames and bot accounts here.
+          # Wildcards are supported: bot* matches all bot accounts.
+          allowlist: dependabot[bot],renovate[bot], technified-apps, fad-schme
+
+          # Lock the PR conversation after merge so signatures cannot be
+          # deleted retroactively by the contributor.
+          lock-pullrequest-aftermerge: true
+
+          # Custom PR comment when CLA has not been signed.
+          custom-notsigned-prcomment: |
+            Thank you for contributing to SHAI! 🎉
+
+            Before we can merge this pull request, we need you to sign our
+            **Contributor License Agreement (CLA)**.
+
+            The CLA allows SHAI to remain open source (Apache 2.0) while also
+            supporting SHAI Enterprise. You retain full rights to use your own
+            contribution under Apache 2.0 for any other purpose.
+
+            **To sign:** post the following as a comment on this PR:
+
+            ```
+            I have read the CLA Document and I hereby sign the CLA
+            ```
+
+            You can read the full agreement here: [CLA.md](https://github.com/${{ github.repository }}/blob/main/CLA.md)
+
+            You only need to sign once — future PRs from your account will be
+            recognized automatically.
+
+          # Custom PR comment when all contributors have signed.
+          custom-allsigned-prcomment: |
+            ✅ All contributors have signed the CLA. Thank you!
