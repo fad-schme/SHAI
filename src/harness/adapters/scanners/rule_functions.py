@@ -142,11 +142,40 @@ def encoding_score(prompt: str) -> int:
     ]
     return sum(1 for pat in patterns if re.search(pat, prompt))
 
+# Compiled once at module load. Matches research/educational framing that
+# contextualises a persona name as a subject of discussion rather than an
+# invocation. Used by persona_score() to suppress false positives on
+# security-research queries like "Explain the DAN jailbreak technique".
+_RESEARCH_CONTEXT_RE = re.compile(
+    r"\b(explain|what\s+is|what\s+are|describe|discuss|how\s+does|how\s+do|"
+    r"tell\s+me\s+about|research|technique|method|approach|study|paper|"
+    r"article|understand|overview|survey|analysis|definition|concept)\b",
+    re.IGNORECASE,
+)
+
+# Aliases that are also common English words or abbreviations when used as
+# the *subject* of an educational sentence. These receive a research-context
+# exemption; aliases that are unambiguously attack-specific (e.g. "devmode",
+# "rogue ai") are never exempted.
+_RESEARCH_EXEMPT_ALIASES = frozenset(["dan"])
+
+
 def persona_score(prompt: str) -> int:
-    """Looks for references to known jailbreak or alternate AI personas."""
-    #logger.info("****** persona_score *******")
-    jailbreak_aliases = ['dan', 'devmode', 'openassistant', 'rogue ai', 'uncensored', 'chatgptx']
-    return sum(1 for alias in jailbreak_aliases if alias.lower() in prompt.lower())
+    """Looks for references to known jailbreak or alternate AI personas.
+
+    Applies a research-context exemption for aliases that are also common
+    tokens in security-education sentences (e.g. "Explain the DAN technique").
+    Unambiguous attack-only aliases are never exempted.
+    """
+    jailbreak_aliases = ["dan", "devmode", "openassistant", "rogue ai", "uncensored", "chatgptx"]
+    is_research_context = bool(_RESEARCH_CONTEXT_RE.search(prompt))
+    count = 0
+    for alias in jailbreak_aliases:
+        if re.search(rf"\b{re.escape(alias)}\b", prompt, re.IGNORECASE):
+            if is_research_context and alias in _RESEARCH_EXEMPT_ALIASES:
+                continue
+            count += 1
+    return count
 
 def cumulative_soft_triggers(prompt):
     #logger.info("****** cumulative_soft_triggers *******")

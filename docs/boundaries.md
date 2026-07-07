@@ -29,11 +29,17 @@ scan_input:
   enabled: true
   block_at: high
   scanners:
-    - name: injection_scan       # prompt injection, tool coercion, exfiltration
-    - name: jailbreak_scan       # guardrail-integrity: persona override, refusal suppression
-    - name: identity_spoof_scan  # agentic identity: claimed orchestrator/system authority
-    - name: regex_pii            # PII and credentials (with optional redaction)
+    - name: injection_scan       # prompt injection, tool coercion, exfiltration — EN + FR, ES, DE, ZH
+    - name: jailbreak_scan       # guardrail-integrity: persona override, refusal suppression — EN + FR, ES, DE, ZH
+    - name: identity_spoof_scan  # agentic identity: claimed orchestrator/system authority — EN + FR, ES, DE, ZH
+    - name: regex_pii            # PII and credentials (with optional redaction) — EN
 ```
+
+**Multilingual coverage:** `injection_scan`, `jailbreak_scan`, and `identity_spoof_scan` automatically
+load multilingual variants from `l10n/*.l10n.yaml` alongside the base English catalog. No
+configuration is required — French, Spanish, German, and Simplified Chinese patterns are active
+by default. The multilingual rules cover the highest-threat families: instruction override,
+persona/jailbreak, system prompt extraction, and tool coercion in each language.
 
 ```python
 verdict = await harness.scan_input(user_text, ctx)

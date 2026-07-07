@@ -34,12 +34,32 @@ Runs on every user message before it reaches the LLM. Scanners run concurrently.
 
 **Scanners:** `InjectionScanner` (`injection_patterns.yaml`, 17 rules) · `JailbreakScanner` (`jailbreak_patterns.yaml`, 6 rules) · `IdentitySpoofScanner` (`identity_spoof_patterns.yaml`, 4 rules) · `RegexPIIScanner` (7 categories) · `FileScanner` (structural + doc-tuned injection scan on extracted text)
 
-| Scanner | Category prefix | What it catches |
-|---|---|---|
-| `injection_scan` | `prompt_injection`, `tool_injection`, `obfuscation`, … | Data-boundary attacks: tool coercion, exfiltration, context spoofing, encoded payloads |
-| `jailbreak_scan` | `jailbreak.*` | Guardrail-integrity attacks: persona override, instruction override, refusal suppression, prompt extraction, mode activation |
-| `identity_spoof_scan` | `identity_spoof.*` | Agentic identity spoofing: claimed orchestrator/system authority, peer privilege escalation, tool-result authority injection |
-| `regex_pii` | `pii.*`, `secret.*`, `network.*` | PII and credential patterns with optional redaction |
+| Scanner | Category prefix | What it catches | Languages |
+|---|---|---|---|
+| `injection_scan` | `prompt_injection`, `tool_injection`, `obfuscation`, … | Data-boundary attacks: tool coercion, exfiltration, context spoofing, encoded payloads (17 EN rules) | EN + FR, ES, DE, ZH |
+| `jailbreak_scan` | `jailbreak.*` | Guardrail-integrity attacks: persona override, instruction override, refusal suppression, prompt extraction, mode activation (6 EN rules) | EN + FR, ES, DE, ZH |
+| `identity_spoof_scan` | `identity_spoof.*` | Agentic identity spoofing: claimed orchestrator/system authority, peer privilege escalation, tool-result authority injection (4 EN rules) | EN + FR, ES, DE, ZH |
+| `regex_pii` | `pii.*`, `secret.*`, `network.*` | PII and credential patterns with optional redaction | EN (Unicode-aware) |
+
+**Multilingual pattern catalogs (`l10n/`):** Three scanners ship multilingual variants in
+`src/harness/adapters/scanners/l10n/`. Pattern files follow the naming convention
+`<scanner>_patterns.l10n.yaml`. Each l10n file covers the highest-threat rule families
+per language. `patterns_for_doc.yaml` (tool result scanning) and `mcp_metadata_patterns.yaml`
+are English-only — MCP metadata is typically ASCII and tool result content is
+language-independent at the structural level.
+
+**L10n coverage per scanner:**
+
+| Rule family | FR | ES | DE | ZH |
+|---|---|---|---|---|
+| Injection: instruction override | ✅ | ✅ | ✅ | ✅ |
+| Injection: jailbreak/persona | ✅ | ✅ | ✅ | ✅ |
+| Injection: config/prompt leakage | ✅ | ✅ | ✅ | ✅ |
+| Injection: tool coercion | ✅ | ✅ | ✅ | ⚠️ missing |
+| Jailbreak: all 4 families | ✅ | ✅ | ✅ | ✅ |
+| Identity spoof: all 3 families | ✅ | ✅ | ✅ | ✅ |
+
+ZH `tool_coercion` is the one known gap — all other languages have it. Tracked as a backlog item.
 
 **Actions:** `block` · `alert` · `redact`
 

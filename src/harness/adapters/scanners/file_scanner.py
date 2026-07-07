@@ -278,8 +278,8 @@ def _check_ooxml(path: Path, findings: list[Finding]) -> None:
                                 detail=f"Injection pattern found in {name}",
                             ))
                             return
-                except Exception:
-                    pass
+                except Exception as entry_err:  # nosec B110 — malformed OOXML entry; skip and continue scanning
+                    log.debug("OOXML entry scan error in %s: %s", name, entry_err)
     except Exception as e:
         log.debug("OOXML scan failed: %s", e)
 

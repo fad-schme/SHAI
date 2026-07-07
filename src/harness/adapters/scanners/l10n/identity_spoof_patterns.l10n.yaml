@@ -132,3 +132,67 @@ patterns:
     strings:
       end_of_result_zh:           "(\u6587\u6863\u7ed3\u675f|\u7ed3\u679c\u7ed3\u675f|\u5185\u5bb9\u7ed3\u675f).{0,40}(\u65b0\u6307\u4ee4|\u7cfb\u7edf|\u7f16\u6392\u5668\u8bf4)"
       ignore_above_zh:            "(\u5ffd\u7565|\u4e22\u5f03).{0,10}(\u4ee5\u4e0a|\u4e0a\u9762\u7684|\u4e4b\u524d\u7684).{0,10}(\u7ed3\u679c|\u5185\u5bb9).{0,20}(\u73b0\u5728|\u6539\u4e3a|\u4f60\u7684\u65b0\u4efb\u52a1)"
+
+  # ── FR identity_spoof.claimed_peer_privilege ──────────────────────────────
+
+  - name: fr.identity_spoof.claimed_peer_privilege
+    meta:
+      description: "FR — peer agent identity claim to escalate privileges"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.claimed_peer_privilege
+    strings:
+      i_am_agent_fr:              "(?i)\\bje\\s+suis\\s+(l.{0,3})?agent\\b.{0,40}\\b(j.{0,3}ai\\s+(la\\s+)?permission|je\\s+suis\\s+autoris\u00e9)\\b"
+      agent_id_override_fr:       "(?i)\\b(mon\\s+identifiant\\s+d.{0,3}agent|agent[_\\s]?id\\s*[:=])\\s*\\S+.{0,30}\\b(autoriser|permettre|accorder)\\b"
+      acting_as_privileged_fr:    "(?i)\\b(agissant|parlant|r\u00e9pondant)\\s+en\\s+tant\\s+que\\b.{0,20}\\b(agent\\s+)?(de\\s+confiance|autoris\u00e9|privil\u00e9gi\u00e9)\\b"
+      authorized_agent_fr:        "(?i)\\bagent\\b.{0,20}\\b(autoris\u00e9|de\\s+confiance|v\u00e9rifi\u00e9)\\b.{0,30}\\b(demande|exige|ordonne)\\b"
+    functions:
+      - intent_score
+
+  # ── ES identity_spoof.claimed_peer_privilege ──────────────────────────────
+
+  - name: es.identity_spoof.claimed_peer_privilege
+    meta:
+      description: "ES — peer agent identity claim to escalate privileges"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.claimed_peer_privilege
+    strings:
+      i_am_agent_es:              "(?i)\\bsoy\\s+(el\\s+)?agente\\b.{0,40}\\b(tengo\\s+permiso|estoy\\s+autorizado)\\b"
+      agent_id_override_es:       "(?i)\\b(mi\\s+identificador\\s+de\\s+agente|agent[_\\s]?id\\s*[:=])\\s*\\S+.{0,30}\\b(autorizar|permitir|conceder)\\b"
+      acting_as_privileged_es:    "(?i)\\b(actuando|hablando|respondiendo)\\s+como\\b.{0,20}\\b(agente\\s+)?(de\\s+confianza|autorizado|privilegiado)\\b"
+      authorized_agent_es:        "(?i)\\bagente\\b.{0,20}\\b(autorizado|de\\s+confianza|verificado)\\b.{0,30}\\b(instruye|requiere|ordena)\\b"
+    functions:
+      - intent_score
+
+  # ── DE identity_spoof.claimed_peer_privilege ──────────────────────────────
+
+  - name: de.identity_spoof.claimed_peer_privilege
+    meta:
+      description: "DE — peer agent identity claim to escalate privileges"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.claimed_peer_privilege
+    strings:
+      i_am_agent_de:              "(?i)\\bich\\s+bin\\s+(der\\s+)?Agent\\b.{0,40}\\b(habe\\s+(die\\s+)?Erlaubnis|bin\\s+autorisiert)\\b"
+      agent_id_override_de:       "(?i)\\b(meine\\s+Agenten-?ID|Agent[_\\s]?ID\\s*[:=])\\s*\\S+.{0,30}\\b(autorisieren|erlauben|gew\u00e4hren)\\b"
+      acting_as_privileged_de:    "(?i)\\b(handelnd|sprechend|schreibend)\\s+als\\b.{0,20}\\b(der\\s+)?(vertrauensw\u00fcrdige[rn]?|autorisierte[rn]?|privilegierte[rn]?)\\b.{0,10}\\bAgent\\b"
+      authorized_agent_de:        "(?i)\\bAgent\\b.{0,20}\\b(autorisiert|vertrauensw\u00fcrdig|verifiziert)\\b.{0,30}\\b(weist\\s+an|verlangt|fordert)\\b"
+    functions:
+      - intent_score
+
+  # ── ZH identity_spoof.claimed_peer_privilege ──────────────────────────────
+
+  - name: zh.identity_spoof.claimed_peer_privilege
+    meta:
+      description: "ZH — peer agent identity claim to escalate privileges"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.claimed_peer_privilege
+    strings:
+      i_am_agent_zh:              "\u6211\u662f.{0,10}(\u4ee3\u7406|Agent).{0,20}(\u6211\u6709\u6743\u9650|\u6211\u88ab\u6388\u6743|\u6211\u5df2\u88ab\u6279\u51c6)"
+      agent_id_override_zh:       "([\u6211\u6211\u7684]Agent ID|[\u4ee3\u7406\u6211\u7684]\u6807\u8bc6\u7b26).{0,5}[:=].{0,20}(\u6388\u6743|\u5141\u8bb8|\u63d0\u5347\u6743\u9650)"
+      acting_as_privileged_zh:    "\u4ee5.{0,10}(\u53ef\u4fe1|[\u5df2\u88ab]\u6388\u6743|\u7279\u6743).{0,5}([\u4ee3\u7406Agent]).{0,5}\u8eab\u4efd.{0,5}(\u6307\u793a|\u8981\u6c42|\u547d\u4ee4)"
+      authorized_agent_zh:        "(\u53ef\u4fe1|\u88ab\u6388\u6743|\u7ecf\u8fc7\u9a8c\u8bc1).{0,5}([\u4ee3\u7406Agent]).{0,20}(\u8981\u6c42|\u6307\u793a|\u547d\u4ee4)"
+    functions:
+      - intent_score

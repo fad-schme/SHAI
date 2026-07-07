@@ -1,0 +1,261 @@
+# patterns_for_doc.l10n.yaml — multilingual variants of patterns_for_doc.yaml
+# =============================================================================
+# French, Spanish, German, and Mandarin Chinese variants of the nine doc-scanning
+# rule families. These patterns fire when SHAI scans tool results: documents,
+# web pages, emails, and API responses that re-enter the LLM's context.
+# Indirect prompt injection in non-English content is a documented production
+# threat vector — this catalog ensures non-English payloads are caught at the
+# tool_result_scan boundary.
+#
+# Categories mirror patterns_for_doc.yaml so findings merge cleanly.
+# Uses double-quoted YAML strings throughout to avoid escaping issues.
+
+patterns:
+
+  # ── French (FR) ──────────────────────────────────────────────────────────
+
+  - name: fr.doc.prompt_injection_hijack
+    meta:
+      description: "FR — classic prompt override in document content"
+      severity: high
+      category: injection
+    strings:
+      ignore_instructions_fr:   "(?i)\\bignore[rz]?\\b.{0,40}\\b(les?\\s+)?(instructions?|consignes?|r\u00e8gles?)\\b"
+      disregard_context_fr:     "(?i)\\b(mets?\\s+de\\s+c\u00f4t\u00e9|ignore[rz]?|rejette[rz]?)\\b.{0,30}\\b(le\\s+)?contexte\\s+(pr\u00e9c\u00e9dent|ant\u00e9rieur)\\b"
+      override_system_fr:       "(?i)\\b(remplace[rz]?|contourne[rz]?|annule[rz]?)\\b.{0,30}\\b(le\\s+)?syst\u00e8me\\b"
+
+  - name: fr.doc.impersonation_simulation
+    meta:
+      description: "FR — role impersonation or simulation in document content"
+      severity: high
+      category: impersonation
+    strings:
+      act_as_fr:                "(?i)\\b(agis?|comporte-?toi)\\s+(comme|en\\s+tant\\s+que)\\b.{0,40}\\b(IA|utilisateur|d\u00e9veloppeur)\\b"
+      simulate_behavior_fr:     "(?i)\\b(simule[rz]?|imite[rz]?)\\b.{0,30}\\b(le\\s+)?(comportement|r\u00f4le)\\b"
+      pretend_to_fr:            "(?i)\\bfais?\\s+semblant\\s+de\\b.{0,40}"
+
+  - name: fr.doc.system_probe_exfil
+    meta:
+      description: "FR — system prompt extraction attempts in document content"
+      severity: high
+      category: leakage
+    strings:
+      what_is_prompt_fr:        "(?i)\\bquel\\s+est\\s+(ton|votre)\\s+(prompt\\s+syst\u00e8me|system\\s+prompt)\\b"
+      print_instructions_fr:    "(?i)\\b(imprime[rz]?|affiche[rz]?|r\u00e9p\u00e8te[rz]?)\\b.{0,20}\\b(les?\\s+)?instructions?\\b"
+      show_configuration_fr:    "(?i)\\b(montre[rz]?|affiche[rz]?)\\b.{0,20}\\b(ta\\s+|votre\\s+)?configuration\\b"
+
+  - name: fr.doc.jailbreak_escape_attempt
+    meta:
+      description: "FR — filter bypass attempts in document content"
+      severity: high
+      category: jailbreak
+    strings:
+      unfiltered_response_fr:   "(?i)\\br\u00e9ponse\\s+(non\\s+filtr\u00e9e?|sans\\s+filtre)\\b"
+      not_an_ai_fr:             "(?i)\\btu\\s+n.{0,3}es\\s+pas\\s+une?\\s+(IA|intelligence\\s+artificielle)\\b"
+      bypass_filters_fr:        "(?i)\\b(contourne[rz]?|ignore[rz]?)\\b.{0,20}\\b(les?\\s+)?(filtres?|s\u00e9curit\u00e9|protections?)\\b"
+
+  - name: fr.doc.social_engineering
+    meta:
+      description: "FR — social engineering tricks in document content"
+      severity: medium
+      category: social_engineering
+    strings:
+      testing_only_fr:          "(?i)\\bc.{0,3}est\\s+(seulement|juste)\\s+pour\\s+(le\\s+)?test\\b"
+      response_audited_fr:      "(?i)\\bta\\s+r\u00e9ponse\\s+sera\\s+audit\u00e9e\\b"
+      you_are_authorized_fr:    "(?i)\\btu\\s+es\\s+autoris\u00e9\\s+\u00e0\\b"
+
+  - name: fr.doc.llm_prompt_artifacts
+    meta:
+      description: "FR — LLM marker artifacts in document content"
+      severity: high
+      category: format_artifact
+    strings:
+      system_marker_fr:         "(?i)\\[syst\u00e8me\\]\\s*:"
+      instructions_heading_fr:  "(?im)^#{1,3}\\s*instructions?\\s*$"
+      new_instructions_fr:      "(?i)\\bnouvelles?\\s+instructions?\\s*:"
+
+  # ── Spanish (ES) ─────────────────────────────────────────────────────────
+
+  - name: es.doc.prompt_injection_hijack
+    meta:
+      description: "ES — classic prompt override in document content"
+      severity: high
+      category: injection
+    strings:
+      ignore_instructions_es:   "(?i)\\bignora[r]?\\b.{0,40}\\b(las?\\s+)?(instrucciones?|reglas?|directrices?)\\b"
+      disregard_context_es:     "(?i)\\b(ignora[r]?|descarta[r]?|deja\\s+de\\s+lado)\\b.{0,30}\\bel\\s+contexto\\s+(anterior|previo)\\b"
+      override_system_es:       "(?i)\\b(reemplaza[r]?|anula[r]?|elu[d]?[ei]r?)\\b.{0,30}\\bel\\s+sistema\\b"
+
+  - name: es.doc.impersonation_simulation
+    meta:
+      description: "ES — role impersonation or simulation in document content"
+      severity: high
+      category: impersonation
+    strings:
+      act_as_es:                "(?i)\\b(act\u00faa[r]?|comp\u00f3rtate)\\s+(como|en\\s+calidad\\s+de)\\b.{0,40}\\b(IA|usuario|desarrollador)\\b"
+      simulate_behavior_es:     "(?i)\\b(simula[r]?|imita[r]?)\\b.{0,30}\\b(el\\s+)?(comportamiento|rol)\\b"
+      pretend_to_es:            "(?i)\\bfinge[r]?\\s+(ser|que)\\b.{0,40}"
+
+  - name: es.doc.system_probe_exfil
+    meta:
+      description: "ES — system prompt extraction attempts in document content"
+      severity: high
+      category: leakage
+    strings:
+      what_is_prompt_es:        "(?i)\\bcu\u00e1l\\s+es\\s+(tu|su)\\s+(prompt\\s+del?\\s+sistema|system\\s+prompt)\\b"
+      print_instructions_es:    "(?i)\\b(imprime[r]?|muestra[r]?|repite[r]?)\\b.{0,20}\\b(las?\\s+)?instrucciones?\\b"
+      show_configuration_es:    "(?i)\\b(muestra[r]?|ense\u00f1a[r]?)\\b.{0,20}\\b(tu\\s+|su\\s+)?configuraci\u00f3n\\b"
+
+  - name: es.doc.jailbreak_escape_attempt
+    meta:
+      description: "ES — filter bypass attempts in document content"
+      severity: high
+      category: jailbreak
+    strings:
+      unfiltered_response_es:   "(?i)\\brespuesta\\s+(sin\\s+filtros?|no\\s+filtrada?)\\b"
+      not_an_ai_es:             "(?i)\\bno\\s+eres\\s+(una?\\s+)?(IA|inteligencia\\s+artificial)\\b"
+      bypass_filters_es:        "(?i)\\b(elu[d]?[ei]r?|ignora[r]?|saltarse?)\\b.{0,20}\\b(los?\\s+)?(filtros?|seguridad|protecciones?)\\b"
+
+  - name: es.doc.social_engineering
+    meta:
+      description: "ES — social engineering tricks in document content"
+      severity: medium
+      category: social_engineering
+    strings:
+      testing_only_es:          "(?i)\\bes\\s+s\u00f3?lo\\s+para\\s+(la\\s+)?prueba\\b"
+      response_audited_es:      "(?i)\\btu\\s+respuesta\\s+ser\u00e1\\s+auditada\\b"
+      you_are_authorized_es:    "(?i)\\bests\\s+autorizado\\s+a\\b"
+
+  - name: es.doc.llm_prompt_artifacts
+    meta:
+      description: "ES — LLM marker artifacts in document content"
+      severity: high
+      category: format_artifact
+    strings:
+      system_marker_es:         "(?i)\\[sistema\\]\\s*:"
+      instructions_heading_es:  "(?im)^#{1,3}\\s*instrucciones?\\s*$"
+      new_instructions_es:      "(?i)\\bnuevas?\\s+instrucciones?\\s*:"
+
+  # ── German (DE) ──────────────────────────────────────────────────────────
+
+  - name: de.doc.prompt_injection_hijack
+    meta:
+      description: "DE — classic prompt override in document content"
+      severity: high
+      category: injection
+    strings:
+      ignore_instructions_de:   "(?i)\\bignoriere[nt]?\\b.{0,40}\\b(die\\s+)?(Anweisungen?|Regeln?|Direktiven?)\\b"
+      disregard_context_de:     "(?i)\\b(ignoriere[nt]?|verwerfe[nt]?|lasse[nt]?\\s+au\u00dfer\\s+Acht)\\b.{0,30}\\b(den?\\s+)?(vorherigen?|fr\u00fcheren?)\\b.{0,10}\\bKontext\\b"
+      override_system_de:       "(?i)\\b(ersetze[nt]?|umgehe[nt]?|annulliere[nt]?)\\b.{0,30}\\b(das\\s+)?System\\b"
+
+  - name: de.doc.impersonation_simulation
+    meta:
+      description: "DE — role impersonation or simulation in document content"
+      severity: high
+      category: impersonation
+    strings:
+      act_as_de:                "(?i)\\b(handle[nt]?\\s+als|verhalte[nt]?\\s+dich\\s+wie)\\b.{0,40}\\b(KI|Benutzer|Entwickler)\\b"
+      simulate_behavior_de:     "(?i)\\b(simuliere[nt]?|imitiere[nt]?)\\b.{0,30}\\b(das\\s+)?(Verhalten|die\\s+Rolle)\\b"
+      pretend_to_de:            "(?i)\\btue[nt]?\\s+so\\s+als\\s+(ob|w\u00e4ren?)\\b.{0,40}"
+
+  - name: de.doc.system_probe_exfil
+    meta:
+      description: "DE — system prompt extraction attempts in document content"
+      severity: high
+      category: leakage
+    strings:
+      what_is_prompt_de:        "(?i)\\bwas\\s+ist\\s+(dein|Ihr)\\s+(System-?Prompt|system\\s+prompt)\\b"
+      print_instructions_de:    "(?i)\\b(drucke[nt]?\\s+aus|zeige[nt]?|wiederhole[nt]?)\\b.{0,20}\\b(die\\s+)?Anweisungen?\\b"
+      show_configuration_de:    "(?i)\\b(zeige[nt]?|offenbare[nt]?)\\b.{0,20}\\b(deine[nt]?\\s+|Ihre[nt]?\\s+)?Konfiguration\\b"
+
+  - name: de.doc.jailbreak_escape_attempt
+    meta:
+      description: "DE — filter bypass attempts in document content"
+      severity: high
+      category: jailbreak
+    strings:
+      unfiltered_response_de:   "(?i)\\b(ungefilterte[nt]?|filterfreie[nt]?)\\b.{0,10}\\bAntwort\\b"
+      not_an_ai_de:             "(?i)\\bdu\\s+bist\\s+keine[nt]?\\s+(KI|k\u00fcnstliche[nt]?\\s+Intelligenz)\\b"
+      bypass_filters_de:        "(?i)\\b(umgehe[nt]?|ignoriere[nt]?)\\b.{0,20}\\b(die\\s+)?(Filter|Sicherheit|Schutzma\u00dfnahmen?)\\b"
+
+  - name: de.doc.social_engineering
+    meta:
+      description: "DE — social engineering tricks in document content"
+      severity: medium
+      category: social_engineering
+    strings:
+      testing_only_de:          "(?i)\\bnur\\s+f\u00fcr\\s+(den?\\s+)?Test\\b"
+      response_audited_de:      "(?i)\\bdeine\\s+Antwort\\s+wird\\s+\u00fcberpr\u00fcft\\b"
+      you_are_authorized_de:    "(?i)\\bdu\\s+bist\\s+(berechtigt|autorisiert)\\s+zu\\b"
+
+  - name: de.doc.llm_prompt_artifacts
+    meta:
+      description: "DE — LLM marker artifacts in document content"
+      severity: high
+      category: format_artifact
+    strings:
+      system_marker_de:         "(?i)\\[System\\]\\s*:"
+      instructions_heading_de:  "(?im)^#{1,3}\\s*Anweisungen?\\s*$"
+      new_instructions_de:      "(?i)\\bNeue[nt]?\\s+Anweisungen?\\s*:"
+
+  # ── Mandarin Chinese (ZH) ────────────────────────────────────────────────
+
+  - name: zh.doc.prompt_injection_hijack
+    meta:
+      description: "ZH — classic prompt override in document content"
+      severity: high
+      category: injection
+    strings:
+      ignore_instructions_zh:   "\u5ffd\u7565.{0,20}(\u6307\u4ee4|\u89c4\u5219|\u9650\u5236|\u7ea6\u675f)"
+      disregard_context_zh:     "(\u629b\u5f03|\u5ffd\u89c6|\u653e\u5f03).{0,20}(\u4e4b\u524d\u7684?|\u524d\u9762\u7684?).{0,5}(\u4e0a\u4e0b\u6587|\u8bed\u5883|\u5185\u5bb9)"
+      override_system_zh:       "(\u8986\u76d6|\u66ff\u6362|\u7ed5\u8fc7).{0,10}\u7cfb\u7edf.{0,10}(\u6307\u4ee4|\u8bbe\u7f6e|\u8bcd)"
+
+  - name: zh.doc.impersonation_simulation
+    meta:
+      description: "ZH — role impersonation or simulation in document content"
+      severity: high
+      category: impersonation
+    strings:
+      act_as_zh:                "(\u626e\u6f14|\u5145\u5f53|\u88c5\u626e).{0,20}(AI|\u7528\u6237|\u5f00\u53d1\u8005|\u7cfb\u7edf\u7ba1\u7406\u5458)"
+      simulate_behavior_zh:     "(\u6a21\u62df|\u4eff\u771f).{0,20}(\u884c\u4e3a|\u89d2\u8272|\u8eab\u4efd)"
+      pretend_to_zh:            "\u5047\u88c5.{0,10}(\u662f|\u4e3a|\u6210\u4e3a).{0,30}"
+
+  - name: zh.doc.system_probe_exfil
+    meta:
+      description: "ZH — system prompt extraction attempts in document content"
+      severity: high
+      category: leakage
+    strings:
+      what_is_prompt_zh:        "(\u4f60\u7684|\u4f60\u6709).{0,5}(system prompt|\u7cfb\u7edf\u63d0\u793a\u8bcd|\u521d\u59cb\u6307\u4ee4).{0,10}(\u662f\u4ec0\u4e48|\u662f)"
+      print_instructions_zh:    "(\u6253\u5370|\u8f93\u51fa|\u663e\u793a|\u91cd\u590d).{0,10}(\u4f60\u7684|[\u7cfb\u7edf]).{0,5}(\u6307\u4ee4|\u8bbe\u7f6e|\u63d0\u793a)"
+      show_configuration_zh:    "(\u5c55\u793a|\u663e\u793a).{0,10}(\u4f60\u7684|\u5185\u90e8).{0,5}(\u914d\u7f6e|\u8bbe\u7f6e)"
+
+  - name: zh.doc.jailbreak_escape_attempt
+    meta:
+      description: "ZH — filter bypass attempts in document content"
+      severity: high
+      category: jailbreak
+    strings:
+      unfiltered_response_zh:   "(\u4e0d\u52a0\u8fc7\u6ee4|\u65e0\u5ba1\u67e5|\u4e0d\u53d7\u9650\u5236).{0,10}\u56de\u7b54"
+      not_an_ai_zh:             "\u4f60\u4e0d\u662f(AI|\u4eba\u5de5\u667a\u80fd|\u673a\u5668\u4eba)"
+      bypass_filters_zh:        "(\u7ed5\u8fc7|\u5ffd\u89c6|\u5173\u95ed).{0,10}(\u5ba1\u67e5|\u8fc7\u6ee4|\u5b89\u5168\u9650\u5236)"
+
+  - name: zh.doc.social_engineering
+    meta:
+      description: "ZH — social engineering tricks in document content"
+      severity: medium
+      category: social_engineering
+    strings:
+      testing_only_zh:          "\u53ea\u662f.{0,5}(\u6d4b\u8bd5|\u8c03\u8bd5|\u5b9e\u9a8c).{0,10}(\u4e0d\u4f1a|\u65e0\u5bb3)"
+      response_audited_zh:      "\u4f60\u7684\u56de\u7b54\u5c06(\u88ab|\u4f1a).{0,5}(\u5ba1\u8ba1|\u68c0\u67e5|\u5ba1\u67e5)"
+      you_are_authorized_zh:    "\u4f60(\u88ab|\u5df2)\u6388\u6743.{0,10}(\u53ef\u4ee5|\u80fd\u591f)"
+
+  - name: zh.doc.llm_prompt_artifacts
+    meta:
+      description: "ZH — LLM marker artifacts in document content"
+      severity: high
+      category: format_artifact
+    strings:
+      system_marker_zh:         "[\u300a\u300b\u3010\u3011].{0,5}(\u7cfb\u7edf|\u6307\u4ee4|system).{0,5}[\u300a\u300b\u3010\u3011]"
+      new_instructions_zh:      "\u65b0\u7684.{0,3}(\u6307\u4ee4|\u8bbe\u7f6e|\u89c4\u5219).{0,3}[:\uff1a]"
+      instructions_heading_zh:  "(?im)^[#\uff03]{1,3}\\s*\u6307\u4ee4\\s*$"

@@ -178,13 +178,19 @@ check_tool_call:
 
 SHAI ships five production scanners. All are async and run concurrently.
 
-| Scanner | What it detects |
-|---|---|
-| `injection_scan` | Direct and indirect prompt injection, tool coercion, exfiltration attempts, encoded payloads (17 rules) |
-| `jailbreak_scan` | Guardrail bypass: persona override, refusal suppression, mode activation, prompt extraction (6 rules) |
-| `identity_spoof_scan` | Agentic identity attacks: claimed orchestrator/system authority, peer privilege escalation, tool-result authority injection (4 rules) |
-| `regex_pii` | PII and credentials: email, SSN, credit cards, API keys — with optional redaction |
-| `mcp_metadata_scan` | MCP tool name/description injection at connection time |
+| Scanner | What it detects | Languages |
+|---|---|---|
+| `injection_scan` | Direct and indirect prompt injection, tool coercion, exfiltration, encoded payloads (17 rules) | EN + FR, ES, DE, ZH |
+| `jailbreak_scan` | Guardrail bypass: persona override, refusal suppression, mode activation, prompt extraction (6 rules) | EN + FR, ES, DE, ZH |
+| `identity_spoof_scan` | Agentic identity attacks: claimed orchestrator/system authority, peer privilege escalation, tool-result authority injection (4 rules) | EN + FR, ES, DE, ZH |
+| `regex_pii` | PII and credentials: email, SSN, credit cards, API keys — with optional redaction | EN (Unicode-aware) |
+| `mcp_metadata_scan` | MCP tool name/description injection at connection time (8 rules) | EN |
+
+**Multilingual coverage:** The three core threat scanners ship multilingual pattern catalogs
+(`l10n/*.l10n.yaml`) covering French, Spanish, German, and Simplified Chinese. Each language
+covers the highest-threat rule families: instruction override, jailbreak/persona, system prompt
+extraction, and tool coercion. Multilingual patterns load automatically alongside the base
+English catalog — no configuration required.
 
 **Input normalization:** Before any scanner runs, the input is canonicalized into multiple views — the surface form plus decoded variants (base64, hex, URL encoding, rot13, unicode homoglyphs, fragment reassembly). A payload that bypasses the surface scanner by encoding `ignore all previous instructions` in base64 is caught after decoding. The raw text the agent sees is never mutated.
 

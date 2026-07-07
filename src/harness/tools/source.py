@@ -840,6 +840,6 @@ def _extract_session_id(endpoint_data: str) -> str | None:
         ids = qs.get("sessionId") or qs.get("session_id")
         if ids:
             return ids[0]
-    except Exception:
+    except Exception:  # nosec B110 — session ID extraction is best-effort; None is the correct fallback
         pass
     return None

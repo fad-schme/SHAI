@@ -1,0 +1,244 @@
+name: CI
+
+# Runs on every PR targeting main and on every push to main.
+# Security checks must pass before a codeowner review is meaningful.
+# Nothing in this workflow pushes to main — that is gated by branch protection.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]    # runs after merge to keep main green
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true  # cancel stale runs when new commits are pushed to the same PR
+
+jobs:
+
+  # ── Job 1: Unit tests ────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short
+
+
+  # ── Job 2: Security invariant tests ─────────────────────────────────────
+  # These are non-negotiable. They verify properties that must hold on every
+  # code path regardless of configuration:
+  #   - No raw text in any AuditEvent field
+  #   - Dispatch token forgery resistance
+  # A failure here means a boundary invariant is broken. The PR is rejected.
+  security-invariants:
+    name: Security invariants
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run security invariant tests
+        run: pytest tests/security/ -v --tb=short
+
+
+  # ── Job 3: Contract tests ────────────────────────────────────────────────
+  # Every adapter (scanner, audit sink, policy engine, tool source, secrets
+  # provider) must pass the same contract suite regardless of package.
+  # A failure means a reference adapter no longer conforms to its protocol.
+  contract-tests:
+    name: Contract tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run contract tests
+        run: pytest tests/contracts/ -v --tb=short
+
+
+  # ── Job 4: Dependency audit ──────────────────────────────────────────────
+  # Checks all dependencies for known CVEs using pip-audit.
+  # Fails the PR if any HIGH or CRITICAL vulnerability is found in a direct
+  # or transitive dependency.
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Install project dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Audit dependencies for CVEs
+        run: |
+          pip-audit \
+            --strict \
+            --vulnerability-service pypi \
+            --format columns
+
+
+  # ── Job 5: Static analysis ───────────────────────────────────────────────
+  # Bandit scans for common security issues in Python code:
+  # hardcoded secrets, use of unsafe functions, shell injection, etc.
+  # Scoped to src/ only — test code is excluded.
+  static-analysis:
+    name: Static analysis (bandit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run bandit
+        run: |
+          bandit \
+            --recursive src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --format txt
+
+
+  # ── Job 6: Secret scanning ───────────────────────────────────────────────
+  # Catches accidentally committed credentials, API keys, and tokens
+  # before they land in the repo history.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # full history — scan all commits in the PR, not just HEAD
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # ── Job 7: Docs lint ─────────────────────────────────────────────────────
+  # Checks that markdown files have no broken links and that the CHANGELOG
+  # has been updated on PRs that touch src/.
+  # Soft check — warnings only, does not block merge.
+  docs-lint:
+    name: Docs lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: yes
+          use-verbose-mode: yes
+          config-file: '.github/mlc_config.json'
+        continue-on-error: true   # warn but do not block
+
+      - name: Check CHANGELOG updated on src/ changes
+        if: github.event_name == 'pull_request'
+        run: |
+          SRC_CHANGED=$(git diff --name-only origin/main...HEAD | grep "^src/" | wc -l)
+          CHANGELOG_CHANGED=$(git diff --name-only origin/main...HEAD | grep "^CHANGELOG" | wc -l)
+          if [ "$SRC_CHANGED" -gt "0" ] && [ "$CHANGELOG_CHANGED" -eq "0" ]; then
+            echo "::warning::Source files changed but CHANGELOG was not updated. Please add an entry."
+          fi
+
+
+  # ── Gate job ─────────────────────────────────────────────────────────────
+  # This is the single required status check in branch protection.
+  # Add "ci / All checks passed" as the required check in branch settings —
+  # not the individual jobs. This way adding/removing jobs never requires
+  # updating the branch protection rule.
+  #
+  # Codeowner review is only requested AFTER this job passes.
+  # Branch protection enforces: required check ✅ → then codeowner review.
+  all-checks-passed:
+    name: All checks passed
+    needs:
+      - unit-tests
+      - security-invariants
+      - contract-tests
+      - dependency-audit
+      - static-analysis
+      - secret-scan
+    runs-on: ubuntu-latest
+    if: always()      # run even if a dependency job was skipped or failed
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check all jobs passed
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "$results" | python3 - << 'EOF'
+          import json, sys
+          results = json.load(sys.stdin)
+          failed = [
+              name for name, outcome in results.items()
+              if outcome.get("result") not in ("success", "skipped")
+          ]
+          if failed:
+              print(f"❌ Failed jobs: {', '.join(failed)}")
+              sys.exit(1)
+          print("✅ All required checks passed.")
+          EOF

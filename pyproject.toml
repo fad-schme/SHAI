@@ -19,6 +19,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "bandit",
+    "pip-audit"
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -35,8 +37,13 @@ include = [
     "src/",
     "tests/",
     "LICENSE",
+    "NOTICE",
     "README.md",
     "ARCHITECTURE.md",
+    "CLA.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "harness.yaml.example",
     "pyproject.toml",
 ]

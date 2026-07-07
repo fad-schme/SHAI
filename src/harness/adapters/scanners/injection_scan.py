@@ -79,7 +79,7 @@ _FUNCTION_WEIGHTS: dict[str, float] = {
     "encoding_score":           1.0,
     "persona_score":            1.2,
     "cumulative_soft_triggers": 1.0,
-    "token_score":              0.5,
+    "token_score":              0.5,  # nosec B105 — scoring weight, not a password
     "obfuscation_score":        1.2,
     "invisible_text":           1.0,
 }
@@ -252,7 +252,8 @@ class InjectionScanner:
                     else:
                         if cp.value.search(normalized):
                             n_matched += 1
-                except Exception:
+                except Exception as pat_err:  # nosec B112 — malformed pattern; skip rule, do not abort scan
+                    log.debug("pattern match error in rule scan: %s", pat_err)
                     continue
 
             if n_matched == 0:
@@ -272,8 +273,8 @@ class InjectionScanner:
                 try:
                     contribution = float(fn(text))
                     function_score += contribution * _FUNCTION_WEIGHTS.get(fn_name, 1.0)
-                except Exception:
-                    pass
+                except Exception as fn_err:  # nosec B110 — scoring fn failure degrades gracefully; score stays at 0
+                    log.debug("scoring function '%s' failed: %s", fn_name, fn_err)
 
         if not matched_rules:
             return ScanResult()

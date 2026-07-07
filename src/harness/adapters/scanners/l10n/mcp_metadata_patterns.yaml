@@ -3,6 +3,20 @@
 # Injection patterns for MCP tool metadata: tool names, descriptions,
 # and argument schema descriptions as received from tools/list.
 #
+# L10N DECISION: English-only. No multilingual variants will be added.
+#
+# Rationale: MCP tool names, descriptions, and argument schemas are
+# defined by developers in source code or configuration files. This
+# content is almost universally written in English regardless of the
+# deployment locale. A non-English injection payload in tool metadata
+# would require a developer to deliberately write a tool description in
+# another language — an extreme edge case that does not justify the
+# false-positive risk of multilingual patterns at this boundary.
+#
+# If a specific deployment serves developer tooling in non-English
+# locales, a custom scanner extending this catalog can be registered
+# via the harness.scanners entry-point group.
+#
 # Threat model
 # ------------
 # A compromised or malicious MCP server can embed instruction payloads in

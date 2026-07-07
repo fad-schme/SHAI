@@ -184,3 +184,146 @@ patterns:
     strings:
       enable_mode_zh:             "(\u542f\u52a8|\u8fdb\u5165|\u6fc0\u6d3b|\u5207\u6362\u5230).{0,10}(\u5f00\u53d1\u8005|\u8c03\u8bd5|\u7ba1\u7406\u5458|\u65e0\u9650\u5236).{0,5}\u6a21\u5f0f"
       dan_zh:                     "DAN.{0,20}(\u6a21\u5f0f|\u6fc0\u6d3b|\u73b0\u5728).{0,20}(\u4f60\u53ef\u4ee5|\u53ef\u4ee5\u505a\u4efb\u4f55)"
+
+  # ── FR jailbreak.persona_override ────────────────────────────────────────
+
+  - name: fr.jailbreak.persona_override
+    meta:
+      description: "FR — guardrail-free persona assignment as bypass mechanism"
+      threat_level: 5
+      severity: high
+      category: jailbreak.persona_override
+    strings:
+      act_as_uncensored_fr:       "(?i)\\b(agis?|comporte-?toi)\\s+(comme|en\\s+tant\\s+que)\\b.{0,40}\\b(une?\\s+)?(IA|assistant)\\b.{0,30}\\b(sans\\s+restrictions?|non\\s+censur\u00e9e?|non\\s+align\u00e9e?)\\b"
+      pretend_no_restrictions_fr: "(?i)\\bfais?\\s+semblant\\b.{0,30}\\btu\\s+n.{0,5}as?\\s+(aucune?|pas\\s+de)\\b.{0,20}\\b(restrictions?|limites?|politiques?)\\b"
+      you_are_now_persona_fr:     "(?i)\\btu\\s+es\\s+(maintenant|d\u00e9sormais)\\b.{0,40}\\b(DAN|DevMode|assistant\\s+libre|IA\\s+libre)\\b"
+      respond_as_unrestricted_fr: "(?i)\\br\u00e9ponds?\\s+en\\s+tant\\s+que\\b.{0,30}\\b(un[e]?\\s+)?(assistant|IA)\\b.{0,20}\\b(sans\\s+restrictions?|non\\s+censur\u00e9e?)\\b"
+      named_persona_fr:           "(?i)\\b(DAN|DevMode|Doomer)\\b.{0,50}\\b(activ\u00e9|activer|maintenant|peux\\s+tout\\s+faire|sans\\s+restrictions?)\\b"
+    functions:
+      - persona_score
+      - intent_score
+      - cumulative_soft_triggers
+
+  # ── ES jailbreak.persona_override ────────────────────────────────────────
+
+  - name: es.jailbreak.persona_override
+    meta:
+      description: "ES — guardrail-free persona assignment as bypass mechanism"
+      threat_level: 5
+      severity: high
+      category: jailbreak.persona_override
+    strings:
+      act_as_uncensored_es:       "(?i)\\b(act\u00faa[r]?|comp\u00f3rtate)\\s+(como|en\\s+calidad\\s+de)\\b.{0,40}\\b(una?\\s+)?(IA|asistente)\\b.{0,30}\\b(sin\\s+restricciones?|no\\s+censurada?|no\\s+alineada?)\\b"
+      pretend_no_restrictions_es: "(?i)\\bfinge[r]?\\b.{0,30}\\bno\\s+tienes?\\b.{0,20}\\b(restricciones?|l\u00edmites?|pol\u00edticas?)\\b"
+      you_are_now_persona_es:     "(?i)\\bahora\\s+eres\\b.{0,40}\\b(DAN|DevMode|asistente\\s+libre|IA\\s+libre)\\b"
+      respond_as_unrestricted_es: "(?i)\\bresponde?\\s+como\\b.{0,30}\\b(una?\\s+)?(asistente|IA)\\b.{0,20}\\b(sin\\s+restricciones?|no\\s+censurada?)\\b"
+      named_persona_es:           "(?i)\\b(DAN|DevMode)\\b.{0,50}\\b(activado|activar|ahora|puedes\\s+hacer\\s+todo|sin\\s+restricciones?)\\b"
+    functions:
+      - persona_score
+      - intent_score
+      - cumulative_soft_triggers
+
+  # ── DE jailbreak.persona_override ────────────────────────────────────────
+
+  - name: de.jailbreak.persona_override
+    meta:
+      description: "DE — guardrail-free persona assignment as bypass mechanism"
+      threat_level: 5
+      severity: high
+      category: jailbreak.persona_override
+    strings:
+      act_as_uncensored_de:       "(?i)\\b(handle[nt]?\\s+als|verhalte[nt]?\\s+dich\\s+wie)\\b.{0,40}\\b(eine[nt]?\\s+)?(KI|Assistent)\\b.{0,30}\\b(ohne\\s+Einschr\u00e4nkungen?|unzensiert|nicht\\s+ausgerichtet)\\b"
+      pretend_no_restrictions_de: "(?i)\\btue\\s+so\\s+als\\b.{0,30}\\b(hast|gibt\\s+es)\\b.{0,20}\\bkeine[nt]?\\b.{0,10}\\b(Einschr\u00e4nkungen?|Regeln?|Richtlinien?)\\b"
+      you_are_now_persona_de:     "(?i)\\bdu\\s+bist\\s+(jetzt|ab\\s+sofort)\\b.{0,40}\\b(DAN|DevMode|freier\\s+Assistent|unzensierte[nt]?\\s+KI)\\b"
+      respond_as_unrestricted_de: "(?i)\\bantworte[nt]?\\s+als\\b.{0,30}\\b(eine[nt]?\\s+)?(Assistent|KI)\\b.{0,20}\\b(ohne\\s+Einschr\u00e4nkungen?|unzensiert)\\b"
+      named_persona_de:           "(?i)\\b(DAN|DevMode)\\b.{0,50}\\b(aktiviert|aktivieren|jetzt|kannst\\s+alles\\s+tun|ohne\\s+Einschr\u00e4nkungen?)\\b"
+    functions:
+      - persona_score
+      - intent_score
+      - cumulative_soft_triggers
+
+  # ── ZH jailbreak.persona_override ────────────────────────────────────────
+
+  - name: zh.jailbreak.persona_override
+    meta:
+      description: "ZH — guardrail-free persona assignment as bypass mechanism"
+      threat_level: 5
+      severity: high
+      category: jailbreak.persona_override
+    strings:
+      act_as_uncensored_zh:       "(\u626e\u6f14|\u88c5\u626e|\u5145\u5f53).{0,20}(\u4e0d\u53d7\u9650\u5236|\u65e0\u5ba1\u67e5|\u81ea\u7531).{0,10}(AI|\u52a9\u624b|\u667a\u80fd\u52a9\u624b)"
+      pretend_no_restrictions_zh: "\u5047\u88c5.{0,15}(\u6ca1\u6709|\u4e0d\u53d7).{0,10}(\u9650\u5236|\u89c4\u5219|\u5ba1\u67e5)"
+      you_are_now_persona_zh:     "\u4f60\u73b0\u5728\u662f.{0,20}(DAN|DevMode|\u81ea\u7531AI|\u4e0d\u53d7\u7ea6\u675f\u7684.{0,5}AI)"
+      respond_unrestricted_zh:    "\u4ee5.{0,5}(\u4e0d\u53d7\u9650\u5236|\u81ea\u7531|\u65e0\u5ba1\u67e5).{0,5}\u8eab\u4efd.{0,5}\u56de\u7b54"
+    functions:
+      - persona_score
+      - intent_score
+      - cumulative_soft_triggers
+
+  # ── FR jailbreak.hypothetical_laundering ─────────────────────────────────
+
+  - name: fr.jailbreak.hypothetical_laundering
+    meta:
+      description: "FR — fictional/hypothetical framing to bypass safety"
+      threat_level: 5
+      severity: high
+      category: jailbreak.hypothetical_laundering
+    strings:
+      fictional_no_rules_fr:      "(?i)\\b(fictif|hypoth\u00e9tique|imaginaire)\\b.{0,30}\\b(monde|univers|sc\u00e9nario)\\b.{0,30}\\b(sans\\s+r\u00e8gles?|o\u00f9\\s+tout\\s+est\\s+permis)\\b"
+      in_story_ignore_fr:         "(?i)\\b(dans\\s+(cette?|mon|la)\\s+histoire|en\\s+tant\\s+que\\s+personnage)\\b.{0,40}\\b(ignore[rz]?|contourne[rz]?|oublie[rz]?)\\b.{0,20}\\b(les?\\s+)?(restrictions?|r\u00e8gles?|filtres?)\\b"
+      just_fiction_bypass_fr:     "(?i)\\bjuste\\b.{0,10}\\b(de\\s+la\\s+fiction|hypoth\u00e9tique|une?\\s+histoire)\\b.{0,30}\\b(contourne[rz]?|ignore[rz]?|bypass)\\b"
+      as_exercise_fr:             "(?i)\\bcomme\\s+(exercice|exp\u00e9rience|test)\\b.{0,30}\\b(contourne[rz]?|ignore[rz]?|mets\\s+de\\s+c\u00f4t\u00e9)\\b"
+    functions:
+      - intent_score
+      - structure_score
+
+  # ── ES jailbreak.hypothetical_laundering ─────────────────────────────────
+
+  - name: es.jailbreak.hypothetical_laundering
+    meta:
+      description: "ES — fictional/hypothetical framing to bypass safety"
+      threat_level: 5
+      severity: high
+      category: jailbreak.hypothetical_laundering
+    strings:
+      fictional_no_rules_es:      "(?i)\\b(ficticio|hipot\u00e9tico|imaginario)\\b.{0,30}\\b(mundo|universo|escenario)\\b.{0,30}\\b(sin\\s+reglas?|donde\\s+todo\\s+est\u00e1\\s+permitido)\\b"
+      in_story_ignore_es:         "(?i)\\b(en\\s+(esta?|mi|la)\\s+historia|como\\s+personaje)\\b.{0,40}\\b(ignora[r]?|elu[d]?[ei]r?|olvida[r]?)\\b.{0,20}\\b(las?\\s+)?(restricciones?|reglas?|filtros?)\\b"
+      just_fiction_bypass_es:     "(?i)\\bs\u00f3?lo\\b.{0,10}\\b(ficci\u00f3n|hipot\u00e9tico|una?\\s+historia)\\b.{0,30}\\b(elu[d]?[ei]r?|ignora[r]?|saltarse?)\\b"
+      as_exercise_es:             "(?i)\\bcomo\\s+(ejercicio|experimento|prueba)\\b.{0,30}\\b(elu[d]?[ei]r?|ignora[r]?|pasa[r]?\\s+por\\s+alto)\\b"
+    functions:
+      - intent_score
+      - structure_score
+
+  # ── DE jailbreak.hypothetical_laundering ─────────────────────────────────
+
+  - name: de.jailbreak.hypothetical_laundering
+    meta:
+      description: "DE — fictional/hypothetical framing to bypass safety"
+      threat_level: 5
+      severity: high
+      category: jailbreak.hypothetical_laundering
+    strings:
+      fictional_no_rules_de:      "(?i)\\b(fiktiv(e[nt]?)?|hypothetisch(e[nt]?)?|imagin\u00e4r(e[nt]?)?)\\b.{0,30}\\b(Welt|Universum|Szenario)\\b.{0,30}\\b(ohne\\s+Regeln?|wo\\s+alles\\s+erlaubt\\s+ist)\\b"
+      in_story_ignore_de:         "(?i)\\b(in\\s+(dieser|meiner|der)\\s+Geschichte|als\\s+Charakter)\\b.{0,40}\\b(ignoriere[nt]?|umgehe[nt]?|vergiss)\\b.{0,20}\\b(die\\s+)?(Einschr\u00e4nkungen?|Regeln?|Filter)\\b"
+      just_fiction_bypass_de:     "(?i)\\bnur\\b.{0,10}\\b(Fiktion|hypothetisch|eine?\\s+Geschichte)\\b.{0,30}\\b(umgehe[nt]?|ignoriere[nt]?)\\b"
+      as_exercise_de:             "(?i)\\bals\\s+(\u00dcbung|\u00dcbungsaufgabe|Experiment|Test)\\b.{0,30}\\b(umgehe[nt]?|ignoriere[nt]?|\u00fcbergehe[nt]?)\\b"
+    functions:
+      - intent_score
+      - structure_score
+
+  # ── ZH jailbreak.hypothetical_laundering ─────────────────────────────────
+
+  - name: zh.jailbreak.hypothetical_laundering
+    meta:
+      description: "ZH — fictional/hypothetical framing to bypass safety"
+      threat_level: 5
+      severity: high
+      category: jailbreak.hypothetical_laundering
+    strings:
+      fictional_no_rules_zh:      "(\u865a\u6784|\u5047\u8bbe|\u60f3\u8c61).{0,20}(\u4e16\u754c|\u573a\u666f|\u6545\u4e8b).{0,20}(\u6ca1\u6709\u89c4\u5219|\u4e0d\u53d7\u9650\u5236|\u4e00\u5207\u90fd\u5141\u8bb8)"
+      in_story_ignore_zh:         "(\u5728\u8fd9\u4e2a\u6545\u4e8b\u91cc|\u4f5c\u4e3a\u89d2\u8272).{0,30}(\u5ffd\u89c6|\u8df3\u8fc7|\u7ed5\u8fc7).{0,10}(\u9650\u5236|\u89c4\u5219|\u5ba1\u67e5)"
+      just_fiction_zh:            "\u53ea\u662f.{0,5}(\u865a\u6784|\u5047\u8bbe|\u6545\u4e8b).{0,20}(\u7ed5\u8fc7|\u5ffd\u7565)"
+      as_exercise_zh:             "\u4f5c\u4e3a.{0,5}(\u7ec3\u4e60|\u5b9e\u9a8c|\u6d4b\u8bd5).{0,20}(\u7ed5\u8fc7|\u5ffd\u7565|\u8df3\u8fc7)"
+    functions:
+      - intent_score
+      - structure_score

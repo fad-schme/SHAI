@@ -1,0 +1,17 @@
+{
+  "ignorePatterns": [
+    {
+      "pattern": "^https://cla-assistant\\.io"
+    },
+    {
+      "pattern": "^https://contributoragreements\\.org"
+    },
+    {
+      "pattern": "^https://www\\.contributor-covenant\\.org"
+    }
+  ],
+  "retryOn429": true,
+  "retryCount": 2,
+  "fallbackRetryDelay": "30s",
+  "aliveStatusCodes": [200, 206]
+}
