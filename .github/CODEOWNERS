@@ -1,0 +1,15 @@
+# Default owner for everything
+*                           @fad-schme
+
+# Security-critical boundaries — require maintainer review
+src/harness/boundaries/     @fad-schme
+src/harness/core/           @fad-schme
+src/harness/audit/          @fad-schme
+
+# CLA and legal files — maintainer only
+CLA.md                      @fad-schme
+SECURITY.md                 @fad-schme
+LICENSE                     @fad-schme
+
+# Signature records — bot only, no human review needed
+signatures/                 @fad-schme 
