@@ -53,13 +53,15 @@ jobs:
           path-to-signatures: 'signatures/cla.json'
 
           # Branch where the signatures file is committed.
-          # This branch must NOT be protected (the action commits directly to it).
-          branch: 'main'
+          # Using a dedicated branch keeps main fully protected.
+          # Create this branch once: git checkout -b signatures && git push origin signatures
+          # This branch should have no protection rules — the action commits directly to it.
+          branch: 'signatures'
 
           # Accounts that are exempt from the CLA check.
           # Add maintainer GitHub usernames and bot accounts here.
           # Wildcards are supported: bot* matches all bot accounts.
-          allowlist: dependabot[bot],renovate[bot], technified-apps, fad-schme
+          allowlist: dependabot[bot],renovate[bot]
 
           # Lock the PR conversation after merge so signatures cannot be
           # deleted retroactively by the contributor.
