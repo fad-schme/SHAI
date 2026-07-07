@@ -61,7 +61,7 @@ jobs:
           # Accounts that are exempt from the CLA check.
           # Add maintainer GitHub usernames and bot accounts here.
           # Wildcards are supported: bot* matches all bot accounts.
-          allowlist: dependabot[bot],renovate[bot]
+          allowlist: dependabot[bot],renovate[bot], fad-schme, technified-apps
 
           # Lock the PR conversation after merge so signatures cannot be
           # deleted retroactively by the contributor.
