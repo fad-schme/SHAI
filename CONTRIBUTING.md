@@ -1,191 +1,93 @@
 # Contributing to SHAI
 
-Thank you for taking the time to contribute. SHAI is a security project —
-the quality and correctness of every change matters more than speed.
+Thank you for your interest in contributing to SHAI! This guide outlines the process for contributing to the project and our development conventions.
 
----
 
-## Contributor License Agreement
+**External contributions are by invitation only**
 
-**All contributions require signing the CLA before your pull request can be merged.**
+At this time, the SHAI team does not accept unsolicited code contributions.
 
-SHAI is dual-licensed: the core is Apache 2.0 (open source) and SHAI Enterprise
-is a commercial product built on top of it. The CLA gives the Maintainer the right
-to include your contribution in both, while you retain full rights to use your own
-work under Apache 2.0 for any other purpose.
+If you would like to propose a new feature or a change in behavior, please open an issue describing the proposal or upvote an existing enhancement request. We prioritize new features based on community feedback, alignment with our roadmap, and consistency across all SHAI surfaces (CLI, IDE extensions, web, etc.).
 
-When you open a pull request, the CLA Assistant bot will check whether you have
-signed. If not, it will post a comment with instructions. Signing takes less than
-a minute: post `I have read the CLA Document and I hereby sign the CLA` as a
-comment on your PR. You only sign once.
+If you encounter a bug, please open a bug report or verify that an existing report already covers the issue. If you would like to help, we encourage you to contribute by sharing analysis, reproduction details, root-cause hypotheses, or a high-level outline of a potential fix directly in the issue thread.
 
-Read the full agreement: [CLA.md](CLA.md)
+The SHAI team may invite an external contributor to submit a pull request when:
 
----
+- the problem is well understood,
+- the proposed approach aligns with the team’s intended solution, and
+- the issue is deemed high-impact and high-priority.
 
-## Before you start
+Pull requests that have not been explicitly invited by a member of the SHAI team will be closed without review.
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/boundaries.md](docs/boundaries.md)
-before writing any code. The architecture has deliberate constraints — understand
-them before proposing changes. In particular:
+### Why we do not generally accept external code contributions
 
-- The tool call gate (`check_tool_call`) cannot be disabled and must emit
-  exactly one `AuditEvent` per call on every code path. Any change that
-  breaks this invariant will not be merged.
-- Boundaries never store raw text, arguments, or scanner-matched substrings
-  in `AuditEvent` fields. This is a privacy invariant, not a style preference.
-- New public API requires discussion before implementation. Open an issue first.
+While we appreciated the effort and engagement from the community, is difficult to ensure consistency and security.
 
----
+As per our experience, many contributions are made without full understanding on the overall architectural context, system-level constraints, or near-term roadmap considerations that guide SHAI development. Reviewing and iterating on these PRs often take more time than implementing the fix directly, and diverted attention from higher-priority work.
 
-## Ways to contribute
+The most valuable contributions consistently came through detailed bug reports, analysis, and design discussion in issues. Identifying the right solution is typically the hard part; implementing it is comparatively straightforward with the help of SHAI shipped skills.
 
-**Bug reports** — open a GitHub issue with a minimal reproduction. If the bug
-is a security vulnerability, follow [SECURITY.md](SECURITY.md) instead.
+For these reasons, we focus external contributions on discussion, analysis, and feedback, and reserve code changes for cases where a targeted invitation makes sense.
 
-**Feature requests** — open a GitHub issue describing the use case before
-writing code. Features that expand the public API surface or change gate
-semantics need maintainer agreement upfront.
+## Development workflow
 
-**Documentation** — improvements to `docs/`, `README.md`, or `ARCHITECTURE.md`
-are always welcome and do not require an issue first.
+If you are invited by a SHAI team member to contribute a PR, here is the recommended development workflow.
 
-**Tests** — additional tests for edge cases, especially around gate bypass
-attempts, scanner patterns, and audit invariants, are always useful.
+- Create a _topic branch_ from `main` - e.g. `feat/interactive-config-plus`.
+- Keep your changes focused. Multiple unrelated fixes should be opened as separate PRs.
+- Ensure your change is free of lint warnings and test failures.
 
-**Bug fixes** — if you have a fix for an open issue, reference the issue in
-your PR.
+## Guidance for invited code contributions
 
----
+1. **Start with an issue.** Open a new one or comment on an existing discussion so we can agree on the solution before code is written.
+2. **Add or update tests.** A bug fix should generally come with test coverage that fails before your change and passes afterwards. 100% coverage is not required, but aim for meaningful assertions.
+3. **Document behavior.** If your change affects user-facing behavior, update the README, inline help (`SHAI --help`), or relevant example projects.
+4. **Keep commits atomic.** Each commit should compile and the tests should pass. This makes reviews and potential rollbacks easier.
 
-## Development setup
+### Opening a pull request (by invitation only)
 
-```bash
-git clone https://github.com/shai-ai/shai
-cd shai
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-pytest
-```
+- Fill in the PR template (or include similar information) - **What? Why? How?**
+- Include a link to a bug report or enhancement request in the issue tracker
+<!-- - Run **all** checks locally. Use the root `just` helpers so you stay consistent with the rest of the workspace: `just fmt`, `just fix -p <crate>` for the crate you touched, and the relevant tests (e.g., `just test -p SHAI-tui` or `just test` if you need a full sweep). CI failures that could have been caught locally slow down the process. -->
+- Make sure your branch is up-to-date with `main` and that you have resolved merge conflicts.
+- Mark the PR as **Ready for review** only when you believe it is in a merge-able state.
 
-Requires Python 3.11+.
+### Review process
 
----
+1. One maintainer will be assigned as a primary reviewer.
+2. If your invited PR introduces scope or behavior that was not previously discussed and approved, we may close the PR.
+3. We may ask for changes. Please do not take this personally. We value the work, but we also value consistency and long-term maintainability.
+4. When there is consensus that the PR meets the bar, a maintainer will squash-and-merge.
 
-## Making a change
+### Community values
 
-1. **Open an issue first** for anything beyond a small bug fix or doc change.
-   This saves everyone time — a PR that changes gate semantics without prior
-   agreement is likely to be declined regardless of code quality.
+- **Be kind and inclusive.** Treat others with respect; we follow the [Contributor Covenant](https://www.contributor-covenant.org/).
+- **Assume good intent.** Written communication is hard - err on the side of generosity.
+- **Teach & learn.** If you spot something confusing, open an issue or discussion with suggestions or clarifications.
 
-2. **Fork and branch** from `main`. Name your branch descriptively:
-   `fix/argument-rule-nan-edge-case`, `feat/pattern-rule-case-insensitive`.
+### Getting help
 
-3. **Read the files you plan to change** before writing a line. Check what
-   imports them. Check the existing tests.
+If you run into problems setting up the project, would like feedback on an idea, or just want to say _hi_ - please open a Discussion topic or jump into the relevant issue. We are happy to help.
 
-4. **Write tests first** for any behavioral change. The test suite enforces
-   several security invariants automatically — your change must not break them.
+Together we can make SHAI CLI an incredible tool. **Happy hacking!** :rocket:
 
-5. **Run the full test suite** before opening a PR:
-   ```bash
-   pytest
+## Contributor license agreement (CLA)
+
+All contributors **must** accept the CLA. The process is lightweight:
+
+1. Open your pull request.
+2. Paste the following comment (or reply `recheck` if you've signed before):
+
+   ```text
+   I have read the CLA Document and I hereby sign the CLA
    ```
 
-6. **One change per PR.** A PR that fixes a bug and adds a feature is two PRs.
+3. The CLA-Assistant bot records your signature in the repo and marks the status check as passed.
 
----
+No special Git commands, email attachments, or commit footers required.
 
-## Code style
+## Security & responsible AI
 
-- Follow the existing patterns in the file you are editing
-- Pydantic `BaseModel, frozen=True` for all wire types — do not introduce
-  mutable dataclasses in the hot path
-- No raw text, argument values, or matched substrings in log lines or
-  `AuditEvent` fields
-- All boundary-facing functions are async
-- Scanners implement `async def scan(self, text: str, ctx: AgentContext) -> ScanResult`
-- Keep modules focused — one responsibility per file
-- Comments explain invariants and contracts, not line-by-line mechanics
+Have you discovered a vulnerability or have concerns about model output? Please e-mail **security@ai-mem-engineering.com** and we will respond promptly.
 
----
-
-## Tests
-
-Tests live in `tests/`. The structure mirrors `src/harness/`:
-
-| Directory | Contents |
-|---|---|
-| `tests/unit/` | Per-module unit tests |
-| `tests/contracts/` | Protocol-conformance tests every adapter must pass |
-| `tests/integration/` | End-to-end turn tests with real boundaries |
-| `tests/security/` | Invariant tests: no raw text in audit, dispatch token integrity |
-| `tests/perf/` | Performance baselines for boundary hot paths |
-
-When adding a new scanner or adapter, add a test file in `tests/unit/` and
-ensure the relevant contract suite in `tests/contracts/` passes. New adapters
-must pass the same contract suite as existing ones — this is the open-core
-enforcement mechanism.
-
-Security-invariant tests in `tests/security/` must continue to pass. These
-test properties that must hold regardless of configuration, not just default
-behavior.
-
----
-
-## Commit messages
-
-Use conventional commit format:
-
-```
-fix(check_tool_call): deny on first argument rule violation before policy
-
-feat(tool): add ArgumentRule pattern constraint with re.search semantics
-
-docs(boundaries): document L2 and L3 gate layers
-
-test(argument_policy): add edge case for nan float comparison
-```
-
-Scope to the affected module: `check_tool_call`, `scan_input`, `audit`,
-`session_budget`, `argument_policy`, `connectivity`, `config`, `docs`, etc.
-
----
-
-## Pull request checklist
-
-Before marking your PR ready for review:
-
-- [ ] Tests pass locally (`pytest`)
-- [ ] New behavior has test coverage
-- [ ] Security invariant tests still pass (`pytest tests/security/`)
-- [ ] No raw text, args, or matched content in `AuditEvent` fields
-- [ ] Every boundary path still emits exactly one `AuditEvent`
-- [ ] Public API changes are reflected in `src/harness/__init__.py`
-- [ ] Docs updated if behavior changes (at minimum `docs/boundaries.md`)
-- [ ] Commit messages follow conventional commit format
-
----
-
-## What will not be merged
-
-- Changes that allow `check_tool_call` to be disabled or skipped
-- Changes that suppress or conditionally omit `AuditEvent` emission
-- Changes that store raw user input, LLM output, or scanner-matched text
-  in `AuditEvent` fields
-- New public API added to `__init__.py` without a corresponding issue and
-  maintainer sign-off
-- Changes that weaken an existing security invariant without an explicit
-  security justification in the PR description
-
----
-
-## Code of Conduct
-
-This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
-By participating you agree to abide by its terms. Report conduct issues to
-**conduct@shai.aibestlabs.com**.
-
-## Contributor License Agreement
-
-All contributions require the CLA. See [CLA.md](CLA.md).
+Thank you for helping make SHAI better!

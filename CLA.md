@@ -2,17 +2,16 @@
 
 ### SHAI Project — ("Agreement") v1.0
 
-Thank you for your interest in SHAI, a project maintained by
-Fernanda Diaz-Schmeier ("Maintainer").
+Thank you for your interest in SHAI project.
 
 To clarify the intellectual property license granted with Contributions
 from any person or entity, the Maintainer must have a record of each
 Contributor's agreement to the license terms below, indicated by the
 sign-off process described at the end of this document.
 
-This agreement is for your protection as a Contributor as well as the
-protection of the Maintainer and the project's users. It does not
-change your rights to use your own Contributions for any other purpose.
+Based on the Apache Software Foundation Individual CLA v 2.2.
+
+By commenting “I have read the CLA Document and I hereby sign the CLA” on a Pull Request, you (“Contributor”) agree to the following terms for any past and future “Contributions” submitted to the SHAI project (the “Project”).
 
 Please read this document carefully before signing.
 
@@ -20,115 +19,58 @@ Please read this document carefully before signing.
 
 ## 1. Definitions
 
-**"You"** (or **"Your"**) shall mean the copyright owner or legal entity
-authorized by the copyright owner that is making this Agreement with
-the Maintainer. For legal entities, the entity making a Contribution
-and all other entities that control, are controlled by, or are under
-common control with that entity are considered to be a single
-Contributor. For the purposes of this definition, "control" means
-(i) the power, direct or indirect, to cause the direction or management
-of such entity, whether by contract or otherwise, or (ii) ownership of
-fifty percent (50%) or more of the outstanding shares, or (iii)
-beneficial ownership of such entity.
-
-**"Contribution"** shall mean any original work of authorship, including
-any modifications or additions to an existing work, that is
-intentionally submitted by You to the Maintainer for inclusion in, or
-documentation of, the SHAI project and any products or derivatives
-of it (the **"Work"**). For the purposes of this definition, "submitted"
-means any form of electronic, verbal, or written communication sent to
-the Maintainer or the project's representatives, including but not
-limited to communication on electronic mailing lists, source code
-control systems such as GitHub pull requests, and issue tracking
-systems managed by, or on behalf of, the Maintainer for the purpose of
-discussing and improving the Work, but excluding communication that is
-conspicuously marked or otherwise designated in writing by You as
-"Not a Contribution."
+- **“Contribution”** – any original work of authorship submitted to the Project
+  (code, documentation, designs, etc.).
+- **“You” / “Your”** – the individual (or legal entity) posting the acceptance
+  comment.
 
 ---
 
 ## 2. Grant of Copyright License
 
 Subject to the terms and conditions of this Agreement, You hereby grant
-to Fernanda Diaz-Schmeier and to recipients of software distributed by the
-Maintainer a perpetual, worldwide, non-exclusive, no-charge,
-royalty-free, irrevocable copyright license to reproduce, prepare
-derivative works of, publicly display, publicly perform, sublicense,
-and distribute Your Contributions and such derivative works.
+to Fernanda Analia Diaz-Schmeier and all recipients of software distributed by the
+Project a perpetual, worldwide, non‑exclusive, royalty‑free, irrevocable
+license to reproduce, prepare derivative works of, publicly display, publicly
+perform, sublicense, and distribute Your Contributions and derivative works.
 
 ---
 
 ## 3. Grant of Patent License
 
 Subject to the terms and conditions of this Agreement, You hereby grant
-to Fernanda Diaz-Schmeier and to recipients of software distributed by the
-Maintainer a perpetual, worldwide, non-exclusive, no-charge,
-royalty-free, irrevocable (except as stated in this section) patent
-license to make, have made, use, offer to sell, sell, import, and
-otherwise transfer the Work, where such license applies only to those
-patent claims licensable by You that are necessarily infringed by Your
-Contribution(s) alone or by combination of Your Contribution(s) with
-the Work to which such Contribution(s) was submitted.
+to Fernanda Analia Diaz-Schmeier nd all recipients of the Project a perpetual,
+worldwide, non‑exclusive, royalty‑free, irrevocable (except as below) patent
+license to make, have made, use, sell, offer to sell, import, and otherwise
+transfer Your Contributions alone or in combination with the Project.
 
-If any entity institutes patent litigation against You or any other
-entity (including a cross-claim or counterclaim in a lawsuit) alleging
-that your Contribution, or the Work to which you have contributed,
-constitutes direct or contributory patent infringement, then any patent
-licenses granted to that entity under this Agreement for that
-Contribution or Work shall terminate as of the date such litigation is
-filed.
+If any entity brings patent litigation alleging that the Project or a
+Contribution infringes a patent, the patent licenses granted by You to that
+entity under this CLA terminate.
 
 ---
 
 ## 4. Commercial Relicensing
 
-You agree that Fernanda Diaz-Schmeier may license Your Contribution under
-any license terms, including proprietary or commercial licenses, in
-addition to the open source license (Apache License, Version 2.0)
-currently governing the Work.
-
-This right is necessary to allow the Maintainer to offer the Work or
-derivative products — including SHAI Enterprise — under commercial
-terms while keeping the open source version available to the community.
-
-You retain all rights to use Your Contribution for any other purpose,
-including under the Apache License, Version 2.0.
+You agree that Fernanda Analia Diaz-Schmeier may license Your
+Contribution under any license terms, including proprietary or
+commercial licenses, in addition to the open source license (Apache
+License, Version 2.0) currently governing the Work. This right is
+necessary to allow the Maintainer to offer the Work or derivative
+products under commercial terms while keeping the open source version
+available to the community. You retain all rights to use Your
+Contribution for any other purpose, including under the Apache License,
+Version 2.0.
 
 ---
 
-## 5. Representations — Authority to Grant
+## 5. Representations
 
-You represent that you are legally entitled to grant the above licenses.
-If your employer(s) has rights to intellectual property that you create
-that includes your Contributions, you represent that you have received
-permission to make Contributions on behalf of that employer, that your
-employer has waived such rights for your Contributions to this project,
-or that your employer has executed a separate Corporate CLA with the
-Maintainer.
-
----
-
-## 6. Representations — Original Creation
-
-You represent that each of Your Contributions is Your original creation
-(see Section 8 for submissions on behalf of others). You represent that
-Your Contribution submissions include complete details of any
-third-party license or other restriction (including, but not limited
-to, related patents and trademarks) of which you are personally aware
-and which are associated with any part of Your Contributions.
-
----
-
-## 7. No Support Obligation; As-Is Basis
-
-You are not expected to provide support for Your Contributions, except
-to the extent You desire to provide support. You may provide support
-for free, for a fee, or not at all. Unless required by applicable law
-or agreed to in writing, You provide Your Contributions on an **"AS IS"
-BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND**, either express or
-implied, including, without limitation, any warranties or conditions of
-TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A PARTICULAR
-PURPOSE.
+1. You are legally entitled to grant the licenses above.
+2. Each Contribution is either Your original creation or You have authority to
+   submit it under this CLA.
+3. Your Contributions are provided **“AS IS”** without warranties of any kind.
+4. You will notify the Project if any statement above becomes inaccurate.
 
 ---
 
@@ -158,7 +100,7 @@ Contributions to SHAI are submitted via GitHub pull request.
 
 When you open a pull request, the CLA Assistant bot will check whether
 you have signed this agreement. If you have not yet signed, the bot
-will post a comment on your pull request with a link to sign.
+will post a comment on your pull request.
 
 To sign, post the following statement as a comment on your pull request:
 
@@ -171,11 +113,6 @@ By posting that statement you confirm:
 - **Date:** (the date of your comment, recorded automatically)
 
 Your signature will be recorded in `signatures/cla.json` in this
-repository. You only need to sign once — subsequent pull requests from
-the same GitHub account are recognized automatically.
+repository. You only need to sign once; subsequent pull requests from
+the same GitHub account will be recognized automatically.
 
----
-
-*This agreement is adapted from the Apache Software Foundation
-Individual Contributor License Agreement v2.2, used under the
-Apache License, Version 2.0.*

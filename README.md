@@ -4,8 +4,8 @@
 >
 > To help you get up to speed quickly, SHAI ships interactive documentation as a set of skills that can answer your questions directly in your workflow.
 >
-> Website: [shai.aibestlabs.com](https://shai.aibestlabs.com)  
-> Full docs: [shai.aibestlabs.com/docs.html](https://shai.aibestlabs.com/docs.html)
+> 🌐 Website: [shai.aibestlabs.com](https://shai.aibestlabs.com)  
+> 📄 Full docs: [shai.aibestlabs.com/docs.html](https://shai.aibestlabs.com/docs.html)
 
 **Secure Harness AI — the security control plane for production AI agents.**
 
@@ -254,6 +254,12 @@ SHAI wraps existing agents without requiring a rebuild.
 | CrewAI | `wrap_tools()` |
 | PydanticAI | `@harness_tool`, `add_harness_middleware()` |
 | OpenAI Agents | `make_before_tool_hook()`, `wrap_tool()` |
+
+---
+
+## Multi language support
+
+The pattern scanners support English (EN), French (FR), Spanish (ES), German (DE), and Simplified Chinese (ZH). Localized patterns are loaded automatically alongside the base English catalog, with no additional configuration required.
 
 ---
 
