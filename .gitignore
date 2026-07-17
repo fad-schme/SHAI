@@ -30,9 +30,6 @@ dist/
 # VSCode
 .vscode/
 
-# macOS
-.DS_Store
-
 zips/
 
 # Logs
@@ -62,3 +59,5 @@ locomo/runs/*
 
 SESSION_STATE.md
 SKILL*
+/state/*
+benchmark_*
