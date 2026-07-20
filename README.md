@@ -19,11 +19,7 @@ Everyone's racing to make AI agents smarter. Nobody's making them safe.
 
 Agents can write your code, manage your inbox, deploy your infrastructure, and make hundreds of autonomous decisions before you've had your morning coffee. The productivity is real. But so is the risk.
 
-OpenClaw — the fastest-growing GitHub repository in history — became 2026's first major AI security crisis within weeks of going viral. One malicious webpage was enough to hijack an agent with full access to your files, emails, and credentials. Its plugin marketplace was 12% malware. Over 135,000 instances left exposed on the open internet. Good people, good intentions — but no security layer.
-
-That's not an OpenClaw problem. That's the gap every agent has right now.
-
-AI agents are a fundamentally new kind of security problem. A traditional app has a fixed attack surface. An agent's grows with every tool, every integration, every new capability you give it. Most teams respond by writing better system prompts, fine-tuning for instruction following, adding guardrails that ask the model if a request seems dangerous. This is safety theater. It secures the model's *internal state* — a black box that will eventually produce an anomaly regardless of how much safety training it has received.
+AI agents are a fundamentally new kind of security problem.
 
 OWASP recognized this and published the first-ever security framework for AI agents — ten threat categories specific to autonomous systems: prompt injection, tool misuse, privilege escalation, memory poisoning, supply chain compromise, rogue agents, and more. A clear map of what can go wrong.
 
@@ -32,8 +28,6 @@ OWASP recognized this and published the first-ever security framework for AI age
 Nobody had built the open source layer to actually prevent it. **Until SHAI.**
 
 SHAI is a Python package — not an agent itself, but the security harness that wraps around one. You keep building with whatever framework you love: LangChain, LangGraph, CrewAI, PydanticAI, or your own custom loop. SHAI sits around it and protects it, covering every threat on the OWASP Agentic AI list. It works on new agents you're building today, and on existing ones already running in production.
-
-The brakes shouldn't be an afterthought. With SHAI, they ship on day one.
 
 ---
 
