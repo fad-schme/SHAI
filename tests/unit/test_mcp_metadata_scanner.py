@@ -1,9 +1,7 @@
 """Tests for MCPMetadataScanner — MCP tool metadata injection detection."""
 from __future__ import annotations
 
-import pytest
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -298,8 +296,8 @@ def test_mcp_metadata_scan_in_scanner_factories():
 
 
 def test_mcp_metadata_scan_factory_returns_scanner():
-    from harness.core.harness import _SCANNER_FACTORIES
     from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
+    from harness.core.harness import _SCANNER_FACTORIES
     scanner = _SCANNER_FACTORIES["mcp_metadata_scan"]({})
     assert isinstance(scanner, MCPMetadataScanner)
 
@@ -307,7 +305,7 @@ def test_mcp_metadata_scan_factory_returns_scanner():
 def test_mcp_metadata_scan_config_schema():
     """MCPMetadataScanConfig has correct defaults."""
     from harness.config.schema import MCPMetadataScanConfig
-    from harness.core.types import Severity, ScanAction
+    from harness.core.types import ScanAction, Severity
     cfg = MCPMetadataScanConfig()
     assert cfg.enabled is True
     assert cfg.block_at == Severity.MEDIUM
@@ -318,7 +316,7 @@ def test_mcp_metadata_scan_config_schema():
 
 def test_harness_config_has_scan_mcp_metadata():
     """HarnessConfig includes scan_mcp_metadata with correct defaults."""
-    from harness.config.schema import HarnessConfig, BoundaryConfig, MCPMetadataScanConfig
+    from harness.config.schema import HarnessConfig, MCPMetadataScanConfig
     from harness.core.types import Severity
     # Build a minimal valid HarnessConfig and check scan_mcp_metadata
     cfg = HarnessConfig.model_validate({

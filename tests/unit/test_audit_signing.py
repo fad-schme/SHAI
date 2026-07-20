@@ -6,12 +6,10 @@ import hmac
 import json
 from pathlib import Path
 
-import pytest
-
 from harness.audit.emitter import AuditEmitter, _sign_event
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
-from harness.core.types import BoundaryName, Decision, Severity
+from harness.core.types import BoundaryName, Decision
 
 CTX = AgentContext(agent_id="a1")
 SECRET = b"test-signing-secret"
@@ -133,7 +131,6 @@ async def test_signing_uses_timing_safe_comparison():
 async def test_harness_signing_disabled_by_default(tmp_path: Path):
     """No signing key configured → signature field is None."""
     from harness.core.harness import SHAI
-    from harness.core.context import AgentContext
 
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
@@ -151,8 +148,6 @@ async def test_harness_signing_disabled_by_default(tmp_path: Path):
 async def test_harness_signing_enabled_via_env(tmp_path: Path, monkeypatch):
     """When audit_signing is enabled, events carry a signature."""
     from harness.core.harness import SHAI
-    from harness.core.types import Transport
-    from harness.tools.tool import Tool
 
     monkeypatch.setenv("AUDIT_KEY", "mysecret")
 

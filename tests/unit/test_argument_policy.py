@@ -19,10 +19,9 @@ from harness.boundaries.argument_policy import check_argument_rules, check_irrev
 from harness.core.context import AgentContext
 from harness.core.errors import ArgumentViolationError, IrreversibleActionError
 from harness.core.events import AuditEvent
-from harness.core.types import Decision, Irreversibility, Transport
+from harness.core.types import Decision, Irreversibility
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import ArgumentRule, Tool
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

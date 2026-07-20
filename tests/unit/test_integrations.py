@@ -5,11 +5,7 @@ They test the harness gating logic by using minimal stubs.
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from harness.core.context import AgentContext
 from harness.core.harness import SHAI
@@ -109,8 +105,8 @@ async def test_run_turn_allow(tmp_path: Path):
 
 async def test_run_turn_input_blocked(tmp_path: Path):
     """When scan_input blocks, run_turn returns a ScanVerdict."""
-    from harness.integrations.anthropic_sdk import run_turn
     from harness.core.verdicts import ScanVerdict
+    from harness.integrations.anthropic_sdk import run_turn
 
     # Enable scanning with a very low block threshold for this test
     cfg = tmp_path / "h.yaml"
@@ -141,7 +137,6 @@ async def test_run_turn_input_blocked(tmp_path: Path):
 # ── langgraph integration ─────────────────────────────────────────────────
 
 async def test_harness_tool_node_allow(tmp_path: Path):
-    from harness.integrations.langgraph import HarnessToolNode
 
     h   = await _build_harness(tmp_path)
     ctx = AgentContext(agent_id="orchestrator_agent")
@@ -155,7 +150,8 @@ async def test_harness_tool_node_allow(tmp_path: Path):
     class _AIMsg:
         tool_calls = [{"name": "search_docs", "args": {"query": "q"}, "id": "1"}]
 
-    import sys, unittest.mock as mock
+    import sys
+    import unittest.mock as mock
     FakeTM = mock.MagicMock()
     FakeTM.side_effect = lambda **kw: type("TM", (), kw)()
 
@@ -163,7 +159,9 @@ async def test_harness_tool_node_allow(tmp_path: Path):
         "langchain_core": mock.MagicMock(),
         "langchain_core.messages": mock.MagicMock(AIMessage=_AIMsg, ToolMessage=FakeTM),
     }):
-        import importlib, harness.integrations.langgraph as m
+        import importlib
+
+        import harness.integrations.langgraph as m
         importlib.reload(m)
         node = m.HarnessToolNode(tools=[_Tool()], harness=h, ctx=ctx)
         result = await node({"messages": [_AIMsg()]})
@@ -173,7 +171,6 @@ async def test_harness_tool_node_allow(tmp_path: Path):
 
 async def test_harness_tool_node_deny(tmp_path: Path):
     """send_email must be denied — ToolMessage with error status returned."""
-    from harness.integrations.langgraph import HarnessToolNode
 
     h   = await _build_harness(tmp_path)
     ctx = AgentContext(agent_id="orchestrator_agent")
@@ -187,7 +184,8 @@ async def test_harness_tool_node_deny(tmp_path: Path):
     class _AIMsg:
         tool_calls = [{"name": "send_email", "args": {"to": "x@y.com"}, "id": "2"}]
 
-    import sys, unittest.mock as mock
+    import sys
+    import unittest.mock as mock
     tool_msgs = []
     def fake_tm(**kw):
         tool_msgs.append(kw)
@@ -196,7 +194,9 @@ async def test_harness_tool_node_deny(tmp_path: Path):
         "langchain_core": mock.MagicMock(),
         "langchain_core.messages": mock.MagicMock(AIMessage=_AIMsg, ToolMessage=fake_tm),
     }):
-        import importlib, harness.integrations.langgraph as m
+        import importlib
+
+        import harness.integrations.langgraph as m
         importlib.reload(m)
         node = m.HarnessToolNode(tools=[_EmailTool()], harness=h, ctx=ctx)
         await node({"messages": [_AIMsg()]})

@@ -22,9 +22,8 @@ Each connector is a YAML file named <connector_id>.yaml.
 """
 from __future__ import annotations
 
-import importlib.resources
 import logging
-from functools import cache, lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 

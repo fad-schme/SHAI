@@ -27,7 +27,8 @@ LangGraph is imported lazily — this module is importable without it installed.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -54,8 +55,8 @@ class HarnessToolNode:
     def __init__(
         self,
         tools: Sequence[Any],
-        harness: "SHAI",
-        ctx: "AgentContext",
+        harness: SHAI,
+        ctx: AgentContext,
     ) -> None:
         self._tools   = {self._tool_name(t): t for t in tools}
         self._harness = harness

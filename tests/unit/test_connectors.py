@@ -4,12 +4,11 @@ from __future__ import annotations
 import pytest
 
 from harness.connectors import (
+    ConnectorManifest,
     list_connectors,
     load_manifest,
     manifest_to_source_config_fields,
 )
-from harness.connectors import ConnectorManifest
-
 
 # ── Registry ───────────────────────────────────────────────────────────────
 
@@ -136,7 +135,7 @@ def test_load_manifest_is_cached():
 # ── SourceConfig integration ───────────────────────────────────────────────
 
 def test_source_config_accepts_connector_field():
-    from harness.config.schema import SourceConfig, Transport
+    from harness.config.schema import SourceConfig
     cfg = SourceConfig(
         name="my_slack",
         connector="slack",
@@ -147,8 +146,9 @@ def test_source_config_accepts_connector_field():
 
 
 def test_source_config_mcp_without_url_or_connector_raises():
-    from harness.config.schema import SourceConfig, Transport
     from pydantic import ValidationError
+
+    from harness.config.schema import SourceConfig, Transport
     with pytest.raises(ValidationError, match="url is required"):
         SourceConfig(name="bad", transport=Transport.MCP)
 

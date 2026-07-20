@@ -1,6 +1,8 @@
 """SecretsProvider contract suite — EnvVarProvider must pass."""
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 
 from harness.adapters.secrets.env import (
@@ -11,7 +13,6 @@ from harness.adapters.secrets.env import (
     resolve_secret_uri,
 )
 from harness.core.errors import ConfigError
-
 
 # ── EnvVarProvider.resolve() ──────────────────────────────────────────────
 
@@ -64,15 +65,15 @@ def test_secret_is_expired_without_ttl():
 
 
 def test_secret_is_expired_with_past_ttl():
-    from datetime import datetime, timezone, timedelta
-    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    from datetime import datetime, timedelta
+    past = datetime.now(UTC) - timedelta(seconds=1)
     secret = Secret(value="x", expires_at=past)
     assert secret.is_expired() is True
 
 
 def test_secret_not_expired_with_future_ttl():
-    from datetime import datetime, timezone, timedelta
-    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    from datetime import datetime, timedelta
+    future = datetime.now(UTC) + timedelta(hours=1)
     secret = Secret(value="x", expires_at=future)
     assert secret.is_expired() is False
 

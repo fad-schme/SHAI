@@ -9,7 +9,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from harness.agents.registry import AgentRegistry
 from harness.core.errors import AgentConflictError, AgentNotRegisteredError

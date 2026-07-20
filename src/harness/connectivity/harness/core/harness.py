@@ -161,7 +161,7 @@ class SHAI:
           Resolves ${ENV_VAR} then secret:// URIs using EnvVarProvider.
           All secret:// references must be present as environment variables.
         """
- 
+
         # Always use EnvVarProvider for secret:// resolution.
         # Enterprise providers can be swapped by subclassing or patching before
         # calling from_yaml() — no config field needed since there is only one
@@ -674,7 +674,7 @@ class SHAI:
                 encode_token,
                 sign_token,
             )
-            
+
             source_cfg   = next(
                 (s for s in self._config.sources if s.name == source_name),
                 None,

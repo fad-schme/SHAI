@@ -5,7 +5,6 @@ import pytest
 
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 @pytest.fixture

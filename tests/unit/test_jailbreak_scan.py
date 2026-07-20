@@ -211,8 +211,9 @@ async def test_injection_scanner_does_not_produce_jailbreak_categories():
 
 async def test_jailbreak_scanner_categories_are_jailbreak_prefixed():
     """Every category in this scanner's catalog starts with 'jailbreak.'."""
-    import yaml
     from pathlib import Path
+
+    import yaml
     catalog_path = (
         Path(__file__).parents[2]
         / "src/harness/adapters/scanners/l10n/jailbreak_patterns.yaml"
@@ -272,8 +273,9 @@ async def test_benign_text_does_not_trigger(text):
 async def test_jailbreak_blocked_via_run_scan():
     """End-to-end through run_scan: a jailbreak payload is blocked at HIGH."""
     from unittest.mock import AsyncMock
+
     from harness.boundaries._scan import run_scan
-    from harness.core.types import BoundaryName, ScanAction, ScanStatus, Severity
+    from harness.core.types import BoundaryName, ScanAction, Severity
 
     sink = AsyncMock()
     sink.emit = AsyncMock()
@@ -298,9 +300,10 @@ async def test_jailbreak_blocked_via_run_scan():
 
 async def test_benign_allowed_via_run_scan():
     from unittest.mock import AsyncMock
-    from harness.boundaries._scan import run_scan
-    from harness.core.types import BoundaryName, ScanAction, ScanStatus, Severity
+
     from harness.audit.emitter import AuditEmitter
+    from harness.boundaries._scan import run_scan
+    from harness.core.types import BoundaryName, ScanAction, Severity
 
     sink = AsyncMock(); sink.emit = AsyncMock()
     emitter = AuditEmitter([sink])

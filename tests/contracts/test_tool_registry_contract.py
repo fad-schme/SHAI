@@ -5,10 +5,10 @@ import asyncio
 
 import pytest
 
-from harness.tools.registry import ToolRegistry
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError, ToolNotRegisteredError
 from harness.core.types import Transport
+from harness.tools.registry import ToolRegistry
 from harness.tools.tool import Tool
 
 _CTX = AgentContext(

@@ -4,7 +4,7 @@ from pydantic import ValidationError
 
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
-from harness.core.types import BoundaryName, Decision, Severity
+from harness.core.types import BoundaryName, Decision
 
 
 def _ctx(**kw) -> AgentContext:

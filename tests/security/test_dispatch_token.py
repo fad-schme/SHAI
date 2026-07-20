@@ -11,10 +11,7 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import datetime, timezone
-
-import pytest
-
+from datetime import UTC, datetime
 
 # ── Reference implementation (from docs/connectivity.md) ─────────────────
 
@@ -40,7 +37,7 @@ def make_token(
         "sub_agent_id": sub_agent_id,
         "tool_name": tool_name,
         "allowed_destinations": allowed_destinations,
-        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "issued_at": datetime.now(UTC).isoformat(),
         "ttl_seconds": ttl_seconds,
     }
     payload["signature"] = _sign({k: v for k, v in payload.items()}, secret)
@@ -60,7 +57,7 @@ def verify_token(token: dict, secret: bytes = SECRET) -> tuple[bool, str]:
             return False, "signature mismatch"
 
         issued = datetime.fromisoformat(token["issued_at"])
-        age = (datetime.now(timezone.utc) - issued).total_seconds()
+        age = (datetime.now(UTC) - issued).total_seconds()
         if age > token["ttl_seconds"]:
             return False, f"token expired (age={age:.1f}s ttl={token['ttl_seconds']}s)"
 

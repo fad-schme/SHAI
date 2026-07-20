@@ -2,11 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
-import pytest
-
-from harness.tools.source import ToolSource
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
 from harness.core.context import AgentContext
 from harness.core.types import Transport

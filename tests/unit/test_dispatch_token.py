@@ -1,8 +1,7 @@
 """Tests for connectivity/token.py — dispatch token issuance and verification."""
 from __future__ import annotations
 
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -83,13 +82,15 @@ def test_expired_token_raises():
     tok     = _token(ttl_seconds=1)
     encoded = encode_token(tok)
     # Manually create an expired token by patching expires_at in the raw JSON
-    import base64, json, dataclasses
+    import dataclasses
     expired = dataclasses.replace(
         tok,
-        expires_at=datetime.now(timezone.utc) - timedelta(seconds=60),
+        expires_at=datetime.now(UTC) - timedelta(seconds=60),
         signature="",
     )
-    import hashlib, hmac as _hmac
+    import hashlib
+    import hmac as _hmac
+
     from harness.connectivity.token import _payload
     sig = _hmac.new(SECRET, _payload(expired), hashlib.sha256).hexdigest()
     expired = dataclasses.replace(expired, signature=sig)
@@ -114,7 +115,8 @@ def test_wrong_secret_raises():
 
 
 def test_tampered_payload_raises():
-    import base64, json
+    import base64
+    import json
     tok     = _token()
     encoded = encode_token(tok)
     raw     = base64.urlsafe_b64decode(encoded.encode() + b"==")
@@ -133,7 +135,8 @@ def test_malformed_base64_raises():
 
 
 def test_missing_field_raises():
-    import base64, json
+    import base64
+    import json
     tok     = _token()
     encoded = encode_token(tok)
     raw     = base64.urlsafe_b64decode(encoded.encode() + b"==")
@@ -184,7 +187,8 @@ def test_default_allowed_urls_strips_path():
 
 async def test_gate_issues_token_when_connectivity_enabled(tmp_path):
     """check_tool_call returns dispatch_token when connectivity.enabled."""
-    import os, pathlib
+    import os
+
     from harness import SHAI, Tool
     from harness.core.context import AgentContext
     from harness.core.types import Transport
@@ -268,6 +272,7 @@ async def test_gate_no_token_when_connectivity_disabled(tmp_path):
 async def test_gate_denied_carries_no_token(tmp_path):
     """Denied gate decisions must never carry a dispatch token."""
     import os
+
     from harness import SHAI, Tool
     from harness.core.context import AgentContext
     from harness.core.types import Transport
@@ -313,6 +318,7 @@ async def test_gate_denied_carries_no_token(tmp_path):
 async def test_connectivity_config_requires_secret_when_enabled(tmp_path):
     """ConnectivityConfig raises on enabled=True with empty token_secret."""
     from pydantic import ValidationError
+
     from harness.connectivity.config import ConnectivityConfig
 
     with pytest.raises((ValidationError, ValueError)):

@@ -4,8 +4,6 @@ from __future__ import annotations
 import pytest
 
 from harness.core.context import AgentContext
-from harness.core.types import Severity
-from harness.core.verdicts import Finding
 from harness.core.events import AuditEvent
 from harness.core.types import BoundaryName, Decision
 

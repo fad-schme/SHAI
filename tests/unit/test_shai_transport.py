@@ -1,9 +1,8 @@
 """Tests for ShaiTransport — in-process egress enforcement."""
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -238,7 +237,7 @@ async def test_no_audit_event_for_tokenless_requests():
 
 async def test_network_audit_event_json_serialisable():
     event = NetworkAuditEvent(
-        timestamp    = datetime.now(timezone.utc),
+        timestamp    = datetime.now(UTC),
         event_type   = "network_egress",
         token_id     = "uuid-1234",
         source_name  = SOURCE,
@@ -264,7 +263,7 @@ async def test_network_audit_event_json_serialisable():
 # ── Token_id SIEM correlation ─────────────────────────────────────────────
 
 async def test_token_id_matches_issued_token():
-    from harness.connectivity.token import sign_token, encode_token
+    from harness.connectivity.token import encode_token, sign_token
 
     tok_obj = sign_token(
         agent_id="orchestrator_agent",

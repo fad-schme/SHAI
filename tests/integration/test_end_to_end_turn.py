@@ -7,12 +7,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from harness.core.context import AgentContext
+from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Decision, Transport
-from harness.core.events import AuditEvent
 from harness.tools.tool import Tool
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"

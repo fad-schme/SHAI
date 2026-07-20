@@ -10,8 +10,7 @@ from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import run_tool_result_scan
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
-from harness.core.types import BoundaryName, ScanAction, ScanStatus, Decision, Severity
-from harness.core.verdicts import ScanVerdict
+from harness.core.types import BoundaryName, Decision, ScanAction, Severity
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 CTX = AgentContext(agent_id="a1")

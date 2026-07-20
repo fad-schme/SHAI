@@ -169,8 +169,10 @@ async def test_1_baseline_no_shai(tmp_path: Path):
 
 async def test_2_normalization(tmp_path: Path):
     print("\n── 2. Normalization (de-obfuscation pre-processing) ───────────────")
+    import base64
+    import codecs
+
     from harness.core.normalize import canonicalize
-    import base64, codecs
 
     benign_b64     = base64.b64encode(BENIGN.encode()).decode()
     attack_b64     = base64.b64encode(ATTACK_INJECTION.encode()).decode()
@@ -193,9 +195,9 @@ async def test_2_normalization(tmp_path: Path):
 
 async def test_3_per_scanner_benign(tmp_path: Path):
     print("\n── 3. Per-scanner cost — benign input (no findings expected) ──────")
+    from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
     from harness.adapters.scanners.injection_scan import InjectionScanner
     from harness.adapters.scanners.jailbreak_scan import JailbreakScanner
-    from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
     from harness.adapters.scanners.regex_pii import RegexPIIScanner
 
     ctx = AgentContext(agent_id="test")
@@ -214,9 +216,9 @@ async def test_3_per_scanner_benign(tmp_path: Path):
 
 async def test_4_per_scanner_attack(tmp_path: Path):
     print("\n── 4. Per-scanner cost — attack input (findings + scoring functions)")
+    from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
     from harness.adapters.scanners.injection_scan import InjectionScanner
     from harness.adapters.scanners.jailbreak_scan import JailbreakScanner
-    from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
 
     ctx = AgentContext(agent_id="test")
     cases = [
@@ -395,9 +397,9 @@ async def test_9_summary(tmp_path: Path):
     print(f"  {'Scanner':<35} {'Mean (ms)':>10}  {'p99 (ms)':>10}  {'Budget':>10}")
     print("  " + "-" * 68)
 
+    from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
     from harness.adapters.scanners.injection_scan import InjectionScanner
     from harness.adapters.scanners.jailbreak_scan import JailbreakScanner
-    from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
     from harness.adapters.scanners.regex_pii import RegexPIIScanner
     from harness.core.normalize import canonicalize
 

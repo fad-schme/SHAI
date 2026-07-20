@@ -7,9 +7,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from harness.tools.registry import ToolRegistry
 from harness.agents.agent_config import AgentConfig, RuleConfig, RuleMatchConfig, SubAgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call

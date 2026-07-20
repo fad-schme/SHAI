@@ -9,10 +9,7 @@ import json
 from io import StringIO
 from pathlib import Path
 
-import pytest
-
 from harness.adapters.audit_sinks.stdout import StdoutSink
-from harness.audit.emitter import AuditEmitter
 from harness.core.context import AgentContext
 from harness.core.harness import SHAI
 from harness.core.types import Transport

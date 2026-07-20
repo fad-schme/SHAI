@@ -5,13 +5,11 @@ import asyncio
 
 import pytest
 
-from harness.tools.registry import ToolRegistry
-from harness.tools.source import SourceRegistry, ToolSource
-from harness.tools.source import LocalSource
-from harness.tools.source import SkillSource
 from harness.core.context import AgentContext
 from harness.core.types import Transport
 from harness.policy.rules import RuleBasedPolicy
+from harness.tools.registry import ToolRegistry
+from harness.tools.source import LocalSource, SkillSource, SourceRegistry
 from harness.tools.tool import Tool
 
 

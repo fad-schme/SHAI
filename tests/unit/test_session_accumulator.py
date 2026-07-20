@@ -19,7 +19,7 @@ from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
-from harness.core.types import BoundaryName, Decision, ScanStatus, Transport
+from harness.core.types import BoundaryName, Decision, Transport
 from harness.tools.tool import Tool
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"

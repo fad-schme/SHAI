@@ -6,8 +6,6 @@ import io
 import json
 from pathlib import Path
 
-import pytest
-
 from harness.adapters.audit_sinks.file import FileSink
 from harness.adapters.audit_sinks.stdout import StdoutSink
 from harness.core.context import AgentContext

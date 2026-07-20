@@ -1,7 +1,6 @@
 """Unit tests for RateLimiter (R1)."""
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest

@@ -11,12 +11,10 @@ import pytest
 
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import run_scan
+from harness.boundaries._scan import _breakers, run_scan
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
-from harness.core.types import BoundaryName, OnError, ScanAction, ScanStatus, Decision, Severity
-
-from harness.boundaries._scan import _breakers
+from harness.core.types import BoundaryName, Decision, OnError, ScanAction, Severity
 
 CTX = AgentContext(agent_id="a1")
 

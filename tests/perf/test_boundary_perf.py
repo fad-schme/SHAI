@@ -19,8 +19,6 @@ import asyncio
 import time
 from pathlib import Path
 
-import pytest
-
 from harness.core.context import AgentContext
 from harness.core.harness import SHAI
 from harness.core.types import Transport

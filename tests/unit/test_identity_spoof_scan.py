@@ -17,8 +17,7 @@ from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
-from harness.core.types import BoundaryName, Decision, Transport
-from harness.tools.tool import Tool
+from harness.core.types import BoundaryName, Decision
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 CTX = AgentContext(agent_id="test")

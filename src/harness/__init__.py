@@ -1,7 +1,6 @@
 """shai — Secure Harness AI, control-plane SDK for production agents."""
 from importlib.metadata import PackageNotFoundError, version
 
-from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.agents.agent_config import AgentConfig, RuleConfig, SubAgentConfig
 from harness.connectivity.config import ConnectivityConfig
 from harness.connectivity.token import DispatchToken, TokenError
@@ -16,7 +15,6 @@ from harness.core.errors import (
     HarnessError,
     IrreversibleActionError,
     MCPInvocationError,
-    NetworkPolicyError,
     PolicyEvaluationError,
     SubAgentNotDeclaredError,
     ToolNotRegisteredError,

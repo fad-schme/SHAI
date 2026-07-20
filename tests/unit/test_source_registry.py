@@ -246,7 +246,6 @@ def test_mcp_source_constructed():
 
 async def test_mcp_source_requires_url():
     """MCPSource requires a url — httpx is now a core dependency (no ImportError test needed)."""
-    import sys
     # httpx is a core shai dependency — no longer gated by a lazy import.
     # Verify MCPSource still enforces url is required for mcp transport."""
     # (nothing to monkeypatch — just confirm httpx is importable)
@@ -317,8 +316,9 @@ def test_extract_session_id_missing_returns_none():
 # ── SourceConfig schema ───────────────────────────────────────────────────
 
 def test_source_config_mcp_requires_url():
-    from harness.config.schema import SourceConfig
     from pydantic import ValidationError
+
+    from harness.config.schema import SourceConfig
     with pytest.raises(ValidationError, match="url"):
         SourceConfig(name="slack", transport="mcp")  # missing url
 
@@ -407,7 +407,6 @@ async def test_source_tags_visible_in_agent_tool_set(tmp_path):
       4. ToolRegistry rejects re-registration (different tags)
       5. _resolve_tools() must return tool with [read, sensitive] — not [read]
     """
-    from pathlib import Path as _Path
     from harness.core.harness import SHAI
     from harness.core.types import Transport
 
@@ -527,8 +526,9 @@ async def test_missing_optional_source_skips():
 
 async def test_failed_required_source_raises():
     """required source whose load() fails must raise ConfigError."""
-    from harness.core.errors import ConfigError
     from unittest.mock import AsyncMock, MagicMock
+
+    from harness.core.errors import ConfigError
 
     bad = MagicMock()
     bad.name = "bad_src"
@@ -567,7 +567,6 @@ async def test_policy_suppressed_source_skips_regardless_of_required():
     tool = Tool(name="search", tags=["read"], transport=Transport.LOCAL)
     tool_reg = _make_registry.__wrapped__(tool) if hasattr(_make_registry, '__wrapped__') else None
 
-    import asyncio as _asyncio
     tr = ToolRegistry()
     await tr.register(Tool(name="search", tags=["read"], transport=Transport.LOCAL))
     src = LocalSource(name="docs", registry=tr, tool_names=["search"])

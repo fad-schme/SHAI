@@ -1,5 +1,4 @@
 """Tests for core/types.py."""
-import pytest
 
 from harness.core.types import BoundaryName, Decision, Severity, Transport
 
