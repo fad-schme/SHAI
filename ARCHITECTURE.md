@@ -32,7 +32,15 @@ Runs on every user message before it reaches the LLM. Scanners run concurrently.
 
 **Pre-processing — normalization (`core/normalize.py`):** Before any scanner runs, the input is canonicalized into one or more plaintext *views* — the surface form plus any decoded variants (base64, hex, URL, rot13, unicode homoglyphs, fragment reassembly). Scanners match against all views. Raw text the agent sees is never mutated. Configured under `normalization:` in `harness.yaml`; enabled by default.
 
-**Scanners:** `InjectionScanner` (`injection_patterns.yaml`, 17 rules) · `JailbreakScanner` (`jailbreak_patterns.yaml`, 6 rules) · `IdentitySpoofScanner` (`identity_spoof_patterns.yaml`, 4 rules) · `RegexPIIScanner` (7 categories) · `FileScanner` (structural + doc-tuned injection scan on extracted text)
+**Scanners:** `HeuristicScanner` (always on, structural anomaly detection) · `InjectionScanner` (`injection_patterns.yaml`, 17 rules) · `JailbreakScanner` (`jailbreak_patterns.yaml`, 6 rules) · `IdentitySpoofScanner` (`identity_spoof_patterns.yaml`, 4 rules) · `RegexPIIScanner` (7 categories) · `FileScanner` (structural + doc-tuned injection scan on extracted text)
+
+**HeuristicScanner (0.2.0):** Always prepended to every scan boundary. Not configurable. Four sub-scores: entropy analysis (Shannon entropy > 4.5 bits/char catches base64 blobs and obfuscated payloads), instruction density (ratio of control tokens to total — injection attempts > 8%), language coherence (bigram divergence detects register shifts), structural markers (embedded `<|system|>`, `[INST]`, `{"role":}`). Each 0–2, summed: ≥5 HIGH, ≥3 MEDIUM, ≥1 LOW.
+
+**Ensemble severity promotion (0.2.0):** Runs unconditionally after all scanners complete. Maps severity to weight (LOW=1, MEDIUM=3, HIGH=6), sums per category across scanners. When sum ≥ 4.0 and 2+ distinct scanners contributed → promotes to HIGH. Two independent MEDIUM signals become HIGH even though neither alone would trigger `block_at: high`.
+
+**Incremental pattern database (0.2.0):** Built-in YAML patterns ship with the package. Supplemental patterns are stored in a signed SQLite database (`patterns_db` in config). Each row is HMAC-SHA256 verified at startup. Verified rules are compiled and passed to `InjectionScanner` as `extra_rules`. Distributed via signed bundles: `shai patterns apply --bundle <file>`. Tampered rows are skipped.
+
+**Error handling (0.2.0):** Per-boundary `on_error` config controls scanner failure behavior: `fail_closed` (default, BLOCK), `fail_open` (empty findings), `degrade` (WARN). Per-scanner circuit breaker (CLOSED → OPEN → HALF_OPEN, exponential backoff, cap 5 min). Scanner failures and circuit trips emit `boundary=SYSTEM`, `decision=DEGRADED` audit events.
 
 | Scanner | Category prefix | What it catches | Languages |
 |---|---|---|---|

@@ -148,6 +148,29 @@ if verdict.blocked:
 
 ---
 
+## Error handling at scan boundaries (0.2.0)
+
+Scanner failures are handled per the boundary's `on_error` config:
+
+| `on_error` | Scanner failure behavior |
+|---|---|
+| `fail_closed` | Pipeline short-circuits → `ScanVerdict(BLOCK)`. Default. |
+| `fail_open` | Empty findings, pipeline continues (pre-0.2 behavior). |
+| `degrade` | `ScanVerdict(WARN)`, `degraded=True` in audit event. |
+
+A per-scanner circuit breaker tracks consecutive failures. After 5 failures
+the scanner is skipped entirely. After a recovery timeout (exponential
+backoff, cap 5 min), one probe call is attempted. Every scanner failure and
+circuit breaker trip emits a `boundary=system`, `decision=degraded` audit
+event with the scanner name, error, and circuit state.
+
+```yaml
+scan_input:
+  on_error: fail_closed    # scanner crash → block content
+```
+
+---
+
 ## Audit invariants (all boundaries)
 
 - **One event per call, always** — even on pre-gate failure or exception.
@@ -163,12 +186,28 @@ if verdict.blocked:
 
 | Class | Import | Catalog | Used in |
 |---|---|---|---|
+| `HeuristicScanner` | `harness.adapters.scanners.heuristic_scan` | Built-in heuristics | All scan boundaries (always on) |
 | `RegexPIIScanner` | `harness.adapters.scanners.regex_pii` | Built-in patterns | `scan_input`, `scan_output`, arg scanning |
 | `InjectionScanner` | `harness.adapters.scanners.injection_scan` | `injection_patterns.yaml` | `scan_input` |
 | `InjectionScanner` (doc) | same class, different catalog | `patterns_for_doc.yaml` | `scan_tool_result`, `FileScanner` content pass |
 | `FileScanner` | `harness.adapters.scanners.file_scanner` | structural + doc patterns | `scan_file` |
 | `MCPMetadataScanner` | `harness.adapters.scanners.mcp_metadata_scanner` | `mcp_metadata_patterns.yaml` | MCP `tools/list` registration |
 | `RateLimiter` | `harness.adapters.scanners.rate_limiter` | — (config-driven) | `check_tool_call` pre-gate |
+
+**`HeuristicScanner` — always on (0.2.0):**
+Prepended automatically to every scan boundary. Not configurable. Detects
+structural anomalies that regex catalogs miss: high-entropy segments (base64
+blobs, obfuscated payloads), instruction-dense text, abrupt register shifts,
+and embedded LLM markup (`<|system|>`, `[INST]`, `{"role": "system"}`).
+Four sub-scores (0–2 each), summed: ≥5 HIGH, ≥3 MEDIUM, ≥1 LOW.
+
+**Ensemble severity promotion (0.2.0):**
+After all scanners complete, findings are cross-checked. When 2+ different
+scanners flag the same category and their combined severity weight crosses
+a threshold, all findings in that category are promoted to HIGH. This means
+a MEDIUM from `injection_scan` plus a MEDIUM from `heuristic_scan` for the
+same category becomes HIGH — even though neither scanner alone would have
+triggered a block at `block_at: high`. Always on, no configuration.
 
 **`injection_patterns.yaml` vs `patterns_for_doc.yaml`:**
 - `injection_patterns.yaml` — tuned for user text input. More sensitive, 17 rules.

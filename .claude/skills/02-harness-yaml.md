@@ -23,6 +23,7 @@ scan_input:           # or scan_output, scan_tool_result, scan_file
   enabled: true       # false → boundary is skipped, disabled=True audit event
   block_at: high      # low | medium | high — findings at this severity → blocked
   action: block       # block | alert | redact — default action for this boundary
+  on_error: fail_closed  # fail_closed | fail_open | degrade — what happens on scanner failure
   scanners:
     - name: regex_pii
       action: redact        # per-scanner override (overrides boundary action)
@@ -35,6 +36,17 @@ scan_input:           # or scan_output, scan_tool_result, scan_file
 - `block` — hard stop. `verdict.blocked = True`. LLM never sees the content.
 - `alert` — content passes but `verdict.warned = True`. Audit flags it.
 - `redact` — matched text is replaced with `redact_with`. `verdict.redacted_text` is set.
+
+**`on_error` — scanner failure handling (0.2.0):**
+- `fail_closed` — default. Scanner failure → BLOCK. Safe posture.
+- `fail_open` — scanner failure → empty findings, pipeline continues. Use during rollout.
+- `degrade` — scanner failure → WARN. Content passes, audit event flagged `degraded=True`.
+
+A per-scanner circuit breaker prevents repeated calls to a broken adapter.
+After 5 consecutive failures the scanner is skipped entirely (OPEN state).
+After a recovery timeout it gets one probe call. Success resets; failure
+doubles the timeout (capped at 5 minutes). Circuit breaker trips emit
+`boundary=system`, `decision=degraded` audit events.
 
 **`block_at` interacts with `action`:**
 - A finding at or above `block_at` triggers the `action` for that scanner.
@@ -219,6 +231,42 @@ When `enabled: true`, `check_tool_call` issues a signed `DispatchToken`
 on every allowed gate decision. `ShaiTransport` validates it on every
 outbound MCP request.
 → See `10-connectivity.md`.
+
+---
+
+## Incremental pattern database (`patterns_db`)
+
+Supplemental injection patterns stored in a signed SQLite database.
+Built-in YAML patterns ship with the package and are always loaded.
+The DB holds incremental patterns — new attack signatures distributed
+as signed bundles via `shai patterns apply`.
+
+```yaml
+patterns_db:
+  enabled: true
+  path: state/patterns.db
+  secret: "secret://PATTERNS_SIGNING_KEY"
+```
+
+When `enabled`, `from_yaml()` loads verified patterns from the DB and passes
+them to `InjectionScanner` as `extra_rules` (appended to the built-in catalog).
+Each row is HMAC-SHA256 verified against the signing secret. Tampered rows
+are skipped with a warning.
+
+**CLI commands:**
+
+```bash
+# Apply a signed bundle to the database
+shai patterns apply --bundle patterns-2026-07-21.json --db state/patterns.db --secret PATTERNS_SIGNING_KEY
+
+# List all rules in the database
+shai patterns list --db state/patterns.db
+
+# Verify all signatures
+shai patterns verify --db state/patterns.db --secret PATTERNS_SIGNING_KEY
+```
+
+When `enabled: false` (default), no DB is loaded. Built-in patterns only.
 
 ---
 

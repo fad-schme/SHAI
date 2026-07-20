@@ -28,12 +28,25 @@ Inspects user text before it reaches the LLM. Detects PII, prompt injection, jai
 scan_input:
   enabled: true
   block_at: high
+  on_error: fail_closed
   scanners:
     - name: injection_scan       # prompt injection, tool coercion, exfiltration — EN + FR, ES, DE, ZH
     - name: jailbreak_scan       # guardrail-integrity: persona override, refusal suppression — EN + FR, ES, DE, ZH
     - name: identity_spoof_scan  # agentic identity: claimed orchestrator/system authority — EN + FR, ES, DE, ZH
     - name: regex_pii            # PII and credentials (with optional redaction) — EN
 ```
+
+**Always-on scanners (0.2.0):** `HeuristicScanner` is prepended automatically to every scan boundary. It detects structural anomalies that regex catalogs miss: high-entropy segments, instruction-dense text, register shifts, and embedded LLM markup. Not configurable — always runs.
+
+**Ensemble severity promotion (0.2.0):** After all scanners complete, findings are cross-checked across scanners. When 2+ different scanners flag the same category and their combined weight crosses a threshold, findings are promoted to HIGH.
+
+**Error handling (0.2.0):** The `on_error` field controls what happens when a scanner raises:
+- `fail_closed` (default) — scanner failure → BLOCK. Content rejected.
+- `fail_open` — scanner failure → empty findings. Pipeline continues.
+- `degrade` — scanner failure → WARN. Content passes, audit event flagged.
+
+A per-scanner circuit breaker prevents repeated calls to a broken adapter.
+Every failure and circuit trip emits a `boundary=system`, `decision=degraded` audit event.
 
 **Multilingual coverage:** `injection_scan`, `jailbreak_scan`, and `identity_spoof_scan` automatically
 load multilingual variants from `l10n/*.l10n.yaml` alongside the base English catalog. No

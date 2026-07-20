@@ -1,5 +1,19 @@
 # SHAI Quickstart
 
+## 5-minute demo — run this now
+
+```bash
+pip install shai
+python examples/quickstart.py
+```
+
+No API keys. No LLM. The script exercises every boundary with real scanners,
+real policy, and real audit events. You'll see clean input pass, PII get
+redacted, injection get blocked, tool calls allowed and denied, indirect
+injection caught in a tool result, and the full audit trail printed.
+
+---
+
 ## What SHAI does
 
 SHAI sits between your agent and its tools. It:

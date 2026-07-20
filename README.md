@@ -13,19 +13,27 @@ SHAI sits between your agent and everything it can touch: tools, external APIs, 
 
 ---
 
-## The problem with "safe" AI
+## Why SHAI exists
 
-Most teams securing AI agents today are doing the same thing: writing better system prompts, fine-tuning for instruction following, adding guardrails that ask the model if a request seems dangerous.
+Everyone's racing to make AI agents smarter. Nobody's making them safe.
 
-This is safety theater. It secures the model's *internal state* — a black box that defies traditional testing and will eventually produce an anomaly regardless of how much safety training it has received.
+Agents can write your code, manage your inbox, deploy your infrastructure, and make hundreds of autonomous decisions before you've had your morning coffee. The productivity is real. But so is the risk.
 
-A model that has been told to ignore bad instructions is not a secure system. It is a system with a single unpredictable point of failure.
+OpenClaw — the fastest-growing GitHub repository in history — became 2026's first major AI security crisis within weeks of going viral. One malicious webpage was enough to hijack an agent with full access to your files, emails, and credentials. Its plugin marketplace was 12% malware. Over 135,000 instances left exposed on the open internet. Good people, good intentions — but no security layer.
+
+That's not an OpenClaw problem. That's the gap every agent has right now.
+
+AI agents are a fundamentally new kind of security problem. A traditional app has a fixed attack surface. An agent's grows with every tool, every integration, every new capability you give it. Most teams respond by writing better system prompts, fine-tuning for instruction following, adding guardrails that ask the model if a request seems dangerous. This is safety theater. It secures the model's *internal state* — a black box that will eventually produce an anomaly regardless of how much safety training it has received.
+
+OWASP recognized this and published the first-ever security framework for AI agents — ten threat categories specific to autonomous systems: prompt injection, tool misuse, privilege escalation, memory poisoning, supply chain compromise, rogue agents, and more. A clear map of what can go wrong.
 
 **The correct approach treats security risks as expected operational conditions, not exceptional events.** The goal is not to prevent the model from ever misbehaving. The goal is to build a system that survives the model misbehaving. That requires enforcement at the system boundary — deterministic code that evaluates what the agent *proposes to do*, independently of why it proposed it.
 
-The ForcedLeak attack (CVSS 9.4, Salesforce Agentforce, September 2025) demonstrated this concretely: an attacker embedded instructions in a routine CRM form field. When an employee later asked the AI to process that lead, the agent executed both the legitimate query and the attacker's hidden payload. Every security control saw legitimate traffic. The injection was in the *tool result*, not the user message. Input scanning would not have caught it.
+Nobody had built the open source layer to actually prevent it. **Until SHAI.**
 
-SHAI is built on this model.
+SHAI is a Python package — not an agent itself, but the security harness that wraps around one. You keep building with whatever framework you love: LangChain, LangGraph, CrewAI, PydanticAI, or your own custom loop. SHAI sits around it and protects it, covering every threat on the OWASP Agentic AI list. It works on new agents you're building today, and on existing ones already running in production.
+
+The brakes shouldn't be an afterthought. With SHAI, they ship on day one.
 
 ---
 
@@ -54,6 +62,8 @@ Five boundaries. None optional on the hot path. Every boundary emits a structure
 Most AI security products defend the input layer. They scan what the user sends. This is necessary but not sufficient.
 
 Prompt injection attacks do not need to come from the user. They come from tool results — a web page the agent browsed, an email it read, a document it retrieved. The agent reads the content, the content contains instructions, and the model follows them. Input scanning never sees it.
+
+The ForcedLeak attack (CVSS 9.4, Salesforce Agentforce, September 2025) proved this concretely: an attacker embedded instructions in a routine CRM form field. When an employee later asked the AI to process that lead, the agent executed both the legitimate query and the attacker's hidden payload. Every security control saw legitimate traffic. The injection was in the *tool result*, not the user message.
 
 **SHAI's tool call gate defends the action layer.** When the LLM proposes an action, SHAI evaluates that action against a deterministic policy before anything executes. The evaluation does not care why the action was proposed. It does not ask the model whether the instruction was legitimate. It applies a closed set of rules in code.
 
@@ -194,6 +204,10 @@ English catalog — no configuration required.
 
 **Input normalization:** Before any scanner runs, the input is canonicalized into multiple views — the surface form plus decoded variants (base64, hex, URL encoding, rot13, unicode homoglyphs, fragment reassembly). A payload that bypasses the surface scanner by encoding `ignore all previous instructions` in base64 is caught after decoding. The raw text the agent sees is never mutated.
 
+**Heuristic anomaly detection:** Every scan boundary runs a `HeuristicScanner` automatically — no configuration. It catches structural anomalies that regex patterns miss: high-entropy segments (obfuscated payloads), instruction-dense text, abrupt register shifts (business English → command syntax mid-message), and embedded LLM markup (`<|system|>`, `[INST]`, `{"role":"system"}`). Four sub-scores, summed into a severity.
+
+**Ensemble severity promotion:** When two or more scanners independently flag the same category, their severity weights are combined. If the combined weight crosses a threshold, all findings in that category are promoted to HIGH. A MEDIUM from `injection_scan` plus a MEDIUM from `heuristic_scan` becomes HIGH — catching attacks that no single scanner would block alone.
+
 ---
 
 ## Cross-turn threat detection
@@ -265,26 +279,27 @@ The pattern scanners support English (EN), French (FR), Spanish (ES), German (DE
 
 ## Quick start
 
+```bash
+pip install shai
+python examples/quickstart.py
+```
+
+No API keys. No LLM call. The script exercises every boundary with real
+scanners, real policy, and real audit events — exactly what runs in
+production. You'll see clean input pass, PII get redacted, injection get
+blocked, tool calls allowed and denied, indirect injection caught in a tool
+result, and the full audit trail printed at the end.
+
+Once you've seen it work, wire it into your agent:
+
 ```python
-from shai import SHAI, Tool, AgentContext, ArgumentRule, Irreversibility
+from shai import SHAI, Tool, AgentContext
 
 harness = await SHAI.from_yaml("config/harness.yaml")
 
 await harness.register_tools([
     Tool("search_docs", tags=["read"]),
-    Tool(
-        "approve_payment",
-        tags=["financial"],
-        argument_rules=[
-            ArgumentRule(arg="amount", max_value=50_000),
-            ArgumentRule(arg="vendor", allowlist=["acme_corp", "globex"]),
-        ],
-    ),
-    Tool(
-        "delete_record",
-        tags=["destructive"],
-        irreversibility=Irreversibility.IRREVERSIBLE,
-    ),
+    Tool("send_email",  tags=["messaging"]),
 ])
 
 ctx = await harness.load_agent("config/agents/my_agent.yaml")
