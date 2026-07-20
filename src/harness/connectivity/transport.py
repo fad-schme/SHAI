@@ -24,13 +24,13 @@ Design decisions:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-import asyncio
 import httpx
 
 from harness.connectivity.token import (
@@ -122,8 +122,8 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         agent_id:        str,
         sub_agent_id:    str | None,
         tenant_id:       str,
-        emitter:         "AuditEmitter",
-        connectivity:    "ConnectivityConfig",
+        emitter:         AuditEmitter,
+        connectivity:    ConnectivityConfig,
         inner:           httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._source_name     = source_name
@@ -137,7 +137,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         self._inner           = inner or httpx.AsyncHTTPTransport()
         # Nonce store: token_id → expires_at. Prevents replay within TTL window.
         # Bounded by TTL — expired entries pruned on each access.
-        self._used_nonces: dict[str, "datetime"] = {}
+        self._used_nonces: dict[str, datetime] = {}
         self._nonce_lock  = asyncio.Lock()
 
     async def handle_async_request(
@@ -311,14 +311,14 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         return response
 
     async def _check_and_consume_nonce(
-        self, token_id: str, expires_at: "datetime"
-    ) -> "str | None":
+        self, token_id: str, expires_at: datetime
+    ) -> str | None:
         """Consume token_id as a one-time nonce. Returns deny_reason or None.
 
         Prunes expired nonces on every call — the store stays bounded
         by the number of in-flight requests within the TTL window.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         async with self._nonce_lock:
             # Prune expired entries
@@ -339,7 +339,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         bytes_sent: int, bytes_recv: int, duration_ms: int,
     ) -> None:
         event = NetworkAuditEvent(
-            timestamp    = datetime.now(timezone.utc),
+            timestamp    = datetime.now(UTC),
             event_type   = "network_egress",
             token_id     = token_id,
             source_name  = self._source_name,

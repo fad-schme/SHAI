@@ -42,9 +42,10 @@ LangGraph is imported lazily — this module is importable without it installed.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
-from harness.integrations.base import ShaiTool, extract_shai_tools, shai_tool  # re-export
+from harness.integrations.base import ShaiTool, shai_tool  # re-export
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -73,8 +74,8 @@ class HarnessToolNode:
     def __init__(
         self,
         tools: Sequence[Any],
-        harness: "SHAI",
-        ctx: "AgentContext",
+        harness: SHAI,
+        ctx: AgentContext,
     ) -> None:
         self._tools   = {self._tool_name(t): t for t in tools}
         self._harness = harness
@@ -84,9 +85,9 @@ class HarnessToolNode:
     async def create(
         cls,
         tools: Sequence[Any],
-        harness: "SHAI",
-        ctx: "AgentContext",
-    ) -> "HarnessToolNode":
+        harness: SHAI,
+        ctx: AgentContext,
+    ) -> HarnessToolNode:
         """Preferred constructor — registers tools then builds the node.
 
         Accepts ShaiTool instances (from @shai_tool) or plain Tool descriptors.

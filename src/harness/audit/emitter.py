@@ -34,13 +34,13 @@ class AuditSink(Protocol):
 
     name: str
 
-    async def emit(self, event: "AuditEvent") -> None:
+    async def emit(self, event: AuditEvent) -> None:
         """Emit one event. Raise on failure — AuditEmitter handles it."""
         ...
 
 
     @contextlib.contextmanager
-    def collect_events(self) -> "AsyncIterator[list]":
+    def collect_events(self) -> AsyncIterator[list]:
         """Context manager that collects AuditEvents emitted during the block.
 
         Returns a list that is populated in-place as events are emitted.
@@ -69,7 +69,7 @@ class AuditSink(Protocol):
         ...
 
 
-def _sign_event(event: "AuditEvent", secret: bytes) -> str:
+def _sign_event(event: AuditEvent, secret: bytes) -> str:
     """Compute HMAC-SHA256 signature over the event body (excluding signature field).
 
     The payload is the deterministic JSON of all non-None fields excluding
@@ -97,7 +97,7 @@ class AuditEmitter:
         # Subscribers added by collect_events() — notified after all sinks
         self._subscribers: list[list] = []
 
-    async def emit(self, event: "AuditEvent") -> None:
+    async def emit(self, event: AuditEvent) -> None:
         """Truncate oversized fields, optionally sign, then fan-out concurrently."""
         if event.deny_reason and len(event.deny_reason) > _MAX_DENY_REASON:
             object.__setattr__(event, "deny_reason",
@@ -136,7 +136,7 @@ class AuditEmitter:
 
 
     @contextlib.contextmanager
-    def collect_events(self) -> "AsyncIterator[list]":
+    def collect_events(self) -> AsyncIterator[list]:
         """Context manager that collects AuditEvents emitted during the block.
 
         Returns a list that is populated in-place as events are emitted.
@@ -167,7 +167,7 @@ class AuditEmitter:
         )
 
     @staticmethod
-    async def _emit_one(sink: AuditSink, event: "AuditEvent") -> None:
+    async def _emit_one(sink: AuditSink, event: AuditEvent) -> None:
         await sink.emit(event)
 
     @staticmethod

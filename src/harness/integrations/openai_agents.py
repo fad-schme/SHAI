@@ -28,7 +28,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import ShaiTool, shai_tool  # re-export
 
@@ -41,7 +42,7 @@ log = logging.getLogger(__name__)
 __all__ = ["shai_tool", "make_before_tool_hook", "wrap_tool", "wrap_tools"]
 
 
-def make_before_tool_hook(*, harness: "SHAI", ctx: "AgentContext") -> Callable:
+def make_before_tool_hook(*, harness: SHAI, ctx: AgentContext) -> Callable:
     """Return an async before_tool_call hook for AgentHooks.
 
     Gates each tool call. Returns deny reason (SDK uses as tool result) on deny.
@@ -64,7 +65,7 @@ def make_before_tool_hook(*, harness: "SHAI", ctx: "AgentContext") -> Callable:
     return before_tool_call
 
 
-def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
+def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
     """Return a gated OpenAI Agents FunctionTool.
 
     Note: does not call register_tools(). Use wrap_tools() for that.
@@ -105,8 +106,8 @@ def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
 async def wrap_tools(
     tools: Sequence[Any],
     *,
-    harness: "SHAI",
-    ctx: "AgentContext",
+    harness: SHAI,
+    ctx: AgentContext,
 ) -> list[Any]:
     """Register tools with the harness and return gated SDK FunctionTools."""
     await harness.register_tools(tools)

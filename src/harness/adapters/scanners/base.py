@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 @dataclass
 class ScanResult:
     """Output of one scanner on one text. Internal — not part of public API."""
-    findings:      list["Finding"] = field(default_factory=list)
+    findings:      list[Finding] = field(default_factory=list)
     redacted_text: str | None = None
 
 
@@ -27,7 +27,7 @@ class Scanner(Protocol):
     async def scan(
         self,
         text: str,
-        ctx: "AgentContext",
+        ctx: AgentContext,
     ) -> ScanResult:
         """Inspect text. Return findings and optional redacted form.
 

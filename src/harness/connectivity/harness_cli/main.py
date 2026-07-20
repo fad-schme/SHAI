@@ -23,10 +23,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from harness_cli.commands.validate import cmd_validate
 from harness_cli.commands.agents import cmd_agents_list
 from harness_cli.commands.audit import cmd_audit_tail
 from harness_cli.commands.patterns import cmd_patterns_apply, cmd_patterns_list, cmd_patterns_verify
+from harness_cli.commands.validate import cmd_validate
 
 
 def build_parser() -> argparse.ArgumentParser:

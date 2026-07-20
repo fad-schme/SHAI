@@ -8,7 +8,7 @@ by the agent. user_id is not on AuditEvent; operators use audit_tags for that.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, model_validator
@@ -47,7 +47,7 @@ class AuditEvent(BaseModel, frozen=True):
     signature:  str | None = None  # HMAC-SHA256, stamped by AuditEmitter when configured
 
     @model_validator(mode="after")
-    def _cross_field_constraints(self) -> "AuditEvent":
+    def _cross_field_constraints(self) -> AuditEvent:
         if self.decision == Decision.DENY and not self.deny_reason:
             raise ValueError("deny_reason required when decision=deny")
         if self.decision == Decision.DEGRADED and not self.deny_reason:
@@ -81,14 +81,14 @@ class AuditEvent(BaseModel, frozen=True):
         disabled: bool = False,
         audit_tags: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
-    ) -> "AuditEvent":
+    ) -> AuditEvent:
         """Canonical builder. Boundaries always use this, never construct directly.
 
         tenant_id is passed explicitly from the Harness instance — not read
         from ctx (which no longer carries it).
         """
         return cls(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             boundary=boundary,
             decision=decision,
             disabled=disabled,

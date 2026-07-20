@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import ShaiTool, shai_tool  # re-export
 
@@ -36,7 +37,7 @@ log = logging.getLogger(__name__)
 __all__ = ["shai_tool", "wrap_tool", "wrap_tools"]
 
 
-def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
+def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
     """Return a gated CrewAI-compatible version of a tool.
 
     Note: does not call register_tools(). Use wrap_tools() for that.
@@ -82,8 +83,8 @@ def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
 async def wrap_tools(
     tools: Sequence[Any],
     *,
-    harness: "SHAI",
-    ctx: "AgentContext",
+    harness: SHAI,
+    ctx: AgentContext,
 ) -> list[Any]:
     """Register tools with the harness and return gated CrewAI wrappers."""
     await harness.register_tools(tools)

@@ -26,13 +26,12 @@ returned by SHAI.get_source(name) and call it directly.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+import uuid
+from collections.abc import AsyncIterator, Iterable
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
-import time
-import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterable, Protocol
 
 from harness.core.errors import ConfigError, MCPInvocationError
 from harness.core.types import Transport
@@ -55,7 +54,7 @@ class ToolSource(Protocol):
     transport: str
     tags:      list[str]
 
-    async def load(self, ctx: "AgentContext") -> list[Tool]:
+    async def load(self, ctx: AgentContext) -> list[Tool]:
         """Return tools available from this source for this agent context.
 
         Called once at load_agent() time — not per turn.
@@ -78,7 +77,7 @@ class SourceRegistry:
     build the merged tool set for an agent from its declared sources.
     """
 
-    def __init__(self, policy: "PolicyEngine") -> None:
+    def __init__(self, policy: PolicyEngine) -> None:
         self._sources: dict[str, ToolSource] = {}
         self._policy  = policy
 
@@ -126,7 +125,7 @@ class SourceRegistry:
 
     async def activate(
         self,
-        ctx: "AgentContext",
+        ctx: AgentContext,
         source_names: list[str],
         required_flags: dict[str, bool] | None = None,
     ) -> list[Tool]:
@@ -163,7 +162,8 @@ class SourceRegistry:
                     from harness.core.errors import ConfigError as _CE
                     raise _CE(
                         f"source '{name}' declared by agent '{ctx.agent_id}' "
-                        f"is not registered in the harness. "                        f"Add it to config.sources or set required: false.",
+                        f"is not registered in the harness. "
+                        f"Add it to config.sources or set required: false.",
                         op="source_activate",
                     )
                 log.warning("optional source not registered — skipped",
@@ -243,7 +243,7 @@ class LocalSource:
         self._registry  = registry
         self._tool_names = list(tool_names or [])
 
-    async def load(self, ctx: "AgentContext") -> list[Tool]:
+    async def load(self, ctx: AgentContext) -> list[Tool]:
         if self._tool_names:
             candidates: list[Tool] = []
             for tname in self._tool_names:
@@ -304,7 +304,7 @@ class SkillSource:
         self._tool_names = list(tool_names)
         self._registry   = registry
 
-    async def load(self, ctx: "AgentContext") -> list[Tool]:
+    async def load(self, ctx: AgentContext) -> list[Tool]:
         tools: list[Tool] = []
         for tname in self._tool_names:
             try:
@@ -416,7 +416,7 @@ class MCPSource:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    async def load(self, ctx: "AgentContext") -> list[Tool]:
+    async def load(self, ctx: AgentContext) -> list[Tool]:
         """Connect to MCP server and fetch its tool catalog.
 
         Idempotent — returns cached tools if already connected.
@@ -495,7 +495,7 @@ class MCPSource:
 
     async def _scan_mcp_metadata(
         self, mcp_tool: dict, tool_name: str
-    ) -> "tuple[bool, list]":
+    ) -> tuple[bool, list]:
         """Run configured MCPMetadataScanner instances on a tool dict.
 
         Returns (blocked, findings). blocked=True means the tool must not

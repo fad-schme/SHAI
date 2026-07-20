@@ -1,24 +1,29 @@
 """Tests for heuristic candidate system: fingerprint, store, read/write hooks."""
 from __future__ import annotations
 
-import json
-
 import pytest
 
+from harness.boundaries._scan import (
+    _check_promoted_candidates,
+    _invalidate_promoted_cache,
+    _record_candidate_if_needed,
+)
 from harness.core.context import AgentContext
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 from harness.patterns.fingerprint import (
-    extract_fingerprint, extract_skeleton, fingerprint_to_json,
-    fingerprint_from_json, lsh_jaccard,
+    extract_fingerprint,
+    extract_skeleton,
+    fingerprint_from_json,
+    fingerprint_to_json,
+    lsh_jaccard,
 )
 from harness.patterns.store import (
-    init_db, upsert_candidate, load_promoted_candidates,
-    list_candidates, set_candidate_status,
-)
-from harness.boundaries._scan import (
-    _check_promoted_candidates, _record_candidate_if_needed,
-    _promoted_cache, _invalidate_promoted_cache,
+    init_db,
+    list_candidates,
+    load_promoted_candidates,
+    set_candidate_status,
+    upsert_candidate,
 )
 
 CTX = AgentContext(agent_id="test")

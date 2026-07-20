@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
     from harness.agents.agent_config import RuleConfig
-    from harness.tools.source import ToolSource
     from harness.core.context import AgentContext
+    from harness.tools.source import ToolSource
     from harness.tools.tool import Tool
 
 
@@ -56,11 +56,11 @@ class PolicyEngine(Protocol):
 
     async def evaluate(
         self,
-        tool: "Tool",
+        tool: Tool,
         args: dict[str, Any],
-        ctx: "AgentContext",
+        ctx: AgentContext,
         *,
-        rules: list["RuleConfig"] | None = None,
+        rules: list[RuleConfig] | None = None,
     ) -> PolicyDecision:
         """Gate one tool call.
 
@@ -74,8 +74,8 @@ class PolicyEngine(Protocol):
 
     async def evaluate_source(
         self,
-        source: "ToolSource",
-        ctx: "AgentContext",
+        source: ToolSource,
+        ctx: AgentContext,
     ) -> SourceDecision:
         """Decide whether a tool source is active for this agent/turn.
 

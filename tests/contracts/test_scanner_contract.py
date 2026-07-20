@@ -8,9 +8,9 @@ import asyncio
 
 import pytest
 
-from harness.adapters.scanners.base import ScanResult, Scanner
-from harness.adapters.scanners.injection_scan import InjectionScanner
+from harness.adapters.scanners.base import ScanResult
 from harness.adapters.scanners.heuristic_scan import HeuristicScanner
+from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.core.context import AgentContext
 from harness.core.types import Severity

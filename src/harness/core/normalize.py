@@ -157,10 +157,7 @@ def _fold(text: str) -> tuple[str, list[str]]:
 # language" from "rotated gibberish" without shipping a full dictionary. This
 # gates rot13 (see _decode_candidates); it is a signal, not a language model.
 _COMMON_WORDS = frozenset(
-    "the a an and or but if then to of in on at by for with from as is are was "
-    "were be been being do does did you your i we they it he she this that these "
-    "those not no yes can will would should could ignore previous instruction "
-    "instructions system prompt now please tell show me my all any".split()
+    ["the", "a", "an", "and", "or", "but", "if", "then", "to", "of", "in", "on", "at", "by", "for", "with", "from", "as", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "you", "your", "i", "we", "they", "it", "he", "she", "this", "that", "these", "those", "not", "no", "yes", "can", "will", "would", "should", "could", "ignore", "previous", "instruction", "instructions", "system", "prompt", "now", "please", "tell", "show", "me", "my", "all", "any"]
 )
 _WORD = re.compile(r"[a-z]+")
 

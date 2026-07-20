@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 
-
 _DECISION_COLOURS = {
     "allow":   "\033[32m",   # green
     "warn":    "\033[33m",   # yellow

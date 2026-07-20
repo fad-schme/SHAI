@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Iterable
+from collections.abc import Iterable
 
 from harness.core.errors import ConfigError, ToolNotRegisteredError
 from harness.tools.tool import Tool

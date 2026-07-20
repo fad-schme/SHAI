@@ -6,14 +6,14 @@ principle of least privilege at load_agent() time, not at gate time.
 from __future__ import annotations
 
 import re
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from harness.core.errors import SubAgentNotDeclaredError
 
 if TYPE_CHECKING:
-    from harness.config.schema import ExecutionBudgetConfig
+    pass
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _VALID_ACTIONS  = {"allow", "deny", "redact", "suppress"}
@@ -58,7 +58,7 @@ class RuleConfig(BaseModel, frozen=True, extra="forbid"):
         return v
 
     @model_validator(mode="after")
-    def _action_constraints(self) -> "RuleConfig":
+    def _action_constraints(self) -> RuleConfig:
         if self.action == "deny" and not self.reason:
             raise ValueError(f"rule '{self.id}': reason required for deny action")
         if self.action == "redact" and self.redact is None:
@@ -125,7 +125,7 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
         return v
 
     @model_validator(mode="after")
-    def _validate_sub_agents(self) -> "AgentConfig":
+    def _validate_sub_agents(self) -> AgentConfig:
         parent_tools = set(self.allowed_tool_names)
         parent_tags  = set(self.allowed_tags)
         seen_ids: set[str] = set()

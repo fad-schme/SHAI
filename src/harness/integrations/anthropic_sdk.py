@@ -23,10 +23,11 @@ Subagent handoff example (called by the integration, not agent code):
 """
 from __future__ import annotations
 
-from harness.integrations.base import shai_tool  # re-export for convenience
-
 import logging
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+
+from harness.integrations.base import shai_tool  # re-export for convenience
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -42,9 +43,9 @@ __all__ = ["shai_tool", "gated_dispatch", "run_turn", "make_tool_result_from_den
 async def gated_dispatch(
     tool_name: str,
     tool_args: dict[str, Any],
-    ctx: "AgentContext",
+    ctx: AgentContext,
     *,
-    harness: "SHAI",
+    harness: SHAI,
     dispatch: Callable[[str, dict[str, Any]], Awaitable[Any]],
 ) -> Any:
     """Gate one tool call then dispatch if allowed.
@@ -74,14 +75,14 @@ async def gated_dispatch(
 
 async def run_turn(
     user_text: str,
-    ctx: "AgentContext",
+    ctx: AgentContext,
     *,
-    harness: "SHAI",
+    harness: SHAI,
     llm_fn: Callable[
-        [str, list["Tool"], "AgentContext"],
+        [str, list[Tool], AgentContext],
         Awaitable[str],
     ],
-) -> "ScanVerdict | str":
+) -> ScanVerdict | str:
     """Full turn: scan_input → llm_fn → scan_output.
 
     llm_fn(user_text, tools, ctx) → str
@@ -106,7 +107,7 @@ async def run_turn(
     return output_verdict.redacted_text or response
 
 
-def make_tool_result_from_denial(gate: "GateDecision", tool_use_id: str) -> dict:
+def make_tool_result_from_denial(gate: GateDecision, tool_use_id: str) -> dict:
     """Build an Anthropic tool_result content block for a denied tool call.
 
     Surfaces the deny reason to the model so it can respond appropriately.

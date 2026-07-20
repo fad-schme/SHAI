@@ -17,11 +17,16 @@ import pytest
 from harness.adapters.circuit_breaker import CircuitBreaker, CircuitState
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import run_scan, _breakers, _get_breaker
+from harness.boundaries._scan import _breakers, _get_breaker, run_scan
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.types import (
-    BoundaryName, Decision, OnError, ScanAction, ScanStatus, Severity,
+    BoundaryName,
+    Decision,
+    OnError,
+    ScanAction,
+    ScanStatus,
+    Severity,
 )
 
 CTX = AgentContext(agent_id="test_agent")

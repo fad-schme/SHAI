@@ -23,13 +23,16 @@ from __future__ import annotations
 import argparse
 import sys
 
-from harness_cli.commands.validate import cmd_validate
 from harness_cli.commands.agents import cmd_agents_list
 from harness_cli.commands.audit import cmd_audit_tail
 from harness_cli.commands.patterns import (
-    cmd_patterns_apply, cmd_patterns_list, cmd_patterns_verify,
-    cmd_candidates_list, cmd_candidates_update,
+    cmd_candidates_list,
+    cmd_candidates_update,
+    cmd_patterns_apply,
+    cmd_patterns_list,
+    cmd_patterns_verify,
 )
+from harness_cli.commands.validate import cmd_validate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -157,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.patterns_command == "retire":
             args.action = "retired"
             return cmd_candidates_update(args)
-        print("shai patterns: specify a subcommand (apply, list, verify, candidates, promote, dismiss, retire)", file=sys.stderr)
+        print("shai patterns: specify a subcommand (apply, list, verify, candidates, promote, dismiss, retire)",
+              file=sys.stderr)
         return 1
 
     parser.print_help()

@@ -34,8 +34,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from harness.core.errors import ConfigError
 
@@ -66,8 +65,8 @@ class Secret:
     """
 
     value:      str
-    expires_at: Optional[datetime] = None
-    version:    Optional[str]      = field(default=None)
+    expires_at: datetime | None = None
+    version:    str | None      = field(default=None)
 
     def __repr__(self) -> str:
         return (
@@ -75,11 +74,11 @@ class Secret:
             f"expires_at={self.expires_at!r}, version={self.version!r})"
         )
 
-    def is_expired(self, *, now: Optional[datetime] = None) -> bool:
+    def is_expired(self, *, now: datetime | None = None) -> bool:
         """True if the advertised TTL has passed. No expires_at → never expired."""
         if self.expires_at is None:
             return False
-        return (now or datetime.now(timezone.utc)) >= self.expires_at
+        return (now or datetime.now(UTC)) >= self.expires_at
 
 
 # ── Interface ─────────────────────────────────────────────────────────────
@@ -144,8 +143,8 @@ class EnvVarProvider(SecretsProvider):
     def __init__(
         self,
         *,
-        prefix: Optional[str] = None,
-        default_ttl: Optional[timedelta] = None,
+        prefix: str | None = None,
+        default_ttl: timedelta | None = None,
     ) -> None:
         if prefix is not None and not prefix:
             raise ValueError("prefix must be None or a non-empty string")
@@ -182,8 +181,8 @@ class EnvVarProvider(SecretsProvider):
                 f"for reference {reference!r}"
             )
 
-        expires_at: Optional[datetime] = (
-            datetime.now(timezone.utc) + self._default_ttl
+        expires_at: datetime | None = (
+            datetime.now(UTC) + self._default_ttl
             if self._default_ttl else None
         )
         log.debug("secret resolved reference=%s env_name=%s expires_at=%s",

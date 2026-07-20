@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 from pydantic import ValidationError

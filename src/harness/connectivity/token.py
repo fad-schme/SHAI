@@ -24,10 +24,9 @@ import hashlib
 import hmac
 import json
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
-
 
 # ── Token dataclass ────────────────────────────────────────────────────────
 
@@ -125,7 +124,7 @@ def sign_token(
 
     Returns a frozen DispatchToken with signature set.
     """
-    now        = datetime.now(timezone.utc)
+    now        = datetime.now(UTC)
     token_id   = str(uuid.uuid4())
 
     token = DispatchToken(
@@ -214,7 +213,7 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
     except ValueError as e:
         raise TokenError(f"invalid datetime field: {e}") from e
 
-    if datetime.now(timezone.utc) > expires_at:
+    if datetime.now(UTC) > expires_at:
         raise TokenError(
             f"token expired at {expires_at.isoformat()} "
             f"(token_id={data['token_id']})"

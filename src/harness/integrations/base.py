@@ -37,7 +37,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from harness.core.types import Transport
 from harness.tools.tool import Tool

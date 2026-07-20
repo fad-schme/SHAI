@@ -1,11 +1,8 @@
 # rule_functions.py
 import logging
-import re
-
-
 import math
+import re
 import unicodedata
-import string
 from collections import Counter
 
 logging.basicConfig(level=logging.INFO)
@@ -121,7 +118,7 @@ def intent_score(prompt: str) -> int:
     return score
 
 def structure_score(prompt: str) -> int:
-    """Detects patterns that mimic system prompts or impersonation structures."""    
+    """Detects patterns that mimic system prompts or impersonation structures."""
     #logger.info("****** structure_score *******")
     patterns = [
         r'\[System\]:',
@@ -178,51 +175,6 @@ def persona_score(prompt: str) -> int:
     return count
 
 def cumulative_soft_triggers(prompt):
-    #logger.info("****** cumulative_soft_triggers *******")
-    cues_str = [       
-        # policy + alignment circumvention
-        'speak freely',
-        'act freely',
-        'no longer bound by',
-        'not restricted by',
-        'without filters',
-        'disable content policy',
-        'alignment doesn’t apply',
-
-        # sandboxed behavior or testing
-        'just for testing',
-        'as an experiment',
-        'in a sandbox',
-        'test case',
-        'hypothetically',
-
-        # role simulation or impersonation
-        'you are now',
-        'pretend you are',
-        'assume you are',
-        'respond as if you are',
-
-        # debug or unrestricted modes
-        'debug mode',
-        'developer mode',
-        'unrestricted mode',
-        'uncensored model',
-
-        'just for educational purposes',
-        'in this test scenario',
-        'speak candidly',
-        'raw response',
-        'misconfigured assistant',
-        'you no longer have to follow',
-        'let’s imagine there are no rules'
-
-        # probing or exposure requests
-        'reveal your prompt',
-        'instruction history',
-        'internal configuration',
-        'print environment',
-        'runtime context',
-    ]
     cues = [
         r'just for (education(al)?|learning) purposes',
         r'let(?:’|\')?s imagine (there (are|were))? no (rules|filters|restrictions)',

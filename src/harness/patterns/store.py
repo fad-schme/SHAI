@@ -192,6 +192,7 @@ def upsert_candidate(
 ) -> None:
     """Insert or update a heuristic candidate. Deduplicates by LSH similarity."""
     import time
+
     from harness.patterns.fingerprint import fingerprint_from_json, lsh_jaccard
 
     path = Path(db_path)

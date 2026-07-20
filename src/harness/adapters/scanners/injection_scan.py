@@ -88,9 +88,14 @@ _FUNCTION_WEIGHTS: dict[str, float] = {
 def _load_scoring_functions() -> dict[str, Any]:
     try:
         from harness.adapters.scanners.rule_functions import (
-            intent_score, structure_score, encoding_score, persona_score,
-            cumulative_soft_triggers, token_score, obfuscation_score,
+            cumulative_soft_triggers,
+            encoding_score,
+            intent_score,
             invisible_text,
+            obfuscation_score,
+            persona_score,
+            structure_score,
+            token_score,
         )
         return {
             "intent_score":             intent_score,

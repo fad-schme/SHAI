@@ -10,27 +10,26 @@ from pathlib import Path
 from typing import Any
 
 from harness.adapters.audit_sinks.stdout import StdoutSink
-from harness.adapters.scanners.rate_limiter import RateLimiter
-from harness.boundaries.session_budget import SessionBudget, ExecutionLimits
-from harness.boundaries.session_accumulator import ThreatAccumulator
-from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
-from harness.tools.registry import ToolRegistry
-from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
+from harness.adapters.scanners.rate_limiter import RateLimiter
+from harness.adapters.scanners.regex_pii import RegexPIIScanner
+from harness.adapters.secrets.env import EnvVarProvider
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import run_scan, run_file_scan, run_tool_result_scan
+from harness.boundaries._scan import run_file_scan, run_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import run as run_gate
-from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
+from harness.boundaries.session_accumulator import ThreatAccumulator
+from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import load_yaml
-from harness.adapters.secrets.env import EnvVarProvider
 from harness.config.schema import HarnessConfig
 from harness.core.context import AgentContext
-
+from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.policy.rules import RuleBasedPolicy
+from harness.tools.registry import ToolRegistry
+from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
 from harness.tools.tool import Tool
 
 log = logging.getLogger(__name__)
@@ -155,16 +154,13 @@ class SHAI:
     # ── Construction ──────────────────────────────────────────────────────
 
     @classmethod
-    async def from_yaml(cls, path: str | Path) -> "SHAI":
+    async def from_yaml(cls, path: str | Path) -> SHAI:
         """Load harness.yaml and construct a fully wired SHAI instance.
 
         Secret resolution:
           Resolves ${ENV_VAR} then secret:// URIs using EnvVarProvider.
           All secret:// references must be present as environment variables.
         """
-        # First pass: resolve ${ENV_VAR} only (no provider yet)
-        config_pre = load_yaml(path)
-
         # Always use EnvVarProvider for secret:// resolution.
         # Enterprise providers can be swapped by subclassing or patching before
         # calling from_yaml() — no config field needed since there is only one
@@ -231,8 +227,8 @@ class SHAI:
         for src_cfg in config.sources:
             # Resolve connector manifest if specified
             if src_cfg.connector:
-                from harness.connectors import load_manifest, manifest_to_source_config_fields
                 from harness.config.schema import SourceConfig as _SC
+                from harness.connectors import load_manifest, manifest_to_source_config_fields
                 try:
                     manifest = load_manifest(src_cfg.connector)
                 except ValueError as e:
@@ -350,7 +346,7 @@ class SHAI:
 
     # ── Startup ───────────────────────────────────────────────────────────
 
-    async def register_tools(self, tools: "list[Tool | Any]") -> None:
+    async def register_tools(self, tools: list[Tool | Any]) -> None:
         """Register tools and re-resolve all already-loaded agents.
 
         Accepts a list of:
@@ -362,7 +358,7 @@ class SHAI:
         After registering, every loaded agent's tool set is refreshed so
         newly registered tools become immediately available.
         """
-        from harness.integrations.base import ShaiTool, extract_shai_tools
+        from harness.integrations.base import extract_shai_tools
         shai_descriptors = extract_shai_tools(tools)
         await self._tool_registry.register_many(shai_descriptors)
         # Re-resolve all already-loaded agents so they see the new tools
@@ -485,7 +481,7 @@ class SHAI:
         if self._threat_accumulator is not None:
             escalated, reason = await self._threat_accumulator.check(session_id)
             if escalated:
-                from harness.core.events import AuditEvent, now_ms
+                from harness.core.events import AuditEvent
                 cfg = self._config.session
                 status = ScanStatus.BLOCK if cfg.on_escalation == "block" else ScanStatus.WARN
                 decision = Decision.BLOCKED if status == ScanStatus.BLOCK else Decision.WARN
@@ -593,7 +589,7 @@ class SHAI:
         if self._rate_limiter is not None:
             allowed, reason = self._rate_limiter.check(ctx.agent_id, name)
             if not allowed:
-                from harness.core.events import AuditEvent, now_ms
+                from harness.core.events import AuditEvent
 
                 event = AuditEvent.build(
                     boundary=BoundaryName.TOOL_CALL_GATE,
@@ -618,7 +614,7 @@ class SHAI:
                 prompt_id=prompt_id,
             )
             if not allowed:
-                from harness.core.events import AuditEvent, now_ms
+                from harness.core.events import AuditEvent
 
                 event = AuditEvent.build(
                     boundary=BoundaryName.TOOL_CALL_GATE,
@@ -636,8 +632,8 @@ class SHAI:
         # Pre-gate: agent must be registered — deny with audit event on miss
         try:
             agent_config = self._agent_registry.get(ctx.agent_id)
-        except Exception as e:
-            from harness.core.events import AuditEvent, now_ms
+        except Exception:
+            from harness.core.events import AuditEvent
             reason = f"agent '{ctx.agent_id}' is not registered in this harness"
             event = AuditEvent.build(
                 boundary=BoundaryName.TOOL_CALL_GATE,
@@ -673,9 +669,10 @@ class SHAI:
         # Issue dispatch token when gate allows and connectivity is enabled
         if gate.allowed and self._connectivity.enabled and self._connectivity_secret:
             from harness.connectivity.token import (
-                sign_token, encode_token, default_allowed_urls,
+                default_allowed_urls,
+                encode_token,
+                sign_token,
             )
-            tool_obj     = tools.get(name)
             source_cfg   = next(
                 (s for s in self._config.sources if s.name == source_name),
                 None,
@@ -775,7 +772,7 @@ class SHAI:
                 extra={"tool": tool_name, **ctx.to_log_fields()},
             )
             from harness.core.events import AuditEvent
-            from harness.core.verdicts import ScanVerdict, ScanStatus
+            from harness.core.verdicts import ScanStatus, ScanVerdict
             event = AuditEvent.build(
                 boundary=BoundaryName.TOOL_RESULT_SCAN,
                 decision=Decision.ALLOW,
@@ -823,7 +820,7 @@ class SHAI:
 
 
     @property
-    def scanners(self) -> "dict[str, object]":
+    def scanners(self) -> dict[str, object]:
         """Return all active scanner instances keyed by name.
 
         Provides visibility into which scanners are running and their
@@ -883,7 +880,7 @@ class SHAI:
         await self._source_registry.close()
         await self._emitter.close()
 
-    async def get_source(self, name: str) -> "ToolSource":
+    async def get_source(self, name: str) -> ToolSource:
         """Return a registered source by name.
 
         Callers use this to get a reference to an MCPSource for direct tool
@@ -897,7 +894,7 @@ class SHAI:
         return await self._source_registry.get(name)
 
     # ── Internal helpers ──────────────────────────────────────────────────
-    def _source_name_for_tool(self, tool_name: str, tool: "Tool") -> str:
+    def _source_name_for_tool(self, tool_name: str, tool: Tool) -> str:
         """Return the source name for a Tool object.
 
         Uses the Tool's transport to determine the source type:
@@ -923,7 +920,7 @@ class SHAI:
                 return src_cfg.name
         return "local"
 
-    def _resolve_tools(self, cfg: AgentConfig) -> "dict[str, tuple[str, Tool]]":
+    def _resolve_tools(self, cfg: AgentConfig) -> dict[str, tuple[str, Tool]]:
         """Build the {tool_name: (source_name, Tool)} dict for an agent at startup.
 
         Composite identity: every tool carries its source_name so the gate
@@ -1029,7 +1026,7 @@ def _make_injection_doc_scanner() -> InjectionScanner:
 
 
 # Named registry — explicit, no magic strings
-_SCANNER_FACTORIES: dict[str, "Any"] = {
+_SCANNER_FACTORIES: dict[str, Any] = {
     "regex_pii":           _make_pii_scanner,
     "injection_scan":      _make_injection_scanner,
     "mcp_metadata_scan":   lambda cfg: MCPMetadataScanner(**cfg),
@@ -1119,7 +1116,7 @@ def _build_sinks(adapter_refs: list) -> list:
     return sinks
 
 
-def _load_extra_rules(config: "HarnessConfig", provider) -> list | None:
+def _load_extra_rules(config: HarnessConfig, provider) -> list | None:
     """Load verified incremental patterns from DB if configured.
 
     Returns compiled _CompiledRule list or None. Secret resolution follows
@@ -1134,8 +1131,8 @@ def _load_extra_rules(config: "HarnessConfig", provider) -> list | None:
         raw_secret = provider.resolve(raw_secret[len("secret://"):]).value
     secret = raw_secret.encode()
 
-    from harness.patterns.store import load_verified_rules
     from harness.adapters.scanners.injection_scan import compile_rules_from_dicts
+    from harness.patterns.store import load_verified_rules
     raw_rules = load_verified_rules(db_path, secret)
     if not raw_rules:
         return None

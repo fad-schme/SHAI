@@ -128,10 +128,14 @@ class HeuristicScanner:
             severity = Severity.LOW
 
         parts = []
-        if s1 > 0: parts.append(f"entropy={s1:.1f}")
-        if s2 > 0: parts.append(f"density={s2:.1f}")
-        if s3 > 0: parts.append(f"coherence={s3:.1f}")
-        if s4 > 0: parts.append(f"structural={s4:.1f}")
+        if s1 > 0:
+            parts.append(f"entropy={s1:.1f}")
+        if s2 > 0:
+            parts.append(f"density={s2:.1f}")
+        if s3 > 0:
+            parts.append(f"coherence={s3:.1f}")
+        if s4 > 0:
+            parts.append(f"structural={s4:.1f}")
 
         return ScanResult(findings=[Finding(
             scanner=self.name,

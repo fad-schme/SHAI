@@ -38,7 +38,7 @@ class AgentContext(BaseModel, frozen=True):
             raise ValueError("agent_id must be non-empty")
         return v
 
-    def scope_subagent(self, sub_agent_id: str, *, allowed_tags: list[str]) -> "AgentContext":
+    def scope_subagent(self, sub_agent_id: str, *, allowed_tags: list[str]) -> AgentContext:
         """Return a new AgentContext scoped to a declared subagent.
 
         Called by Harness.scope_context_for_subagent() — not directly by

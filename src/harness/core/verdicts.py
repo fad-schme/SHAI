@@ -69,7 +69,7 @@ class GateDecision(BaseModel, frozen=True):
     # for remote tools. Set by check_tool_call from the agent's resolved tool set.
 
     @model_validator(mode="after")
-    def _deny_requires_reason(self) -> "GateDecision":
+    def _deny_requires_reason(self) -> GateDecision:
         if not self.allowed and not self.deny_reason:
             raise ValueError("deny_reason is required when allowed=False")
         return self

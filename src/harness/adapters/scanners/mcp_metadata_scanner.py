@@ -39,7 +39,6 @@ severity.
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -133,7 +132,6 @@ class MCPMetadataScanner:
 
     def should_block(self, result: ScanResult) -> bool:
         """Return True if any finding meets or exceeds block_at_severity."""
-        from harness.core.types import Severity
         return any(
             f.severity in self._block_severities
             for f in result.findings

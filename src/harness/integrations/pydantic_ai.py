@@ -27,7 +27,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import ShaiTool, shai_tool  # re-export
 
@@ -40,7 +41,7 @@ log = logging.getLogger(__name__)
 __all__ = ["shai_tool", "harness_tool", "create_tools", "add_harness_middleware"]
 
 
-def harness_tool(*, harness: "SHAI", ctx: "AgentContext") -> Callable:
+def harness_tool(*, harness: SHAI, ctx: AgentContext) -> Callable:
     """Decorator that gates a plain function through the harness.
 
     For when you cannot use @shai_tool (e.g. third-party functions).
@@ -70,8 +71,8 @@ def harness_tool(*, harness: "SHAI", ctx: "AgentContext") -> Callable:
 async def create_tools(
     tools: Sequence[Any],
     *,
-    harness: "SHAI",
-    ctx: "AgentContext",
+    harness: SHAI,
+    ctx: AgentContext,
 ) -> list[Callable]:
     """Register tools with the harness and return gated callables for PydanticAI.
 
@@ -104,7 +105,7 @@ async def create_tools(
     return result
 
 
-def add_harness_middleware(agent: Any, *, harness: "SHAI", ctx: "AgentContext") -> None:
+def add_harness_middleware(agent: Any, *, harness: SHAI, ctx: AgentContext) -> None:
     """Patch a PydanticAI agent to gate all tool calls through the harness.
 
     Modifies the agent in-place. Must be called after all tools are
@@ -118,7 +119,7 @@ def add_harness_middleware(agent: Any, *, harness: "SHAI", ctx: "AgentContext") 
         _patch_tool(tool_obj, harness=harness, ctx=ctx)
 
 
-def _patch_tool(tool_obj: Any, *, harness: "SHAI", ctx: "AgentContext") -> None:
+def _patch_tool(tool_obj: Any, *, harness: SHAI, ctx: AgentContext) -> None:
     original_fn = (getattr(tool_obj, "function", None)
                    or getattr(tool_obj, "_function", None))
     if original_fn is None:

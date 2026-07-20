@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 async def test_from_yaml_with_mcp_source_does_not_crash(tmp_path: Path):
     """from_yaml() completes when harness.yaml declares an MCP source."""

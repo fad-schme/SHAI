@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import ValidationError
@@ -26,7 +26,7 @@ _ENV_RE    = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _SECRET_RE = re.compile(r"^secret://")
 
 
-def _resolve(data: Any, *, provider: "SecretsProvider | None" = None) -> Any:
+def _resolve(data: Any, *, provider: SecretsProvider | None = None) -> Any:
     """Recursively interpolate ${ENV_VAR} and secret:// refs in string values."""
     if isinstance(data, dict):
         return {k: _resolve(v, provider=provider) for k, v in data.items()}
@@ -37,7 +37,7 @@ def _resolve(data: Any, *, provider: "SecretsProvider | None" = None) -> Any:
     return data
 
 
-def _resolve_string(s: str, *, provider: "SecretsProvider | None") -> str:
+def _resolve_string(s: str, *, provider: SecretsProvider | None) -> str:
     # ${ENV_VAR} substitution
     def _replace_env(m: re.Match) -> str:
         val = os.environ.get(m.group(1))
@@ -65,7 +65,7 @@ def _resolve_string(s: str, *, provider: "SecretsProvider | None") -> str:
 def load_yaml(
     path: str | Path,
     *,
-    provider: "SecretsProvider | None" = None,
+    provider: SecretsProvider | None = None,
 ) -> HarnessConfig:
     """Read harness.yaml, resolve env vars and secret refs, validate.
 
@@ -104,7 +104,7 @@ def load_yaml(
 def load_dict(
     data: dict[str, Any],
     *,
-    provider: "SecretsProvider | None" = None,
+    provider: SecretsProvider | None = None,
 ) -> HarnessConfig:
     """Construct HarnessConfig from an already-parsed dict. Used in tests."""
     return _validate(_resolve(data, provider=provider), source="<dict>")

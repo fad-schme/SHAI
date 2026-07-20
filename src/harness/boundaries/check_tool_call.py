@@ -43,13 +43,13 @@ log = logging.getLogger(__name__)
 async def run(
     name: str,
     args: dict[str, Any],
-    ctx: "AgentContext",
+    ctx: AgentContext,
     *,
-    agent_config: "AgentConfig",
-    tools: dict[str, "Tool"],
-    policy: "PolicyEngine",
-    arg_scanners: list["Scanner"],
-    emitter: "AuditEmitter",
+    agent_config: AgentConfig,
+    tools: dict[str, Tool],
+    policy: PolicyEngine,
+    arg_scanners: list[Scanner],
+    emitter: AuditEmitter,
     tenant_id: str,
     scan_args_for_tags: frozenset[str] = frozenset({"sensitive"}),
 ) -> GateDecision:
@@ -63,7 +63,7 @@ async def run(
     # Resolve effective profile — parent or subagent
     if ctx.sub_agent_id is not None:
         try:
-            effective: "AgentConfig | SubAgentConfig" = agent_config.get_sub_agent(ctx.sub_agent_id)
+            effective: AgentConfig | SubAgentConfig = agent_config.get_sub_agent(ctx.sub_agent_id)
         except Exception as e:
             return await _deny(str(e), name, None, ctx, emitter, start, tenant_id,
                                audit_tags=agent_config.audit_tags)
@@ -187,9 +187,9 @@ async def run(
 async def _deny(
     reason: str,
     tool_name: str,
-    tool: "Tool | None",
-    ctx: "AgentContext",
-    emitter: "AuditEmitter",
+    tool: Tool | None,
+    ctx: AgentContext,
+    emitter: AuditEmitter,
     start: int,
     tenant_id: str,
     *,

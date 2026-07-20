@@ -62,7 +62,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         active.append(f"fan_out={budget.max_tool_calls_per_prompt}")
     if budget.loop_detection_window > 0:
         active.append(f"loop_window={budget.loop_detection_window}")
-    print(f"  execution_budget: " + (", ".join(active) if active else "none configured"))
+    print("  execution_budget: " + (", ".join(active) if active else "none configured"))
 
     # ── 2. Validate agent files ───────────────────────────────────────────
     agents_dir: Path | None = None
@@ -80,6 +80,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     print(f"\nValidating agents in {agents_dir}:")
     import asyncio
+
     from harness.agents.registry import AgentRegistry
 
     async def _validate_agents() -> tuple[int, int]:

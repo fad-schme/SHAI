@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 from importlib.metadata import entry_points
-from typing import Any
 
 from harness.core.errors import AdapterDiscoveryError
 
@@ -46,7 +45,8 @@ def _load_group(group: str) -> dict[str, type]:
         if ep.name in result:
             # Collision — record both class paths for the error message
             if ep.name not in conflicts:
-                conflicts[ep.name] = [result[ep.name].__module__ + "." + result[ep.name].__qualname__]
+                conflicts[ep.name] = [result[ep.name].__module__ + "." +
+                                      result[ep.name].__qualname__]
             conflicts[ep.name].append(ep.value)
         else:
             try:
@@ -90,7 +90,8 @@ def resolve(group: str, name: str) -> type:
             op="adapter_discovery",
         )
 
-    log.debug("adapter resolved", extra={"group": group, "adapter_name": name, "class": cls.__qualname__})
+    log.debug("adapter resolved", extra={"group": group, "adapter_name": name,
+                                         "class": cls.__qualname__})
     return cls
 
 

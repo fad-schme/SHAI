@@ -41,7 +41,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import ShaiTool, shai_tool  # re-export
 
@@ -56,7 +57,7 @@ __all__ = ["shai_tool", "wrap_tool", "wrap_tools", "ShaiMiddleware"]
 
 # ── Pattern A — wrap_tools (any LangChain version) ────────────────────────
 
-def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
+def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
     """Return a gated LangChain-compatible version of a tool.
 
     Accepts ShaiTool (from @shai_tool) or any LangChain BaseTool.
@@ -105,8 +106,8 @@ def wrap_tool(tool: Any, *, harness: "SHAI", ctx: "AgentContext") -> Any:
 async def wrap_tools(
     tools: Sequence[Any],
     *,
-    harness: "SHAI",
-    ctx: "AgentContext",
+    harness: SHAI,
+    ctx: AgentContext,
 ) -> list[Any]:
     """Register tools with the harness and return gated LangChain wrappers."""
     await harness.register_tools(tools)
@@ -148,7 +149,7 @@ def _build_shai_middleware_class() -> type:
             self._ctx     = ctx
 
         @classmethod
-        async def create(cls, tools: Any, *, harness: Any, ctx: Any) -> "ShaiMiddleware":
+        async def create(cls, tools: Any, *, harness: Any, ctx: Any) -> ShaiMiddleware:
             """Preferred constructor — registers tools then builds the middleware."""
             await harness.register_tools(tools)
             return cls(harness=harness, ctx=ctx)
@@ -198,8 +199,8 @@ def _build_shai_middleware_class() -> type:
                          extra={"tool": tool_name, "reason": gate.deny_reason,
                                 **self._ctx.to_log_fields()})
                 try:
-                    from langgraph.types import Command
                     from langchain_core.messages import ToolMessage
+                    from langgraph.types import Command
                     return Command(update={
                         "messages": [ToolMessage(
                             content=f"Tool call denied: {gate.deny_reason}",
@@ -221,8 +222,8 @@ def _build_shai_middleware_class() -> type:
                     log.warning("scan_tool_result blocked",
                                 extra={"tool": tool_name, **self._ctx.to_log_fields()})
                     try:
-                        from langgraph.types import Command
                         from langchain_core.messages import ToolMessage
+                        from langgraph.types import Command
                         return Command(update={
                             "messages": [ToolMessage(
                                 content="Tool result blocked by SHAI (indirect injection)",
@@ -279,7 +280,7 @@ except ImportError:
             )
 
         @classmethod
-        async def create(cls, tools: Any, *, harness: Any, ctx: Any) -> "ShaiMiddleware":
+        async def create(cls, tools: Any, *, harness: Any, ctx: Any) -> ShaiMiddleware:
             raise ImportError(
                 "ShaiMiddleware requires langchain>=0.3. "
                 "pip install 'langchain>=0.3' langgraph"

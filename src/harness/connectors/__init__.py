@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +73,7 @@ class ConnectorManifest(BaseModel, frozen=True):
 _MANIFESTS_DIR = Path(__file__).parent / "manifests"
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_manifest(connector_id: str) -> ConnectorManifest:
     """Load and validate a connector manifest by id.
 

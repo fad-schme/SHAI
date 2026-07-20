@@ -1,10 +1,7 @@
 """Tests for heuristic scanner, ensemble, and pattern DB store."""
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
-import time
 
 import pytest
 
@@ -16,7 +13,12 @@ from harness.core.context import AgentContext
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 from harness.patterns.store import (
-    _sign_row, apply_bundle, init_db, list_rules, load_verified_rules, verify_all,
+    _sign_row,
+    apply_bundle,
+    init_db,
+    list_rules,
+    load_verified_rules,
+    verify_all,
 )
 
 CTX = AgentContext(agent_id="test")

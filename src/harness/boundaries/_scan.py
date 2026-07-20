@@ -54,15 +54,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from typing import TYPE_CHECKING
 
-from harness.adapters.circuit_breaker import CircuitBreaker, CircuitState
+from harness.adapters.circuit_breaker import CircuitBreaker
 from harness.adapters.scanners.base import ScanResult
 from harness.core.events import AuditEvent, now_ms
 from harness.core.normalize import canonicalize
 from harness.core.types import (
-    BoundaryName, Decision, OnError, ScanAction, ScanStatus, Severity,
+    BoundaryName,
+    Decision,
+    OnError,
+    ScanAction,
+    ScanStatus,
+    Severity,
 )
 from harness.core.verdicts import Finding, ScanVerdict
 
@@ -118,7 +122,7 @@ def _apply_redaction(
 _breakers: dict[int, CircuitBreaker] = {}
 
 
-def _get_breaker(scanner: "Scanner") -> CircuitBreaker:
+def _get_breaker(scanner: Scanner) -> CircuitBreaker:
     """Return (or create) the circuit breaker for a scanner instance."""
     key = id(scanner)
     if key not in _breakers:
@@ -127,8 +131,8 @@ def _get_breaker(scanner: "Scanner") -> CircuitBreaker:
 
 
 async def _emit_system_event(
-    emitter: "AuditEmitter",
-    ctx: "AgentContext",
+    emitter: AuditEmitter,
+    ctx: AgentContext,
     tenant_id: str,
     scanner_name: str,
     error: str,
@@ -161,9 +165,9 @@ async def _emit_system_event(
 
 
 async def _scan_views(
-    scanner: "Scanner",
+    scanner: Scanner,
     views: list[str],
-    ctx: "AgentContext",
+    ctx: AgentContext,
 ) -> ScanResult:
     """Run one scanner across every normalization view and merge results.
 
@@ -198,18 +202,18 @@ async def _scan_views(
 
 async def run_scan(
     text: str,
-    ctx: "AgentContext",
+    ctx: AgentContext,
     *,
     boundary: BoundaryName,
-    scanners: list["Scanner"],
+    scanners: list[Scanner],
     scanner_actions: list[ScanAction | None],   # parallel to scanners list
     scanner_redact_withs: list[str | None],      # parallel to scanners list
     boundary_action: ScanAction,
-    emitter: "AuditEmitter",
+    emitter: AuditEmitter,
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
-    normalization: "NormalizationConfig | None" = None,
+    normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
     on_error: OnError = OnError.FAIL_CLOSED,
 ) -> ScanVerdict:
@@ -259,7 +263,7 @@ async def run_scan(
         def __init__(self, scanner_name: str) -> None:
             self.scanner_name = scanner_name
 
-    async def _guarded_scan(scanner: "Scanner", views: list[str]) -> ScanResult | _CircuitOpenSentinel:
+    async def _guarded_scan(scanner: Scanner, views: list[str]) -> ScanResult | _CircuitOpenSentinel:
         breaker = _get_breaker(scanner)
         if breaker.is_open:
             return _CircuitOpenSentinel(scanner.name)
@@ -479,7 +483,9 @@ def _check_promoted_candidates(text: str, findings: list[Finding]) -> list[Findi
         return findings
 
     from harness.patterns.fingerprint import (
-        extract_fingerprint, lsh_jaccard, fingerprint_from_json,
+        extract_fingerprint,
+        fingerprint_from_json,
+        lsh_jaccard,
     )
     # Compute a quick fingerprint of the current text (sub-scores not available
     # here, so use 0.0 — the LSH is what matters for matching)
@@ -527,7 +533,9 @@ def _record_candidate_if_needed(
 
     try:
         from harness.patterns.fingerprint import (
-            extract_fingerprint, extract_skeleton, fingerprint_to_json,
+            extract_fingerprint,
+            extract_skeleton,
+            fingerprint_to_json,
         )
         from harness.patterns.store import upsert_candidate
 
@@ -559,17 +567,17 @@ def _record_candidate_if_needed(
 
 async def run_file_scan(
     path: str,
-    ctx: "AgentContext",
+    ctx: AgentContext,
     *,
-    scanners: list["Scanner"],
+    scanners: list[Scanner],
     scanner_actions: list[ScanAction | None],
     scanner_redact_withs: list[str | None],
     boundary_action: ScanAction,
-    emitter: "AuditEmitter",
+    emitter: AuditEmitter,
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
-    normalization: "NormalizationConfig | None" = None,
+    normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
     on_error: OnError = OnError.FAIL_CLOSED,
 ) -> ScanVerdict:
@@ -594,17 +602,17 @@ async def run_file_scan(
 
 async def run_tool_result_scan(
     result: str,
-    ctx: "AgentContext",
+    ctx: AgentContext,
     *,
-    scanners: list["Scanner"],
+    scanners: list[Scanner],
     scanner_actions: list[ScanAction | None],
     scanner_redact_withs: list[str | None],
     boundary_action: ScanAction,
-    emitter: "AuditEmitter",
+    emitter: AuditEmitter,
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
-    normalization: "NormalizationConfig | None" = None,
+    normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
     on_error: OnError = OnError.FAIL_CLOSED,
 ) -> ScanVerdict:

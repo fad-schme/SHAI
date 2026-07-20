@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import Counter
 
 # Same markers and tokens as heuristic_scan.py — single source of truth
 _STRUCTURAL_RE = re.compile(

@@ -23,7 +23,6 @@ in Finding.detail — only category and short description.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import zipfile
 from pathlib import Path

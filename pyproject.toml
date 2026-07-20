@@ -58,6 +58,7 @@ include = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+
 [project.scripts]
 shai = "harness_cli.main:main"
 
@@ -95,3 +96,4 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]

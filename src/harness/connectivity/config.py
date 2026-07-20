@@ -50,7 +50,7 @@ class ConnectivityConfig(BaseModel, frozen=True, extra="forbid"):
     gateway_url:        str     = ""   # reserved
 
     @model_validator(mode="after")
-    def _secret_required_when_enabled(self) -> "ConnectivityConfig":
+    def _secret_required_when_enabled(self) -> ConnectivityConfig:
         if self.enabled and not self.token_secret:
             raise ValueError(
                 "connectivity.token_secret is required when connectivity.enabled=true. "
