@@ -8,58 +8,34 @@ env/
 venv/
 .venv/
 .venv*
-ENV/
 .agents/
 .codex/
 .ruff_cache/
 # Pytest
 .pytest_cache/
-.codex/
-# Byte-compiled / optimized / DLL files
+
 *.pyc
 *.pyo
 *.pyd
 .DS_Store
-session_state_*
 
 # Distribution / packaging
 build/
 dist/
-*.egg-info/
 
-# VSCode
-.vscode/
-
-zips/
 
 # Logs
 *.log
 
-# Secrets
 .env
 config/*.local.yaml
 
-*.zip
-*.tar.gz
-tmp.txt
 DS_Store
-
-scripts/
-#examples/
-.codex
 
 # Ignore pytest temporary test artifacts
 .pytest_tmp/
 tmp_pytest/
 .pytest_cache/
 
-CLAUDE.md
-memory.md
-session_log.md
-locomo/runs/*
-
-SESSION_STATE.md
-SKILL*
 /state/*
 benchmark_*
-shai-session*
