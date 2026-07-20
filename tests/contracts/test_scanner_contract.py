@@ -10,6 +10,7 @@ import pytest
 
 from harness.adapters.scanners.base import ScanResult, Scanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
+from harness.adapters.scanners.heuristic_scan import HeuristicScanner
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.core.context import AgentContext
 from harness.core.types import Severity
@@ -23,6 +24,7 @@ def all_scanners():
     return [
         pytest.param(RegexPIIScanner(), id="regex_pii"),
         pytest.param(InjectionScanner(), id="injection_scan"),
+        pytest.param(HeuristicScanner(), id="heuristic_scan"),
     ]
 
 

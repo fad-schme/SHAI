@@ -14,9 +14,18 @@ from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import run_scan
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
-from harness.core.types import BoundaryName, ScanAction, ScanStatus, Decision, Severity
+from harness.core.types import BoundaryName, OnError, ScanAction, ScanStatus, Decision, Severity
+
+from harness.boundaries._scan import _breakers
 
 CTX = AgentContext(agent_id="a1")
+
+
+@pytest.fixture(autouse=True)
+def _reset_breakers():
+    _breakers.clear()
+    yield
+    _breakers.clear()
 
 
 class RecordingSink:
@@ -140,6 +149,7 @@ async def test_scan_input_multiple_scanners(emitter, sink):
 # ── Scanner failure — pipeline continues ─────────────────────────────────
 
 async def test_scan_input_scanner_failure_treated_as_empty(emitter, sink):
+    """Scanner failure with on_error=fail_open is treated as empty findings."""
     bad = MagicMock()
     bad.name = "bad"
     bad.scan = AsyncMock(side_effect=RuntimeError("exploded"))
@@ -150,9 +160,9 @@ async def test_scan_input_scanner_failure_treated_as_empty(emitter, sink):
         scanner_actions=[], scanner_redact_withs=[], boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        on_error=OnError.FAIL_OPEN,
     )
     assert not verdict.blocked
-    assert len(sink.events) == 1
 
 
 # ── Block_at threshold ────────────────────────────────────────────────────

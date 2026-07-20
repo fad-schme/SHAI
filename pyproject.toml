@@ -20,7 +20,13 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "bandit",
-    "pip-audit"
+    "pip-audit",
+    "ruff",
+    "pre-commit",
+    "pip-tools",
+    "cyclonedx-bom",
+    "python-semantic-release",
+    "sigstore",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -56,8 +62,9 @@ testpaths = ["tests"]
 shai = "harness_cli.main:main"
 
 [project.entry-points."harness.scanners"]
-regex_pii      = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
-injection_scan = "harness.adapters.scanners.injection_scan:InjectionScanner"
+regex_pii       = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
+injection_scan  = "harness.adapters.scanners.injection_scan:InjectionScanner"
+heuristic_scan  = "harness.adapters.scanners.heuristic_scan:HeuristicScanner"
 jailbreak_scan     = "harness.adapters.scanners.jailbreak_scan:JailbreakScanner"
 identity_spoof_scan = "harness.adapters.scanners.identity_spoof_scan:IdentitySpoofScanner"
 
@@ -75,3 +82,16 @@ mcp   = "harness.tools.source:MCPSource"
 
 [project.entry-points."harness.secrets"]
 env = "harness.adapters.secrets.env:EnvVarProvider"
+
+[tool.semantic_release]
+version_variable = "pyproject.toml:version"
+branch = "main"
+commit_message = "chore(release): {version}"
+changelog_file = "CHANGELOG.md"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]

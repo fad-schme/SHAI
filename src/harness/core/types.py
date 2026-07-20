@@ -8,14 +8,28 @@ class BoundaryName(StrEnum):
     OUTPUT_SCAN    = "output_scan"
     FILE_SCAN          = "file_scan"
     TOOL_RESULT_SCAN   = "tool_result_scan"
+    SYSTEM             = "system"
 
 
 class Decision(StrEnum):
-    ALLOW   = "allow"
-    DENY    = "deny"
-    REDACT  = "redact"
-    BLOCKED = "blocked"
-    WARN    = "warn"
+    ALLOW    = "allow"
+    DENY     = "deny"
+    REDACT   = "redact"
+    BLOCKED  = "blocked"
+    WARN     = "warn"
+    DEGRADED = "degraded"
+
+
+class OnError(StrEnum):
+    """What happens when a scanner or adapter raises an exception.
+
+    fail_closed — treat as BLOCK; content rejected (default, safe posture)
+    fail_open   — treat as empty findings; content passes through
+    degrade     — treat as WARN; content passes through, audit event flagged
+    """
+    FAIL_CLOSED = "fail_closed"
+    FAIL_OPEN   = "fail_open"
+    DEGRADE     = "degrade"
 
 
 class Severity(StrEnum):

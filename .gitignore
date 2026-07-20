@@ -42,6 +42,7 @@ config/*.local.yaml
 *.zip
 *.tar.gz
 tmp.txt
+DS_Store
 
 scripts/
 #examples/
@@ -61,3 +62,4 @@ SESSION_STATE.md
 SKILL*
 /state/*
 benchmark_*
+shai-session*

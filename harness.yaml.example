@@ -36,6 +36,11 @@ session:
 scan_input:
   enabled: true
   block_at: high
+  # on_error: what happens when a scanner raises an exception.
+  #   fail_closed — treat as BLOCK (default, correct security posture)
+  #   fail_open   — treat as empty findings (use during rollout / testing)
+  #   degrade     — treat as WARN; content passes, audit event flagged
+  on_error: fail_closed
   scanners:
     - name: injection_scan       # data-boundary attacks: tool coercion, exfiltration, context spoofing
     - name: jailbreak_scan       # guardrail-integrity attacks: persona override, instruction override, etc.
@@ -72,6 +77,7 @@ check_tool_call:
 scan_output:
   enabled: true
   block_at: high
+  on_error: fail_closed
   scanners:
     - name: regex_pii
 

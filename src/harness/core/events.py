@@ -50,6 +50,8 @@ class AuditEvent(BaseModel, frozen=True):
     def _cross_field_constraints(self) -> "AuditEvent":
         if self.decision == Decision.DENY and not self.deny_reason:
             raise ValueError("deny_reason required when decision=deny")
+        if self.decision == Decision.DEGRADED and not self.deny_reason:
+            raise ValueError("deny_reason required when decision=degraded")
         if self.decision in (Decision.BLOCKED, Decision.WARN) \
                 and self.boundary == BoundaryName.TOOL_CALL_GATE:
             raise ValueError("tool_call_gate uses deny/allow, not blocked/warn")
