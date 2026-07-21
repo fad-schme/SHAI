@@ -20,6 +20,7 @@ Load the relevant skill before answering any developer question.
 | `11-errors.md` | Exception hierarchy, error handling patterns, common mistakes |
 | `12-testing.md` | Writing tests, `collect_events()`, mocking, test patterns used in the codebase |
 | `13-candidates.md` | Heuristic candidates, fingerprints, skeletons, CLI (candidates, promote, dismiss, retire) |
+| `14-cli.md` | `shai` CLI — install, `validate`, `agents list`, `audit tail`, `patterns` (apply, list, verify), bundle signing, common workflows |
 
 ## How to use
 
