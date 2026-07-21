@@ -172,7 +172,7 @@ class TestCandidateStore:
             upsert_candidate(db, fingerprint_to_json(fp), f"skel{i}", "high", fp["lsh"])
         candidates = list_candidates(db)
         set_candidate_status(db, candidates[0]["id"], "dismissed")
-        open_only = list_candidates(db, status="open")
+        open_only = list_candidates(db, status="open", min_hits=1)
         assert len(open_only) == 2
 
     def test_invalid_status_rejected(self, tmp_path):

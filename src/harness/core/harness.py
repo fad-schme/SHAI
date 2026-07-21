@@ -10,26 +10,27 @@ from pathlib import Path
 from typing import Any
 
 from harness.adapters.audit_sinks.stdout import StdoutSink
+from harness.adapters.scanners.rate_limiter import RateLimiter
+from harness.boundaries.session_budget import SessionBudget, ExecutionLimits
+from harness.boundaries.session_accumulator import ThreatAccumulator
+from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
-from harness.adapters.scanners.rate_limiter import RateLimiter
-from harness.adapters.scanners.regex_pii import RegexPIIScanner
-from harness.adapters.secrets.env import EnvVarProvider
+from harness.tools.registry import ToolRegistry
+from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import run_file_scan, run_scan, run_tool_result_scan
+from harness.boundaries._scan import run_scan, run_file_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import run as run_gate
-from harness.boundaries.session_accumulator import ThreatAccumulator
-from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
+from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.config.loader import load_yaml
+from harness.adapters.secrets.env import EnvVarProvider
 from harness.config.schema import HarnessConfig
 from harness.core.context import AgentContext
-from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
+
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.policy.rules import RuleBasedPolicy
-from harness.tools.registry import ToolRegistry
-from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
 from harness.tools.tool import Tool
 
 log = logging.getLogger(__name__)
@@ -122,6 +123,7 @@ class SHAI:
                 reframe_similarity=config.session.reframe_similarity,
                 ttl_hours=config.session.ttl_hours,
                 on_escalation=config.session.on_escalation,
+                density_threshold=config.session.density_threshold,
             )
             if config.session.enabled else None
         )
@@ -154,13 +156,16 @@ class SHAI:
     # ── Construction ──────────────────────────────────────────────────────
 
     @classmethod
-    async def from_yaml(cls, path: str | Path) -> SHAI:
+    async def from_yaml(cls, path: str | Path) -> "SHAI":
         """Load harness.yaml and construct a fully wired SHAI instance.
 
         Secret resolution:
           Resolves ${ENV_VAR} then secret:// URIs using EnvVarProvider.
           All secret:// references must be present as environment variables.
         """
+        # First pass: resolve ${ENV_VAR} only (no provider yet)
+        config_pre = load_yaml(path)
+
         # Always use EnvVarProvider for secret:// resolution.
         # Enterprise providers can be swapped by subclassing or patching before
         # calling from_yaml() — no config field needed since there is only one
@@ -171,11 +176,8 @@ class SHAI:
         config = load_yaml(path, provider=provider)
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
-        # Load verified incremental patterns from DB (if configured)
-        extra_rules = _load_extra_rules(config, provider)
-
-        input_scanners  = _build_text_scanners(config.scan_input.scanners, extra_rules=extra_rules)
-        output_scanners = _build_text_scanners(config.scan_output.scanners, extra_rules=extra_rules)
+        input_scanners  = _build_text_scanners(config.scan_input.scanners)
+        output_scanners = _build_text_scanners(config.scan_output.scanners)
         arg_scanners    = _build_text_scanners(config.check_tool_call.arg_scanners)
         file_scanners   = _build_file_scanners(
             config.scan_file.scanners,
@@ -227,8 +229,8 @@ class SHAI:
         for src_cfg in config.sources:
             # Resolve connector manifest if specified
             if src_cfg.connector:
-                from harness.config.schema import SourceConfig as _SC
                 from harness.connectors import load_manifest, manifest_to_source_config_fields
+                from harness.config.schema import SourceConfig as _SC
                 try:
                     manifest = load_manifest(src_cfg.connector)
                 except ValueError as e:
@@ -265,7 +267,6 @@ class SHAI:
                 source._connector_tool_specs = dict(src_cfg.connector_tool_specs)
                 source._scan_tool_result_on  = set(src_cfg.scan_tool_result_on)
                 # Wire MCP metadata scanner config
-                # (local vars — instance is constructed later at line ~307)
                 source._mcp_metadata_scanners     = mcp_metadata_scanners
                 source._scan_mcp_metadata_enabled = config.scan_mcp_metadata.enabled
                 source._mcp_metadata_block_at     = config.scan_mcp_metadata.block_at
@@ -346,7 +347,7 @@ class SHAI:
 
     # ── Startup ───────────────────────────────────────────────────────────
 
-    async def register_tools(self, tools: list[Tool | Any]) -> None:
+    async def register_tools(self, tools: "list[Tool | Any]") -> None:
         """Register tools and re-resolve all already-loaded agents.
 
         Accepts a list of:
@@ -358,7 +359,7 @@ class SHAI:
         After registering, every loaded agent's tool set is refreshed so
         newly registered tools become immediately available.
         """
-        from harness.integrations.base import extract_shai_tools
+        from harness.integrations.base import ShaiTool, extract_shai_tools
         shai_descriptors = extract_shai_tools(tools)
         await self._tool_registry.register_many(shai_descriptors)
         # Re-resolve all already-loaded agents so they see the new tools
@@ -481,7 +482,7 @@ class SHAI:
         if self._threat_accumulator is not None:
             escalated, reason = await self._threat_accumulator.check(session_id)
             if escalated:
-                from harness.core.events import AuditEvent
+                from harness.core.events import AuditEvent, now_ms
                 cfg = self._config.session
                 status = ScanStatus.BLOCK if cfg.on_escalation == "block" else ScanStatus.WARN
                 decision = Decision.BLOCKED if status == ScanStatus.BLOCK else Decision.WARN
@@ -511,14 +512,14 @@ class SHAI:
             block_at=self._block_at,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_input.on_error,
         )
 
         # Accumulator post-record: update session state with this turn's outcome.
         if self._threat_accumulator is not None:
             categories = [f.category for f in verdict.findings]
+            density = _extract_density(verdict)
             await self._threat_accumulator.record(
-                session_id, text, verdict.status.value, categories
+                session_id, text, verdict.status.value, categories, density=density
             )
 
         return verdict
@@ -550,7 +551,6 @@ class SHAI:
             block_at=self._block_at,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_input.on_error,
         )
 
     async def scan_injection(self, text: str, ctx: AgentContext) -> ScanVerdict:
@@ -579,7 +579,6 @@ class SHAI:
             block_at=self._block_at,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_input.on_error,
         )
 
     async def check_tool_call(
@@ -589,7 +588,7 @@ class SHAI:
         if self._rate_limiter is not None:
             allowed, reason = self._rate_limiter.check(ctx.agent_id, name)
             if not allowed:
-                from harness.core.events import AuditEvent
+                from harness.core.events import AuditEvent, now_ms
 
                 event = AuditEvent.build(
                     boundary=BoundaryName.TOOL_CALL_GATE,
@@ -614,7 +613,7 @@ class SHAI:
                 prompt_id=prompt_id,
             )
             if not allowed:
-                from harness.core.events import AuditEvent
+                from harness.core.events import AuditEvent, now_ms
 
                 event = AuditEvent.build(
                     boundary=BoundaryName.TOOL_CALL_GATE,
@@ -632,8 +631,8 @@ class SHAI:
         # Pre-gate: agent must be registered — deny with audit event on miss
         try:
             agent_config = self._agent_registry.get(ctx.agent_id)
-        except Exception:
-            from harness.core.events import AuditEvent
+        except Exception as e:
+            from harness.core.events import AuditEvent, now_ms
             reason = f"agent '{ctx.agent_id}' is not registered in this harness"
             event = AuditEvent.build(
                 boundary=BoundaryName.TOOL_CALL_GATE,
@@ -669,10 +668,9 @@ class SHAI:
         # Issue dispatch token when gate allows and connectivity is enabled
         if gate.allowed and self._connectivity.enabled and self._connectivity_secret:
             from harness.connectivity.token import (
-                default_allowed_urls,
-                encode_token,
-                sign_token,
+                sign_token, encode_token, default_allowed_urls,
             )
+            tool_obj     = tools.get(name)
             source_cfg   = next(
                 (s for s in self._config.sources if s.name == source_name),
                 None,
@@ -744,7 +742,6 @@ class SHAI:
             block_at=self._file_block_at,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_file.on_error,
         )
 
     async def scan_tool_result(
@@ -772,7 +769,7 @@ class SHAI:
                 extra={"tool": tool_name, **ctx.to_log_fields()},
             )
             from harness.core.events import AuditEvent
-            from harness.core.verdicts import ScanStatus, ScanVerdict
+            from harness.core.verdicts import ScanVerdict, ScanStatus
             event = AuditEvent.build(
                 boundary=BoundaryName.TOOL_RESULT_SCAN,
                 decision=Decision.ALLOW,
@@ -798,7 +795,6 @@ class SHAI:
             block_at=self._tool_result_block_at,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            # ToolResultScanConfig has no on_error yet — use fail_closed default
         )
 
     async def scan_output(self, text: str, ctx: AgentContext) -> ScanVerdict:
@@ -815,12 +811,11 @@ class SHAI:
             block_at=self._block_at,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_output.on_error,
         )
 
 
     @property
-    def scanners(self) -> dict[str, object]:
+    def scanners(self) -> "dict[str, object]":
         """Return all active scanner instances keyed by name.
 
         Provides visibility into which scanners are running and their
@@ -880,7 +875,7 @@ class SHAI:
         await self._source_registry.close()
         await self._emitter.close()
 
-    async def get_source(self, name: str) -> ToolSource:
+    async def get_source(self, name: str) -> "ToolSource":
         """Return a registered source by name.
 
         Callers use this to get a reference to an MCPSource for direct tool
@@ -894,7 +889,7 @@ class SHAI:
         return await self._source_registry.get(name)
 
     # ── Internal helpers ──────────────────────────────────────────────────
-    def _source_name_for_tool(self, tool_name: str, tool: Tool) -> str:
+    def _source_name_for_tool(self, tool_name: str, tool: "Tool") -> str:
         """Return the source name for a Tool object.
 
         Uses the Tool's transport to determine the source type:
@@ -920,7 +915,7 @@ class SHAI:
                 return src_cfg.name
         return "local"
 
-    def _resolve_tools(self, cfg: AgentConfig) -> dict[str, tuple[str, Tool]]:
+    def _resolve_tools(self, cfg: AgentConfig) -> "dict[str, tuple[str, Tool]]":
         """Build the {tool_name: (source_name, Tool)} dict for an agent at startup.
 
         Composite identity: every tool carries its source_name so the gate
@@ -1001,14 +996,28 @@ class SHAI:
 # them from AdapterRef declarations in harness.yaml. The named factories
 # below make the mapping explicit — no magic string dispatch.
 
+def _extract_density(verdict) -> float:
+    """Extract instruction density sub-score from heuristic scanner findings."""
+    for f in verdict.findings:
+        if f.scanner == "heuristic_scan" and f.detail:
+            for part in f.detail.split("(")[-1].rstrip(")").split(","):
+                part = part.strip()
+                if part.startswith("density="):
+                    try:
+                        return float(part.split("=", 1)[1])
+                    except ValueError:
+                        pass
+    return 0.0
+
+
 def _make_pii_scanner(cfg: dict) -> RegexPIIScanner:
     """Build a RegexPIIScanner from an AdapterRef config dict."""
     return RegexPIIScanner(**cfg)
 
 
-def _make_injection_scanner(cfg: dict, extra_rules=None) -> InjectionScanner:
+def _make_injection_scanner(cfg: dict) -> InjectionScanner:
     """Build an InjectionScanner from an AdapterRef config dict."""
-    return InjectionScanner(extra_rules=extra_rules, **cfg)
+    return InjectionScanner(**cfg)
 
 
 def _make_injection_doc_scanner() -> InjectionScanner:
@@ -1026,7 +1035,7 @@ def _make_injection_doc_scanner() -> InjectionScanner:
 
 
 # Named registry — explicit, no magic strings
-_SCANNER_FACTORIES: dict[str, Any] = {
+_SCANNER_FACTORIES: dict[str, "Any"] = {
     "regex_pii":           _make_pii_scanner,
     "injection_scan":      _make_injection_scanner,
     "mcp_metadata_scan":   lambda cfg: MCPMetadataScanner(**cfg),
@@ -1039,20 +1048,17 @@ _SCANNER_FACTORIES: dict[str, Any] = {
 }
 
 
-def _build_text_scanners(adapter_refs: list, extra_rules=None) -> list:
+def _build_text_scanners(adapter_refs: list) -> list:
     """Build text scanners from AdapterRef declarations in harness.yaml.
 
-    HeuristicScanner is always prepended — structural, not configurable.
     Built-in scanners (regex_pii, injection_scan) are resolved via the
     named factory table above. Custom scanners are resolved via entry points.
     """
-    from harness.adapters.scanners.heuristic_scan import HeuristicScanner
-    scanners = [HeuristicScanner()]
+    scanners = []
     for ref in adapter_refs:
-        if ref.name == "injection_scan":
-            scanners.append(_make_injection_scanner(ref.config, extra_rules=extra_rules))
-        elif ref.name in _SCANNER_FACTORIES:
-            scanners.append(_SCANNER_FACTORIES[ref.name](ref.config))
+        factory = _SCANNER_FACTORIES.get(ref.name)
+        if factory:
+            scanners.append(factory(ref.config))
         else:
             try:
                 from harness.adapters.discovery import resolve
@@ -1114,26 +1120,3 @@ def _build_sinks(adapter_refs: list) -> list:
         log.warning("no audit sinks configured — falling back to stdout")
         sinks = [StdoutSink()]
     return sinks
-
-
-def _load_extra_rules(config: HarnessConfig, provider) -> list | None:
-    """Load verified incremental patterns from DB if configured.
-
-    Returns compiled _CompiledRule list or None. Secret resolution follows
-    the same secret:// pattern as audit_signing and connectivity.
-    """
-    if not config.patterns_db.enabled:
-        return None
-
-    db_path = config.patterns_db.path
-    raw_secret = config.patterns_db.secret
-    if raw_secret.startswith("secret://"):
-        raw_secret = provider.resolve(raw_secret[len("secret://"):]).value
-    secret = raw_secret.encode()
-
-    from harness.adapters.scanners.injection_scan import compile_rules_from_dicts
-    from harness.patterns.store import load_verified_rules
-    raw_rules = load_verified_rules(db_path, secret)
-    if not raw_rules:
-        return None
-    return compile_rules_from_dicts(raw_rules)

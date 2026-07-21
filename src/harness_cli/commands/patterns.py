@@ -54,12 +54,12 @@ def cmd_patterns_verify(args) -> int:
 
 
 def cmd_candidates_list(args) -> int:
+    from harness.patterns.store import list_candidates
+    from harness.patterns.fingerprint import fingerprint_from_json
     import datetime
 
-    from harness.patterns.fingerprint import fingerprint_from_json
-    from harness.patterns.store import list_candidates
-
-    candidates = list_candidates(args.db, status=args.status)
+    min_hits = 1 if getattr(args, "all", False) else 0
+    candidates = list_candidates(args.db, status=args.status, min_hits=min_hits)
     if not candidates:
         print("no candidates found")
         return 0

@@ -5,16 +5,17 @@ Every field maps to a consumer in the codebase.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 from harness.connectivity.config import ConnectivityConfig
 
+from typing import TYPE_CHECKING, Any
+
 if TYPE_CHECKING:
-    pass
+    from harness.agents.agent_config import RuleConfig
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from harness.core.types import OnError, ScanAction, Severity, Transport
+from harness.core.errors import ConfigError
+from harness.core.types import ScanAction, Severity, Transport
 
 
 class AdapterRef(BaseModel, frozen=True, extra="forbid"):
@@ -79,6 +80,7 @@ class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
     escalation_threshold: float = 0.70
     window_size:          int   = 10
     reframe_similarity:   float = 0.72
+    density_threshold:    float = 0.05
     ttl_hours:            float = 72.0
     on_escalation:        str   = "block"   # "block" | "flag"
 
@@ -97,20 +99,14 @@ class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
               block  — reject the content (default)
               alert  — pass through and emit a WARN audit event
               redact — replace matched PII with redact_with placeholder and pass through
-
-    on_error: what to do when a scanner raises an exception.
-              fail_closed — treat as BLOCK (default, correct security posture)
-              fail_open   — treat as empty findings (pre-0.2 implicit behavior)
-              degrade     — treat as WARN; content passes, audit event flagged
     """
     enabled:  bool       = True
     block_at: Severity   = Severity.HIGH
     action:   ScanAction = ScanAction.BLOCK
-    on_error: OnError    = OnError.FAIL_CLOSED
     scanners: list[AdapterRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _enabled_needs_scanners(self) -> BoundaryConfig:
+    def _enabled_needs_scanners(self) -> "BoundaryConfig":
         if self.enabled and not self.scanners:
             raise ValueError("scanners must be non-empty when boundary is enabled")
         return self
@@ -125,7 +121,6 @@ class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
     enabled:             bool         = True
     block_at:            Severity     = Severity.HIGH
     action:              ScanAction   = ScanAction.BLOCK
-    on_error:            OnError      = OnError.FAIL_CLOSED
     scanners:            list[AdapterRef] = Field(default_factory=list)
     max_size_mb:         float        = 100.0
 
@@ -216,7 +211,7 @@ class AuditSigningConfig(BaseModel, frozen=True, extra="forbid"):
     secret:  str  = ""    # secret://ENV_VAR resolved at startup
 
     @model_validator(mode="after")
-    def _enabled_needs_secret(self) -> AuditSigningConfig:
+    def _enabled_needs_secret(self) -> "AuditSigningConfig":
         if self.enabled and not self.secret:
             raise ValueError("audit.signing.secret is required when signing is enabled")
         return self
@@ -279,7 +274,7 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     #                 optional enrichment sources where degraded operation is acceptable.
 
     @model_validator(mode="after")
-    def _transport_constraints(self) -> SourceConfig:
+    def _transport_constraints(self) -> "SourceConfig":
         # url is not required when a connector manifest provides it
         if self.transport == Transport.MCP and not self.url and not self.connector:
             raise ValueError(
@@ -325,26 +320,6 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
     )
 
 
-class PatternsDBConfig(BaseModel, frozen=True, extra="forbid"):
-    """Incremental pattern catalog stored in a signed SQLite DB.
-
-    When enabled, from_yaml() loads verified patterns from the DB and passes
-    them to InjectionScanner as extra_rules (appended to the built-in YAML).
-    The signing secret verifies row integrity via HMAC-SHA256.
-
-    Patterns are applied via CLI: shai patterns apply --bundle <file>
-    """
-    enabled: bool = False
-    path:    str  = "state/patterns.db"
-    secret:  str  = ""
-
-    @model_validator(mode="after")
-    def _enabled_needs_secret(self) -> PatternsDBConfig:
-        if self.enabled and not self.secret:
-            raise ValueError("patterns_db.secret is required when enabled")
-        return self
-
-
 class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     version:         int = 1
     tenant_id:       str = "default"
@@ -361,6 +336,5 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     sources:         list[SourceConfig]  = Field(default_factory=list)
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
     connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
-    patterns_db:     PatternsDBConfig     = Field(default_factory=PatternsDBConfig)
 
 

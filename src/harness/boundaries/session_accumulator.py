@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 WEIGHT_BLOCK   = 0.60
 WEIGHT_WARN    = 0.25
 WEIGHT_REFRAME = 0.30
+WEIGHT_DENSITY = 0.25
 
 # ── DDL ───────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS turns (
     status      TEXT    NOT NULL,
     categories  TEXT    NOT NULL DEFAULT '[]',
     turn_index  INTEGER NOT NULL DEFAULT 0,
+    density     REAL    NOT NULL DEFAULT 0.0,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, turn_index);
@@ -127,6 +129,7 @@ class ThreatAccumulator:
         reframe_similarity: float   = 0.72,
         ttl_hours: float            = 72.0,
         on_escalation: str          = "block",
+        density_threshold: float    = 0.05,
     ) -> None:
         self._db_path   = db_path
         self._threshold = escalation_threshold
@@ -134,6 +137,7 @@ class ThreatAccumulator:
         self._sim       = reframe_similarity
         self._ttl       = ttl_hours * 3600
         self._action    = on_escalation   # "block" | "flag"
+        self._density_threshold = density_threshold
         self._db        = None            # aiosqlite connection, opened lazily
         self._init_lock = asyncio.Lock()
         # Per-session asyncio locks — serialise concurrent turns on same session
@@ -195,6 +199,7 @@ class ThreatAccumulator:
         text: str,
         status: str,             # ScanStatus value: "allow" | "warn" | "block"
         categories: list[str],   # finding categories from this turn
+        density: float = 0.0,    # instruction density score from heuristic scanner
     ) -> None:
         """Write turn, recompute score, persist. Called AFTER run_scan.
 
@@ -203,7 +208,7 @@ class ThreatAccumulator:
         """
         lock = await self._session_lock(session_id)
         async with lock:
-            await self._record_locked(session_id, text, status, categories)
+            await self._record_locked(session_id, text, status, categories, density)
 
     async def reset(self, session_id: str) -> None:
         """Clear all state for a session. Call on session end."""
@@ -220,23 +225,20 @@ class ThreatAccumulator:
         text: str,
         status: str,
         categories: list[str],
+        density: float = 0.0,
     ) -> None:
         db   = await self._conn()
         now  = time.time()
         h    = _hash(text)
         cats = json.dumps(sorted(set(categories)))
-        # Bigrams stored as sorted list of "word1 word2" strings for reframe
-        # detection. Derived from live text here — never stored raw text.
         bgrams = json.dumps(sorted(f"{a} {b}" for a, b in _bigrams(text)))
 
-        # Ensure session row exists
         await db.execute(
             "INSERT OR IGNORE INTO sessions(session_id, risk_score, updated_at) "
             "VALUES(?, 0.0, ?)",
             (session_id, now),
         )
 
-        # Next turn_index for this session
         async with db.execute(
             "SELECT COALESCE(MAX(turn_index), -1) + 1 FROM turns WHERE session_id = ?",
             (session_id,),
@@ -245,27 +247,25 @@ class ThreatAccumulator:
         turn_idx = row[0]
 
         await db.execute(
-            "INSERT INTO turns(session_id, ts, text_hash, bigram_json, status, categories, turn_index) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?)",
-            (session_id, now, h, bgrams, status, cats, turn_idx),
+            "INSERT INTO turns(session_id, ts, text_hash, bigram_json, status, categories, turn_index, density) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, now, h, bgrams, status, cats, turn_idx, density),
         )
 
-        # Sliding window: last `window_size` turns
         async with db.execute(
-            "SELECT text_hash, bigram_json, status FROM turns "
+            "SELECT text_hash, bigram_json, status, density FROM turns "
             "WHERE session_id = ? ORDER BY turn_index DESC LIMIT ?",
             (session_id, self._window),
         ) as cur:
             window = await cur.fetchall()
 
-        score = self._compute_score(window, self._sim)
+        score = self._compute_score(window, self._sim, self._density_threshold)
 
         await db.execute(
             "UPDATE sessions SET risk_score = ?, updated_at = ? WHERE session_id = ?",
             (score, now, session_id),
         )
 
-        # Lazy TTL GC — purge old sessions on each write (cheap at low volume)
         cutoff = now - self._ttl
         await db.execute("DELETE FROM turns WHERE session_id IN "
                          "(SELECT session_id FROM sessions WHERE updated_at < ?)", (cutoff,))
@@ -274,8 +274,9 @@ class ThreatAccumulator:
 
     def _compute_score(
         self,
-        window: list,       # rows: (text_hash, bigram_json, status), newest first
+        window: list,       # rows: (text_hash, bigram_json, status, density), newest first
         sim_threshold: float,
+        density_threshold: float = 0.05,
     ) -> float:
         if not window:
             return 0.0
@@ -289,7 +290,6 @@ class ThreatAccumulator:
         base = block_rate * WEIGHT_BLOCK + warn_rate * WEIGHT_WARN
 
         # Reframe: current turn (window[0]) is bad AND similar to previous (window[1]).
-        # Bigrams are stored as sorted lists; reconstruct frozensets for Jaccard.
         reframe = False
         if window[0]["status"] in ("warn", "block") and len(window) >= 2:
             cur_bgrams  = frozenset(json.loads(window[0]["bigram_json"]))
@@ -297,4 +297,10 @@ class ThreatAccumulator:
             if _jaccard(cur_bgrams, prev_bgrams) >= sim_threshold:
                 reframe = True
 
-        return min(1.0, base + (WEIGHT_REFRAME if reframe else 0.0))
+        # Density: rolling average of instruction density across the window.
+        # A sustained 5%+ average signals a drip-feed injection.
+        density_sum = sum(r["density"] for r in window)
+        density_avg = density_sum / n if n > 0 else 0.0
+        density_signal = WEIGHT_DENSITY if density_avg >= density_threshold else 0.0
+
+        return min(1.0, base + (WEIGHT_REFRAME if reframe else 0.0) + density_signal)

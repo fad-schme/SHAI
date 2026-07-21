@@ -192,7 +192,6 @@ def upsert_candidate(
 ) -> None:
     """Insert or update a heuristic candidate. Deduplicates by LSH similarity."""
     import time
-
     from harness.patterns.fingerprint import fingerprint_from_json, lsh_jaccard
 
     path = Path(db_path)
@@ -222,6 +221,19 @@ def upsert_candidate(
             (fingerprint_json, skeleton, severity, now, now),
         )
 
+        # Cap: evict oldest low-hit open candidate when table exceeds 500
+        count = conn.execute(
+            "SELECT COUNT(*) FROM heuristic_candidates WHERE status = 'open'"
+        ).fetchone()[0]
+        if count > 500:
+            conn.execute(
+                "DELETE FROM heuristic_candidates WHERE id = ("
+                "  SELECT id FROM heuristic_candidates"
+                "  WHERE status = 'open' AND hit_count < 3"
+                "  ORDER BY last_seen ASC LIMIT 1"
+                ")"
+            )
+
 
 def load_promoted_candidates(db_path: str | Path) -> list[dict]:
     """Load all promoted candidates for scan-time lookup."""
@@ -240,21 +252,27 @@ def load_promoted_candidates(db_path: str | Path) -> list[dict]:
         return []
 
 
-def list_candidates(db_path: str | Path, status: str | None = None) -> list[dict]:
-    """List candidates for CLI display."""
+def list_candidates(db_path: str | Path, status: str | None = None, min_hits: int = 0) -> list[dict]:
+    """List candidates for CLI display.
+
+    When status is 'open' and min_hits is 0, defaults to min_hits=3
+    to filter noise. Pass min_hits=1 (--all) to see everything.
+    """
     path = Path(db_path)
     if not path.exists():
         return []
+    effective_min = min_hits if min_hits > 0 else (3 if status == "open" else 1)
     with sqlite3.connect(str(path)) as conn:
         conn.row_factory = sqlite3.Row
         if status:
             rows = conn.execute(
-                "SELECT * FROM heuristic_candidates WHERE status = ? ORDER BY hit_count DESC",
-                (status,),
+                "SELECT * FROM heuristic_candidates WHERE status = ? AND hit_count >= ? ORDER BY hit_count DESC",
+                (status, effective_min),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM heuristic_candidates ORDER BY hit_count DESC"
+                "SELECT * FROM heuristic_candidates WHERE hit_count >= ? ORDER BY hit_count DESC",
+                (effective_min,),
             ).fetchall()
     return [dict(r) for r in rows]
 
