@@ -353,6 +353,11 @@ patterns:
     strings:
       zero_width_chars:    '[\u200b\u200c\u200d\ufeff\u00ad]'
       ascii_control_chars: '[\x00\x01\x02\x03\x04\x05\x06\x07]'
+      # OWASP-cited: KaTeX/LaTeX rendering invisible in the delivered UI
+      # ($\color{white}{...}$ or transparent). Matched on the raw text before
+      # rendering.
+      katex_invisible_color:  '(?i)\\color\s*\{\s*(?:white|transparent|#f{3,6}|#ffffff)\s*\}\s*\{'
+      latex_hphantom:         '\\(?:hphantom|vphantom)\s*\{'
     functions:
       - obfuscation_score
       - invisible_text

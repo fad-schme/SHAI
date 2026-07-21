@@ -252,30 +252,80 @@ def _check_svg(path: Path, findings: list[Finding]) -> None:
         log.debug("SVG check failed: %s", e)
 
 
-def _check_exif(path: Path, findings: list[Finding]) -> None:
+def _check_exif(path: Path, findings: list[Finding]) -> str:
+    """Inspect EXIF metadata, append structural findings, and return a
+    concatenated blob of string EXIF values for the content pass to route
+    through the full scanner set.
+
+    The blob is what closes OWASP's multimodal-injection gap: previously we
+    only compared EXIF strings to the local `_LLM_TRIGGER_RE`, which is a
+    subset of the injection catalog. Returning the blob lets the caller run
+    `_text_scanners` (injection + jailbreak + identity_spoof) against the
+    same metadata surface.
+
+    Returns "" when PIL is unavailable or no EXIF is present.
+    """
+    blob_parts: list[str] = []
     try:
         from PIL import Image  # type: ignore
         from PIL.ExifTags import TAGS  # type: ignore
         img = Image.open(str(path))
         exif = getattr(img, "_getexif", lambda: None)()
         if not exif:
-            return
+            return ""
         for tag, val in exif.items():
+            if not isinstance(val, str):
+                continue
             tag_name = TAGS.get(tag, str(tag))
-            if isinstance(val, str):
-                for pat in _LLM_TRIGGER_RE:
-                    if pat.search(val):
-                        findings.append(Finding(
-                            scanner="file_scanner",
-                            category="file.exif_injection",
-                            severity=Severity.HIGH,
-                            detail=f"Injection pattern in EXIF field: {tag_name}",
-                        ))
-                        return
+            blob_parts.append(f"{tag_name}: {val}")
+            # Fast local trigger check — a definite injection pattern in EXIF
+            # is HIGH-severity structural evidence, so emit a finding right
+            # here even before the content pass runs.
+            for pat in _LLM_TRIGGER_RE:
+                if pat.search(val):
+                    findings.append(Finding(
+                        scanner="file_scanner",
+                        category="file.exif_injection",
+                        severity=Severity.HIGH,
+                        detail=f"Injection pattern in EXIF field: {tag_name}",
+                    ))
+                    break
     except ImportError:
         pass
     except Exception as e:
         log.debug("EXIF check failed: %s", e)
+    return "\n".join(blob_parts)
+
+
+# XMP is embedded XML metadata carried in JPEG APP1, PNG iTXt, TIFF, etc.
+# Extract by grepping the raw bytes for the xmpmeta envelope rather than
+# adding a dependency on defusedxml/libxmp — good enough to catch payloads
+# hidden in dc:description / dc:title / xmp:CreatorTool / photoshop:Instructions.
+_XMP_BLOB_RE = re.compile(rb"<x:xmpmeta\b.*?</x:xmpmeta>", re.DOTALL | re.IGNORECASE)
+_XMP_TEXT_RE = re.compile(rb">([^<]{4,})<", re.DOTALL)
+
+
+def _extract_xmp(path: Path) -> str:
+    """Pull string values from any XMP block embedded in the file. Returns
+    "" when no XMP is present. Kept dependency-free."""
+    try:
+        raw = path.read_bytes()
+    except Exception:
+        return ""
+    blocks = _XMP_BLOB_RE.findall(raw)
+    if not blocks:
+        return ""
+    strings: list[str] = []
+    for b in blocks:
+        for m in _XMP_TEXT_RE.findall(b):
+            try:
+                s = m.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                continue
+            # Skip pure-numeric / boolean / GUID-shaped values that dominate XMP
+            if len(s) >= 8 and any(c.isalpha() for c in s):
+                strings.append(s)
+    return "\n".join(strings)
 
 
 def _check_zip(path: Path, findings: list[Finding]) -> None:
@@ -425,12 +475,18 @@ class FileScanner:
         _check_size(path, self._max_size_mb, findings)
         _check_filename(path, findings)
 
+        image_metadata_blob = ""
         if ext == ".pdf":
             _check_pdf(path, findings)
         elif ext in {".svg", ".svgz"}:
             _check_svg(path, findings)
         elif ext in {".jpg", ".jpeg", ".png", ".tiff", ".webp"}:
-            _check_exif(path, findings)
+            # EXIF and XMP contribute a metadata blob for the content pass —
+            # OWASP multimodal-injection coverage. Structural EXIF findings
+            # (fast trigger check) still go straight into findings.
+            exif_blob = _check_exif(path, findings)
+            xmp_blob  = _extract_xmp(path)
+            image_metadata_blob = "\n".join(b for b in (exif_blob, xmp_blob) if b)
         elif ext == ".zip":
             _check_zip(path, findings)
         elif ext in {".doc", ".xls", ".ppt", ".docm", ".xlsm", ".pptm"}:
@@ -439,15 +495,35 @@ class FileScanner:
             _check_ooxml(path, findings)
 
         # ── Pass 2: content scan (full scanner set) ───────────────────────
+        # Routes extracted document text AND image metadata through the same
+        # injection + jailbreak + identity_spoof chain, closing the gap where
+        # EXIF/XMP was previously only checked against a small regex subset.
         if self._text_scanners:
+            payloads: list[tuple[str, str]] = []
             extracted = _extract_text(path)
             if extracted.strip():
+                payloads.append(("content", extracted))
+            if image_metadata_blob.strip():
+                payloads.append(("image_metadata", image_metadata_blob))
+            for surface, payload in payloads:
                 for scanner in self._text_scanners:
                     try:
-                        text_result = await scanner.scan(extracted, ctx)
-                        findings.extend(text_result.findings)
+                        text_result = await scanner.scan(payload, ctx)
+                        for f in text_result.findings:
+                            # Prefix category with surface so the audit trail
+                            # distinguishes document-body hits from image-
+                            # metadata hits without losing the original.
+                            if surface == "image_metadata":
+                                findings.append(Finding(
+                                    scanner=f.scanner,
+                                    category=f"file.image_metadata.{f.category}",
+                                    severity=f.severity,
+                                    detail=f.detail,
+                                ))
+                            else:
+                                findings.append(f)
                     except Exception as e:
-                        log.error("text scanner %s failed during file content scan: %s",
-                                  getattr(scanner, "name", "?"), e)
+                        log.error("text scanner %s failed on %s: %s",
+                                  getattr(scanner, "name", "?"), surface, e)
 
         return ScanResult(findings=findings)
