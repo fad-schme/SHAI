@@ -68,8 +68,10 @@ This finding is always MEDIUM. It never blocks on its own at `block_at: high`.
 But it participates in the ensemble — if `injection_scan` also flags the same
 category, the ensemble promotes both to HIGH.
 
-Promoted candidates are cached in memory. The cache is invalidated when the
-CLI changes a candidate's status.
+Promoted candidates are cached in memory. Because the CLI runs in a separate
+process, a status change cannot invalidate a running harness's cache. Restart
+the harness or invalidate the cache in that runtime process when immediate
+pickup is required.
 
 ---
 
@@ -131,7 +133,11 @@ shai patterns candidates --db state/patterns.db
 ```bash
 shai patterns candidates --db state/patterns.db --status promoted
 shai patterns candidates --db state/patterns.db --status open
+shai patterns candidates --db state/patterns.db --status open --all
 ```
+
+Open candidates with fewer than three hits are hidden when filtering by
+`--status open`; `--all` includes them.
 
 ### Promote — enters read path
 
@@ -167,12 +173,15 @@ candidate is no longer needed — the regex rule is the permanent fix.
 1. **Detect** — heuristic scanner flags a MEDIUM+ anomaly the regex catalog missed.
 2. **Record** — write path stores the fingerprint and skeleton automatically.
 3. **Review** — engineer runs `shai patterns candidates`, reads the skeleton.
-4. **Promote** — engineer runs `shai patterns promote --id N`. Future similar
-   texts get a MEDIUM finding that feeds the ensemble.
+4. **Promote** — engineer runs
+   `shai patterns promote --db state/patterns.db --id N`. After the runtime
+   reloads its promoted-candidate cache, future similar texts get a MEDIUM
+   finding that feeds the ensemble.
 5. **Write rule** — engineer writes a targeted regex from the skeleton,
    signs it into a bundle, applies via `shai patterns apply`.
-6. **Retire** — engineer runs `shai patterns retire --id N`. The regex rule
-   is now the permanent detection. The candidate served its purpose.
+6. **Retire** — engineer runs
+   `shai patterns retire --db state/patterns.db --id N`. The regex rule is now
+   the permanent detection. The candidate served its purpose.
 
 ---
 
@@ -190,4 +199,4 @@ candidate is no longer needed — the regex rule is the permanent fix.
   Rules lock it down.
 
 → See `04-boundaries.md` for how findings flow through the ensemble.
-→ See `02-harness-yaml.md` for `patterns_db` configuration (signed regex rules).
+→ See `02-harness-yaml.md` for the pattern-DB CLI workflow.

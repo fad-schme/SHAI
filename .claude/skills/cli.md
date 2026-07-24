@@ -21,6 +21,7 @@ cd SHAI
 pip install -e ".[dev]"
 which shai
 # ~/.local/bin/shai   (or your venv's bin/)
+shai --help
 ```
 
 The entry point is `harness_cli.main:main` — declared in `pyproject.toml` under
@@ -28,7 +29,7 @@ The entry point is `harness_cli.main:main` — declared in `pyproject.toml` unde
 
 ```bash
 shai
-# usage: shai [-h] [--config PATH] command ...
+# usage: shai [-h] COMMAND ...
 #
 # SHAI developer tools
 #   validate   Validate config and agent files
@@ -39,31 +40,49 @@ shai
 
 ---
 
-## Global options
+## Help
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--config` / `-c PATH` | `config/harness.yaml` | Path to the harness config. Consumed by `validate`; ignored by everything else. |
-
-Each subcommand has its own flags — the global `--config` sits *before* the
-subcommand name.
+Every parser level supports `-h` and `--help`. Help prints to stdout, exits
+with code `0`, and does not execute the command.
 
 ```bash
-shai --config prod.yaml validate
+shai --help
+shai validate --help
+shai agents --help
+shai agents list --help
+shai audit --help
+shai audit tail --help
+shai patterns --help
+shai patterns apply --help
+```
+
+Running `shai` without arguments prints the top-level help. Use
+`shai COMMAND --help` or `shai GROUP SUBCOMMAND --help` for scoped options.
+
+---
+
+## Command options
+
+Options are scoped to the command that consumes them. For example, `--config`
+belongs to `validate`:
+
+```bash
+shai validate --config prod.yaml
 ```
 
 ---
 
 ## `shai validate`
 
-Validates a `harness.yaml` and (optionally) every agent file it references,
-then prints a summary of what would be built at `SHAI.from_yaml()` time.
+Validates a `harness.yaml` and its inline policy rules. When `--agents-dir` is
+supplied, it also validates every agent YAML file in that directory, then
+prints a concise configuration summary.
 
 ```bash
 shai validate
 # Validating config/harness.yaml ... OK
 #   tenant_id:     acme-prod
-#   policy:        rule_based
+#   policy_rules:  4
 #   audit_sinks:   ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
 #   session:       enabled=True  backend=sqlite  threshold=0.7  window=50  on_escalation=block
@@ -78,25 +97,26 @@ shai validate
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--agents-dir` / `-a DIR` | *(from config)* | Override the directory the validator loads agent YAMLs from. |
+| `--config` / `-c PATH` | `config/harness.yaml` | Path to the harness config. |
+| `--agents-dir` / `-a DIR` | — | Also validate agent YAMLs in this directory. When omitted, only the harness config is validated. |
 
 **Exit codes:**
 
 | Code | Meaning |
 |---|---|
-| `0` | Config valid, all agents parsed and cross-references resolved. |
+| `0` | Config and inline policy rules valid; all supplied agent YAMLs parsed. |
 | `1` | Config invalid, or one or more agents failed to load. First error is printed on stderr. |
 
-Use it in CI to fail a merge that would break `SHAI.from_yaml()` at startup.
-Nothing in `validate` touches the network or the pattern DB.
+Use it in CI to catch configuration and agent-schema drift. It does not
+instantiate adapters, connect sources, resolve `secret://` references, touch
+the network, or open the pattern DB.
 
 ---
 
 ## `shai agents list`
 
 Lists the agents in `--agents-dir` with their tool count, subagent count, and
-declared sources. Useful when a new engineer asks "what agents are wired up
-in this deployment?"
+declared sources.
 
 ```bash
 shai agents list --agents-dir agents/
@@ -111,7 +131,7 @@ shai agents list --agents-dir agents/
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--agents-dir` / `-a DIR` | *(from `--config`)* | Directory of `agent-*.yaml` files. |
+| `--agents-dir` / `-a DIR` | *(required)* | Directory of agent YAML files. |
 
 Agents that fail to load emit a `Warning: could not load <file>: <error>`
 line on stderr but do not cause a non-zero exit — the goal is to list what
@@ -122,8 +142,9 @@ when you want a hard fail.
 
 ## `shai audit tail`
 
-Streams an audit JSONL file with human-readable formatting and decision-level
-filtering. Reads from a file, from stdin, or follows a file like `tail -f`.
+Reads an audit JSONL file with human-readable formatting and decision-level
+filtering. It can read from a file or stdin, and `--follow` follows a file like
+`tail -f`.
 
 ```bash
 # Tail the last 20 events (default) from a file
@@ -135,7 +156,7 @@ shai audit tail --file logs/audit.jsonl --follow
 # Only denials on the tool-call gate — the most common on-call filter
 shai audit tail --file logs/audit.jsonl --boundary tool_call_gate --decision deny
 
-# Last 50 denies of any kind
+# Show denies found within the last 50 log lines
 shai audit tail --file logs/audit.jsonl --decision deny --last 50
 
 # Stream from stdin — pipe from wherever
@@ -161,27 +182,28 @@ to find:**
 - `findings=N max=high` — scanner findings summary.
 - `+42ms` — duration.
 
-Decisions are colorised: red = deny/blocked, yellow = warn/redact, green = allow.
-Pipe through `less -R` if you need color in a pager, or set `NO_COLOR=1` to
-strip ANSI when writing to a file.
+Decisions are colorised only when stdout is an interactive terminal: red =
+deny/blocked, yellow = warn/redact, and green = allow. Redirected and piped
+output is plain text. Set `NO_COLOR=1` to disable color explicitly.
 
 ---
 
 ## `shai patterns` — signed pattern database
 
 Manages the SQLite DB that holds signed patterns and heuristic candidates.
-Every write to the `patterns` table is HMAC-SHA256 signed; every read verifies.
-Tampered rows are skipped, never applied.
+Every write to the `patterns` table is HMAC-SHA256 signed. `apply` verifies
+before writing, `verify` checks installed rows, and `list` performs an
+unverified inspection.
 
 The DB has two tables:
 
 | Table | Written by | Read by |
 |---|---|---|
-| `patterns` | `shai patterns apply` | `SHAI.from_yaml()` on startup |
+| `patterns` | `shai patterns apply` | `shai patterns list`, `shai patterns verify`, and explicit `load_verified_rules()` integrations |
 | `heuristic_candidates` | Every scan (fire-and-forget) | `shai patterns candidates`, promoted rows read by the scan pipeline |
 
 → See `13-candidates.md` for the candidate lifecycle.
-→ See `02-harness-yaml.md` for the `patterns_db` config that loads the DB at runtime.
+→ See `02-harness-yaml.md` for the pattern-DB CLI workflow.
 
 ### `apply` — install a signed bundle
 
@@ -244,13 +266,18 @@ Heuristic candidate management — full reference in `13-candidates.md`:
 
 ```bash
 shai patterns candidates --db state/patterns.db --status open
+shai patterns candidates --db state/patterns.db --status open --all
 shai patterns promote    --db state/patterns.db --id 12
 shai patterns dismiss    --db state/patterns.db --id 8
 shai patterns retire     --db state/patterns.db --id 12
 ```
 
-Status changes invalidate the in-memory promoted-candidate cache — the next
-scan picks up the change without a restart.
+`--status` accepts `open`, `promoted`, `dismissed`, or `retired`. With
+`--status open`, low-hit-count candidates are hidden unless `--all` is set.
+
+Status changes are persisted to SQLite but cannot invalidate the cache of a
+separately running SHAI process. Restart that process or explicitly invalidate
+its promoted-candidate cache when immediate pickup is required.
 
 ---
 
@@ -382,9 +409,10 @@ against the current secret.
 An agent file doesn't parse or fails Pydantic validation. The first error is
 printed on stderr; fix that file first — cascading errors often disappear.
 
-**Colored `audit tail` output writing junk to a log**
-ANSI escape codes are in the stream. Set `NO_COLOR=1` before running, or pipe
-through `sed -r 's/\x1b\[[0-9;]*m//g'` when redirecting to a file.
+**`audit tail` has no color when piped**
+Color is intentionally enabled only for an interactive stdout terminal.
+Pipes and redirects receive plain text. Set `NO_COLOR=1` to disable color
+explicitly in a terminal.
 
 **`shai patterns list` shows fewer rules than the bundle contains**
 Some rows verified as invalid at apply time and were skipped, OR the bundle
@@ -398,6 +426,6 @@ but fail startup. Include env-var presence checks in your deploy playbook.
 
 ---
 
-→ See `02-harness-yaml.md` for the `patterns_db` config block.
+→ See `02-harness-yaml.md` for the pattern-DB CLI workflow.
 → See `13-candidates.md` for the candidate lifecycle.
 → See `05-verdicts-events.md` for `AuditEvent` field reference (what `audit tail` renders).

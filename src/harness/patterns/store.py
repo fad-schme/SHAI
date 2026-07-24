@@ -1,7 +1,7 @@
 """patterns/store.py — signed pattern storage and verification.
 
-SQLite DB with HMAC-SHA256 per row. Loaded at startup by from_yaml(),
-verified rules compiled and passed to InjectionScanner as extra_rules.
+SQLite DB with HMAC-SHA256 per pattern row. Runtime integrations can load
+verified rules and pass them to scanners as extra rules.
 
 Schema:
     patterns(rule_id TEXT PK, catalog TEXT, payload TEXT, signature TEXT,
@@ -192,6 +192,7 @@ def upsert_candidate(
 ) -> None:
     """Insert or update a heuristic candidate. Deduplicates by LSH similarity."""
     import time
+
     from harness.patterns.fingerprint import fingerprint_from_json, lsh_jaccard
 
     path = Path(db_path)

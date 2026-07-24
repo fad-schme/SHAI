@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
+from collections import deque
 from pathlib import Path
+
+from harness_cli.console import console
 
 _DECISION_COLOURS = {
     "allow":   "\033[32m",   # green
@@ -15,11 +19,10 @@ _DECISION_COLOURS = {
     "redact":  "\033[33m",   # yellow
 }
 _RESET = "\033[0m"
-_BOLD  = "\033[1m"
 
 
 def _colour(decision: str) -> str:
-    if not sys.stdout.isatty():
+    if "NO_COLOR" in os.environ or not console.stdout_isatty():
         return ""
     return _DECISION_COLOURS.get(decision, "")
 
@@ -86,15 +89,12 @@ def _format_event(raw: str, *, boundary_filter: str | None, decision_filter: str
     return line.rstrip()
 
 
-def _read_tail(file: Path | None, n: int) -> list[str]:
+def _read_tail(file: Path, n: int) -> list[str]:
     """Read last n lines from a file."""
-    if file is None:
+    if n == 0:
         return []
-    try:
-        lines = file.read_text(encoding="utf-8").splitlines()
-        return lines[-n:]
-    except (OSError, UnicodeDecodeError):
-        return []
+    with file.open(encoding="utf-8") as fh:
+        return [line.rstrip("\r\n") for line in deque(fh, maxlen=n)]
 
 
 def cmd_audit_tail(args: argparse.Namespace) -> int:
@@ -107,19 +107,23 @@ def cmd_audit_tail(args: argparse.Namespace) -> int:
     use_stdin = file_arg == "-"
     file_path = None if use_stdin else Path(file_arg)
 
-    if not use_stdin and file_path and not file_path.exists():
-        print(f"Error: file not found: {file_path}", file=sys.stderr)
+    if file_path is not None and not file_path.is_file():
+        console.error(f"Error: file not found: {file_path}")
         return 1
 
     def _emit(raw: str) -> None:
         line = _format_event(raw, boundary_filter=boundary_filt, decision_filter=decision_filt)
         if line:
-            print(line)
+            console.write(line)
 
     # Show last N lines first
-    if not use_stdin and file_path:
-        for raw in _read_tail(file_path, last_n):
-            _emit(raw)
+    if file_path is not None:
+        try:
+            for raw in _read_tail(file_path, last_n):
+                _emit(raw)
+        except (OSError, UnicodeDecodeError) as e:
+            console.error(f"Error: {e}")
+            return 1
 
     if not follow:
         if use_stdin:
@@ -149,7 +153,7 @@ def cmd_audit_tail(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     except OSError as e:
-        print(f"\nError: {e}", file=sys.stderr)
+        console.error(f"\nError: {e}")
         return 1
 
     return 0

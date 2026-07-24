@@ -173,28 +173,22 @@ over all non-null fields (excluding `signature`), `sort_keys=True`.
 
 ---
 
-## Extended pattern database
+## Pattern database
 
-Signed pattern rules loaded into the regex scanners at startup, on top of the
-built-in YAML catalogs. Authored as catalog YAML, signed into a bundle with
-`shai patterns build`, applied with `shai patterns apply`. The DB gives
-operators a way to update detection without shipping a new build of SHAI.
+The CLI manages signed pattern rules and heuristic candidates in a SQLite
+database selected explicitly with `--db`. `HarnessConfig` currently has no
+`patterns_db` or `extended_patterns` field; adding either to `harness.yaml`
+fails validation because the schema forbids unknown fields.
 
-```yaml
-extended_patterns:
-  enabled: false
-  path:    "state/patterns.db"
-  secret:  "secret://SHAI_PATTERN_SECRET"
-```
+`shai patterns apply` and `shai patterns verify` use the signing secret named
+by `--secret`. The CLI does not resolve a pattern-DB secret from
+`harness.yaml`. Runtime integrations that consume signed rules must call
+`harness.patterns.store.load_verified_rules()` explicitly with the same DB and
+secret. `SHAI.from_yaml()` does not load those rules automatically.
 
-**Fields:**
-- `enabled` — off by default. When off, scanners use built-in catalogs only.
-- `path`   — SQLite path. Created on first apply.
-- `secret` — HMAC-SHA256 key; must match the value used by `shai patterns build/apply/verify`.
-
-At startup each scanner loads verified rules by its `catalog_name`:
-`injection`, `jailbreak`, `identity_spoof`, `mcp_metadata`. Rows with invalid
-signatures are skipped with a `WARN` log — never silently applied.
+`make_bundle.py` is not part of the base source checkout; it is supplied with
+the extended-pattern delivery. `shai patterns apply` consumes its signed JSON
+output.
 
 **CLI workflow:**
 
@@ -219,10 +213,10 @@ shai patterns verify --db state/patterns.db --secret SHAI_PATTERN_SECRET
 shai patterns list --db state/patterns.db
 ```
 
-The rule format inside a bundle is exactly the catalog format used by
-`injection_patterns.yaml` and friends — `name`, `meta` (`severity`, `category`,
-`threat_level`, `description`), `strings`, optional `functions`. See the
-built-in catalogs under `src/harness/adapters/scanners/l10n/` for reference.
+The bundle contains signed rows whose JSON payload uses the catalog rule
+shape: `name`, `meta` (`severity`, `category`, `threat_level`, `description`),
+`strings`, and optional `functions`. See the built-in catalogs under
+`src/harness/adapters/scanners/l10n/` for reference.
 
 **Heuristic candidates.** The heuristic scanner records novel patterns it
 sees (fingerprinted, deduplicated by LSH similarity) into `heuristic_candidates`
@@ -230,10 +224,14 @@ in the same DB. Operators review and promote them:
 
 ```bash
 shai patterns candidates --db state/patterns.db --status open
-shai patterns promote  --db state/patterns.db --id 42   # promoted → loaded on next scan
+shai patterns promote  --db state/patterns.db --id 42   # promoted in the DB
 shai patterns dismiss  --db state/patterns.db --id 42   # false positive
 shai patterns retire   --db state/patterns.db --id 42   # was promoted, no longer needed
 ```
+
+The CLI runs in a separate process and cannot invalidate a running harness's
+promoted-candidate cache. Restart the harness or invalidate that cache in the
+runtime process when immediate pickup is required.
 
 ---
 

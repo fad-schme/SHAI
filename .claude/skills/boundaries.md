@@ -260,7 +260,7 @@ prevents catalog scanners from double-counting themselves into HIGH.
 - `mcp_metadata_patterns.yaml` — most sensitive (default `block_at: medium`).
 
 Additional rules can be signed into the extended pattern DB — see
-`02-harness-yaml.md` for the `extended_patterns` block and CLI workflow.
+`02-harness-yaml.md` for the pattern-database CLI workflow.
 
 ## TurnSignals — cross-boundary signal bus
 
