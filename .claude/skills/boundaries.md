@@ -1,6 +1,6 @@
 # Boundaries Reference
 
-SHAI enforces security at four boundaries. Every call emits exactly one
+SHAI enforces security at five boundaries. Every call emits exactly one
 `AuditEvent`. Boundaries never raise — they always return a verdict.
 
 ---

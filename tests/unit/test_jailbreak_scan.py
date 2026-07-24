@@ -274,7 +274,7 @@ async def test_jailbreak_blocked_via_run_scan():
     """End-to-end through run_scan: a jailbreak payload is blocked at HIGH."""
     from unittest.mock import AsyncMock
 
-    from harness.boundaries._scan import run_scan
+    from harness.boundaries._scan import ScanState, run_scan
     from harness.core.types import BoundaryName, ScanAction, Severity
 
     sink = AsyncMock()
@@ -291,6 +291,7 @@ async def test_jailbreak_blocked_via_run_scan():
         boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="t", enabled=True, block_at=Severity.HIGH,
+        state=ScanState(),
     )
     assert verdict.blocked
     sink.emit.assert_called_once()
@@ -302,7 +303,7 @@ async def test_benign_allowed_via_run_scan():
     from unittest.mock import AsyncMock
 
     from harness.audit.emitter import AuditEmitter
-    from harness.boundaries._scan import run_scan
+    from harness.boundaries._scan import ScanState, run_scan
     from harness.core.types import BoundaryName, ScanAction, Severity
 
     sink = AsyncMock(); sink.emit = AsyncMock()
@@ -316,5 +317,6 @@ async def test_benign_allowed_via_run_scan():
         boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="t", enabled=True, block_at=Severity.HIGH,
+        state=ScanState(),
     )
     assert not verdict.blocked

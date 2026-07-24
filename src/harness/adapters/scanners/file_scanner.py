@@ -19,6 +19,16 @@ Optional dependencies:
 
 The scanner never includes file content, matched text, or EXIF values
 in Finding.detail — only category and short description.
+
+Error-handling contract
+-----------------------
+Each individual file check (PDF markers, SVG, EXIF, ZIP, OOXML, Office
+macros, …) is wrapped in `try/except Exception: log.debug(…)`. This is
+deliberate: an attacker-controlled input can be arbitrarily malformed,
+and one check crashing must not abort the remaining checks. Failures
+degrade the scan (fewer signals) but never crash it. Exceptions that
+should abort — an unusable file path, an OOM — surface as unhandled
+because they are not caught by these narrow debug-log handlers.
 """
 from __future__ import annotations
 

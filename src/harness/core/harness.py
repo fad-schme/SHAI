@@ -21,7 +21,7 @@ from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSou
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import run_scan, run_file_scan, run_tool_result_scan
+from harness.boundaries._scan import ScanState, run_scan, run_file_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import run as run_gate
 from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.config.loader import load_yaml
@@ -153,6 +153,8 @@ class SHAI:
         # Built at from_yaml() time from all sources with scan_tool_result_on.
         # Empty = scan all results (default). Non-empty = only listed tools scanned.
         self._scan_tool_result_on: set[str] = set()
+        # Per-instance scan state: circuit breakers, promoted-candidate cache.
+        self._scan_state = ScanState()
 
     # ── Construction ──────────────────────────────────────────────────────
 
@@ -517,6 +519,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
+            state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
@@ -566,6 +569,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
+            state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
@@ -594,6 +598,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_input_enabled,
             block_at=self._block_at,
+            state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
@@ -770,6 +775,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_file_enabled,
             block_at=self._file_block_at,
+            state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
@@ -823,6 +829,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_tool_result_enabled,
             block_at=self._tool_result_block_at,
+            state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )
@@ -847,6 +854,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             enabled=self._scan_output_enabled,
             block_at=self._block_at,
+            state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
         )

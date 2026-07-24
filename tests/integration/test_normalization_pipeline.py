@@ -20,7 +20,7 @@ import pytest
 pytest.importorskip("pydantic")
 
 from harness.adapters.scanners.base import ScanResult
-from harness.boundaries._scan import run_scan
+from harness.boundaries._scan import ScanState, run_scan
 from harness.config.schema import NormalizationConfig
 from harness.core.context import AgentContext
 from harness.core.types import BoundaryName, ScanAction, ScanStatus, Severity
@@ -81,6 +81,7 @@ async def _scan(text, *, normalization):
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="t", enabled=True,
         block_at=Severity.HIGH, normalization=normalization,
+        state=ScanState(),
     )
     return verdict, emitter.events[0]
 

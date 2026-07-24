@@ -17,7 +17,7 @@ import pytest
 from harness.adapters.circuit_breaker import CircuitBreaker, CircuitState
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import _breakers, _get_breaker, run_scan
+from harness.boundaries._scan import ScanState, run_scan
 from harness.core.context import AgentContext
 from harness.core.events import AuditEvent
 from harness.core.types import (
@@ -49,6 +49,12 @@ def emitter(sink):
     return AuditEmitter([sink])
 
 
+@pytest.fixture
+def state():
+    """Fresh ScanState per test — no cross-test breaker leakage."""
+    return ScanState()
+
+
 def _bad_scanner(name: str = "bad") -> MagicMock:
     """Scanner that always raises."""
     s = MagicMock()
@@ -57,17 +63,9 @@ def _bad_scanner(name: str = "bad") -> MagicMock:
     return s
 
 
-@pytest.fixture(autouse=True)
-def _reset_breakers():
-    """Reset module-level circuit breaker registry between tests."""
-    _breakers.clear()
-    yield
-    _breakers.clear()
-
-
 # ── on_error=fail_closed (default) ──────────────────────────────────────
 
-async def test_fail_closed_scanner_failure_blocks(emitter, sink):
+async def test_fail_closed_scanner_failure_blocks(emitter, sink, state):
     """Scanner failure with fail_closed returns BLOCK immediately."""
     bad = _bad_scanner()
     verdict = await run_scan(
@@ -79,12 +77,13 @@ async def test_fail_closed_scanner_failure_blocks(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         on_error=OnError.FAIL_CLOSED,
+        state=state,
     )
     assert verdict.blocked
     assert verdict.status == ScanStatus.BLOCK
 
 
-async def test_fail_closed_emits_blocked_event(emitter, sink):
+async def test_fail_closed_emits_blocked_event(emitter, sink, state):
     """fail_closed emits a BLOCKED audit event with deny_reason."""
     bad = _bad_scanner()
     await run_scan(
@@ -96,6 +95,7 @@ async def test_fail_closed_emits_blocked_event(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         on_error=OnError.FAIL_CLOSED,
+        state=state,
     )
     # Should have the boundary BLOCKED event + a SYSTEM/DEGRADED event
     boundary_events = [e for e in sink.events if e.boundary == BoundaryName.INPUT_SCAN]
@@ -109,7 +109,7 @@ async def test_fail_closed_emits_blocked_event(emitter, sink):
 
 # ── on_error=fail_open ──────────────────────────────────────────────────
 
-async def test_fail_open_scanner_failure_allows(emitter, sink):
+async def test_fail_open_scanner_failure_allows(emitter, sink, state):
     """Scanner failure with fail_open is treated as empty findings."""
     bad = _bad_scanner()
     verdict = await run_scan(
@@ -121,12 +121,13 @@ async def test_fail_open_scanner_failure_allows(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         on_error=OnError.FAIL_OPEN,
+        state=state,
     )
     assert not verdict.blocked
     assert verdict.status == ScanStatus.ALLOW
 
 
-async def test_fail_open_remaining_scanners_still_run(emitter, sink):
+async def test_fail_open_remaining_scanners_still_run(emitter, sink, state):
     """With fail_open, the second scanner still runs and can find things."""
     bad = _bad_scanner()
     verdict = await run_scan(
@@ -138,6 +139,7 @@ async def test_fail_open_remaining_scanners_still_run(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         on_error=OnError.FAIL_OPEN,
+        state=state,
     )
     # PII scanner should catch the SSN even though bad scanner failed
     assert verdict.blocked
@@ -145,7 +147,7 @@ async def test_fail_open_remaining_scanners_still_run(emitter, sink):
 
 # ── on_error=degrade ────────────────────────────────────────────────────
 
-async def test_degrade_scanner_failure_warns(emitter, sink):
+async def test_degrade_scanner_failure_warns(emitter, sink, state):
     """Scanner failure with degrade returns WARN, not BLOCK."""
     bad = _bad_scanner()
     verdict = await run_scan(
@@ -157,12 +159,13 @@ async def test_degrade_scanner_failure_warns(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         on_error=OnError.DEGRADE,
+        state=state,
     )
     assert verdict.warned
     assert verdict.status == ScanStatus.WARN
 
 
-async def test_degrade_audit_event_carries_degraded_flag(emitter, sink):
+async def test_degrade_audit_event_carries_degraded_flag(emitter, sink, state):
     """degrade mode sets degraded=True in the audit event extra field."""
     bad = _bad_scanner()
     await run_scan(
@@ -174,6 +177,7 @@ async def test_degrade_audit_event_carries_degraded_flag(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         on_error=OnError.DEGRADE,
+        state=state,
     )
     boundary_events = [e for e in sink.events if e.boundary == BoundaryName.INPUT_SCAN]
     assert len(boundary_events) == 1
@@ -235,27 +239,10 @@ class TestCircuitBreaker:
 
 # ── Circuit breaker integration with run_scan ────────────────────────────
 
-async def test_circuit_breaker_trips_after_repeated_failures(emitter, sink):
-    """Scanner breaker opens after repeated failures."""
+async def test_circuit_breaker_trips_after_repeated_failures(emitter, sink, state):
+    """Scanner breaker opens after repeated failures on the same state."""
     bad = _bad_scanner("flaky")
-    # Run enough times to trip the breaker (default threshold=5)
-    for _ in range(5):
-        _breakers.clear()  # don't let breaker persist — we want to count fresh
-        await run_scan(
-            "text", CTX,
-            boundary=BoundaryName.INPUT_SCAN,
-            scanners=[bad],
-            scanner_actions=[], scanner_redact_withs=[],
-            boundary_action=ScanAction.BLOCK,
-            emitter=emitter, tenant_id="test",
-            enabled=True, block_at=Severity.HIGH,
-            on_error=OnError.FAIL_OPEN,  # don't short-circuit
-        )
-    # Breaker should exist and have recorded failures
-    breaker = _get_breaker(bad)
-    # Each call recorded a failure, but we cleared breakers each time
-    # Let's do it properly: don't clear
-    _breakers.clear()
+    # Default threshold is 5 — this many failures should trip the breaker
     for _ in range(5):
         await run_scan(
             "text", CTX,
@@ -265,15 +252,16 @@ async def test_circuit_breaker_trips_after_repeated_failures(emitter, sink):
             boundary_action=ScanAction.BLOCK,
             emitter=emitter, tenant_id="test",
             enabled=True, block_at=Severity.HIGH,
-            on_error=OnError.FAIL_OPEN,
+            on_error=OnError.FAIL_OPEN,  # don't short-circuit — let failures accumulate
+            state=state,
         )
-    breaker = _get_breaker(bad)
+    breaker = state.get_breaker(bad)
     assert breaker.is_open
 
 
-# ── Backward compatibility: tests still pass with default on_error ───────
+# ── Default on_error ─────────────────────────────────────────────────────
 
-async def test_default_on_error_is_fail_closed(emitter, sink):
+async def test_default_on_error_is_fail_closed(emitter, sink, state):
     """run_scan defaults to fail_closed when on_error is not specified."""
     bad = _bad_scanner()
     verdict = await run_scan(
@@ -285,5 +273,6 @@ async def test_default_on_error_is_fail_closed(emitter, sink):
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
         # on_error not passed — should default to FAIL_CLOSED
+        state=state,
     )
     assert verdict.blocked

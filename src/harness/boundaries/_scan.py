@@ -116,18 +116,43 @@ def _apply_redaction(
     return text
 
 
-# ── Per-scanner circuit breakers ──────────────────────────────────────────
-# Module-level registry: keyed by scanner instance id so each scanner gets
-# exactly one breaker across all boundary calls. Lazily populated.
-_breakers: dict[int, CircuitBreaker] = {}
+# ── Per-SHAI scan state ───────────────────────────────────────────────────
+# Circuit breakers and the promoted-candidate cache live on the SHAI instance,
+# not at module scope. Callers pass ScanState in explicitly.
+_DEFAULT_CANDIDATES_DB = "state/patterns.db"
 
 
-def _get_breaker(scanner: Scanner) -> CircuitBreaker:
-    """Return (or create) the circuit breaker for a scanner instance."""
-    key = id(scanner)
-    if key not in _breakers:
-        _breakers[key] = CircuitBreaker(name=scanner.name)
-    return _breakers[key]
+class ScanState:
+    """Per-SHAI scan state. Owns circuit breakers and the promoted-candidate cache.
+
+    One instance per SHAI facade. Not thread-safe by itself — reads and writes
+    are serialised by asyncio's cooperative scheduling within a single event
+    loop. Do not share a ScanState across event loops.
+    """
+
+    __slots__ = ("_breakers", "_promoted_cache", "candidates_db")
+
+    def __init__(self, candidates_db: str = _DEFAULT_CANDIDATES_DB) -> None:
+        self._breakers: dict[int, CircuitBreaker] = {}
+        self._promoted_cache: list[dict] | None = None
+        self.candidates_db = candidates_db
+
+    def get_breaker(self, scanner: Scanner) -> CircuitBreaker:
+        """Return (or create) the circuit breaker for a scanner instance."""
+        key = id(scanner)
+        if key not in self._breakers:
+            self._breakers[key] = CircuitBreaker(name=scanner.name)
+        return self._breakers[key]
+
+    def get_promoted(self) -> list[dict]:
+        if self._promoted_cache is None:
+            from harness.patterns.store import load_promoted_candidates
+            self._promoted_cache = load_promoted_candidates(self.candidates_db)
+        return self._promoted_cache
+
+    def invalidate_promoted_cache(self) -> None:
+        """Force the next scan to re-read promoted candidates from disk."""
+        self._promoted_cache = None
 
 
 async def _emit_system_event(
@@ -213,6 +238,7 @@ async def run_scan(
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
+    state: ScanState,
     normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
     on_error: OnError = OnError.FAIL_CLOSED,
@@ -264,7 +290,7 @@ async def run_scan(
             self.scanner_name = scanner_name
 
     async def _guarded_scan(scanner: Scanner, views: list[str]) -> ScanResult | _CircuitOpenSentinel:
-        breaker = _get_breaker(scanner)
+        breaker = state.get_breaker(scanner)
         if breaker.is_open:
             return _CircuitOpenSentinel(scanner.name)
         result = await _scan_views(scanner, views, ctx)
@@ -286,7 +312,7 @@ async def run_scan(
 
     for i, (scanner, result) in enumerate(zip(scanners, raw_results)):
         adapter_names.append(scanner.name)
-        breaker = _get_breaker(scanner)
+        breaker = state.get_breaker(scanner)
 
         # ── Circuit breaker OPEN — scanner was skipped ────────────────────
         if isinstance(result, _CircuitOpenSentinel):
@@ -383,7 +409,7 @@ async def run_scan(
             current_text = result.redacted_text
 
     # ── Promoted candidates: inject findings from human-promoted heuristic matches ──
-    all_findings = _check_promoted_candidates(text, all_findings)
+    all_findings = _check_promoted_candidates(text, all_findings, state)
 
     # ── Ensemble: promote severity when 2+ scanners agree on a category ────
     from harness.boundaries.ensemble import promote_findings
@@ -444,7 +470,7 @@ async def run_scan(
     await emitter.emit(event)
 
     # ── Candidate write: record unmatched heuristic detections ────────────
-    _record_candidate_if_needed(text, all_findings, adapter_names)
+    _record_candidate_if_needed(text, all_findings, adapter_names, state)
 
     return ScanVerdict(
         status=final_status,
@@ -454,31 +480,16 @@ async def run_scan(
 
 
 # ── Heuristic candidate helpers ──────────────────────────────────────────
+# The promoted-candidate cache lives on ScanState. These helpers take the
+# state explicitly and never touch module globals.
 
-_DEFAULT_CANDIDATES_DB = "state/patterns.db"
-
-# In-memory cache of promoted candidates — refreshed on first scan and
-# when CLI changes status. Avoids DB reads on every scan call.
-_promoted_cache: list[dict] | None = None
-
-
-def _invalidate_promoted_cache() -> None:
-    """Called by CLI after promote/retire/dismiss."""
-    global _promoted_cache
-    _promoted_cache = None
-
-
-def _get_promoted() -> list[dict]:
-    global _promoted_cache
-    if _promoted_cache is None:
-        from harness.patterns.store import load_promoted_candidates
-        _promoted_cache = load_promoted_candidates(_DEFAULT_CANDIDATES_DB)
-    return _promoted_cache
-
-
-def _check_promoted_candidates(text: str, findings: list[Finding]) -> list[Finding]:
-    """Read path: inject findings from promoted candidates that match the current text."""
-    promoted = _get_promoted()
+def _check_promoted_candidates(
+    text: str,
+    findings: list[Finding],
+    state: ScanState,
+) -> list[Finding]:
+    """Read path: inject findings from promoted candidates matching the current text."""
+    promoted = state.get_promoted()
     if not promoted:
         return findings
 
@@ -514,6 +525,7 @@ def _record_candidate_if_needed(
     text: str,
     findings: list[Finding],
     adapter_names: list[str],
+    state: ScanState,
 ) -> None:
     """Write path: record unmatched heuristic detections as candidates.
 
@@ -555,13 +567,15 @@ def _record_candidate_if_needed(
         )
         skeleton = extract_skeleton(text)
         upsert_candidate(
-            _DEFAULT_CANDIDATES_DB,
+            state.candidates_db,
             fingerprint_to_json(fp),
             skeleton,
             heuristic_findings[0].severity.value,
             fp["lsh"],
         )
     except Exception as e:
+        # Best-effort: candidate DB is a learning surface, never a hard dependency.
+        # A write failure must not abort the scan.
         log.debug("candidate recording failed: %s", e)
 
 
@@ -577,6 +591,7 @@ async def run_file_scan(
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
+    state: ScanState,
     normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
     on_error: OnError = OnError.FAIL_CLOSED,
@@ -594,6 +609,7 @@ async def run_file_scan(
         tenant_id=tenant_id,
         enabled=enabled,
         block_at=block_at,
+        state=state,
         normalization=normalization,
         audit_tags=audit_tags,
         on_error=on_error,
@@ -612,6 +628,7 @@ async def run_tool_result_scan(
     tenant_id: str,
     enabled: bool,
     block_at: Severity,
+    state: ScanState,
     normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
     on_error: OnError = OnError.FAIL_CLOSED,
@@ -642,6 +659,7 @@ async def run_tool_result_scan(
         tenant_id=tenant_id,
         enabled=enabled,
         block_at=effective_block_at,
+        state=state,
         normalization=normalization,
         audit_tags=audit_tags,
         on_error=on_error,

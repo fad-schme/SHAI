@@ -175,5 +175,8 @@ class AuditEmitter:
         try:
             await sink.close()
         except Exception as e:
+            # Best-effort shutdown: broad catch is intentional. One misbehaving
+            # sink (network hiccup on flush, corrupted file, closed connection)
+            # must not prevent the harness from closing the rest.
             log.warning("audit sink close failed",
                         extra={"sink": sink.name, "error": str(e)})

@@ -1,7 +1,7 @@
-# UMA injection-pattern catalog
+# SHAI injection-pattern catalog
 # ==============================
 # Seeded from the WAFsUP catalog (May 2026). Cleaned and tuned for use
-# at the UMA memory-write boundary, where false positives on legitimate
+# at the SHAI memory-write boundary, where false positives on legitimate
 # conversation and document text are the dominant cost.
 #
 # Conventions
@@ -9,7 +9,7 @@
 #   threat_level    1..5    informational; higher means a single high-precision match
 #                           should weigh heavily in the final score
 #   severity        low | medium | high
-#                           the discrete severity emitted to UMA's quarantine
+#                           the discrete severity emitted to SHAI's quarantine
 #                           pipeline; a 'high' match alone is enough to quarantine
 #   category        groups patterns by ASI06 attack family (prompt_injection,
 #                   system_spoofing, configuration_exposure, etc.); the scoring
@@ -50,7 +50,7 @@
 #   Adversarial-pattern catalogs degrade fast — attackers iterate, the
 #   public OWASP / community references update. Treat this file as a
 #   living artifact. When adding a pattern:
-#     1. Confirm it doesn't fire on a representative sample of UMA's
+#     1. Confirm it doesn't fire on a representative sample of SHAI's
 #        existing ingest content.
 #     2. Set severity conservatively. 'high' is a quarantine signal;
 #        reserve it for patterns that are almost never benign.
@@ -341,7 +341,7 @@ patterns:
   # Delimiter smuggling — zero-width / invisible characters
   # ----------------------------------------------------------------------
   # Unicode control characters and zero-width spaces used to hide
-  # instruction payloads from human reviewers while remaining visible
+  # instruction payloads from hSHAIn reviewers while remaining visible
   # to the tokeniser. Handled here as an explicit rule so the Finding
   # appears in audit events, not just as a scoring-function contribution.
   - name: delimiter_smuggling

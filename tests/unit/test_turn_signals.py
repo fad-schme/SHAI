@@ -439,7 +439,7 @@ class TestToolResultBlockAtAdjustment:
     async def test_medium_finding_blocks_when_input_flagged_injection(self, tmp_path):
         """With injection in input signals, a MEDIUM tool_result finding blocks
         (block_at defaults to HIGH but shifts to MEDIUM)."""
-        from harness.boundaries._scan import run_tool_result_scan
+        from harness.boundaries._scan import ScanState, run_tool_result_scan
         from harness.core.types import BoundaryName
 
         # Scanner produces a MEDIUM finding
@@ -470,6 +470,7 @@ class TestToolResultBlockAtAdjustment:
             tenant_id="test",
             enabled=True,
             block_at=Severity.HIGH,   # would NOT block MEDIUM by default
+            state=ScanState(),
         )
 
         # Because block_at was tightened to MEDIUM, this blocks
@@ -477,7 +478,7 @@ class TestToolResultBlockAtAdjustment:
 
     async def test_medium_finding_passes_without_input_injection(self, tmp_path):
         """Without input injection signal, block_at stays HIGH — MEDIUM passes."""
-        from harness.boundaries._scan import run_tool_result_scan, ScanAction
+        from harness.boundaries._scan import ScanAction, ScanState, run_tool_result_scan
 
         scanner = FakeScanner(
             "injection_scan", "regex_catalog",
@@ -498,6 +499,7 @@ class TestToolResultBlockAtAdjustment:
             tenant_id="test",
             enabled=True,
             block_at=Severity.HIGH,
+            state=ScanState(),
         )
         # MEDIUM < HIGH block_at → does not block
         assert verdict.status != ScanStatus.BLOCK

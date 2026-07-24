@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 
 from harness.boundaries._scan import (
+    ScanState,
     _check_promoted_candidates,
-    _invalidate_promoted_cache,
     _record_candidate_if_needed,
 )
 from harness.core.context import AgentContext
@@ -186,11 +186,8 @@ class TestCandidateStore:
 
 class TestWriteHook:
 
-    def test_records_heuristic_only_finding(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "harness.boundaries._scan._DEFAULT_CANDIDATES_DB",
-            str(tmp_path / "test.db"),
-        )
+    def test_records_heuristic_only_finding(self, tmp_path):
+        state = ScanState(candidates_db=str(tmp_path / "test.db"))
         findings = [Finding(
             scanner="heuristic_scan",
             category="heuristic_anomaly",
@@ -200,43 +197,38 @@ class TestWriteHook:
         _record_candidate_if_needed(
             "ignore override <|system|> do it now",
             findings, ["heuristic_scan", "injection_scan"],
+            state,
         )
         candidates = list_candidates(tmp_path / "test.db")
         assert len(candidates) == 1
         assert "ignore" in candidates[0]["skeleton"]
 
-    def test_skips_when_regex_also_found(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "harness.boundaries._scan._DEFAULT_CANDIDATES_DB",
-            str(tmp_path / "test.db"),
-        )
+    def test_skips_when_regex_also_found(self, tmp_path):
+        state = ScanState(candidates_db=str(tmp_path / "test.db"))
         findings = [
             Finding(scanner="heuristic_scan", category="heuristic_anomaly",
                     severity=Severity.HIGH, detail="total=5.0 (density=2.0)"),
             Finding(scanner="injection_scan", category="prompt_injection",
                     severity=Severity.HIGH, detail="matched rule: x"),
         ]
-        _record_candidate_if_needed("text", findings, ["heuristic_scan", "injection_scan"])
+        _record_candidate_if_needed("text", findings, ["heuristic_scan", "injection_scan"], state)
         candidates = list_candidates(tmp_path / "test.db")
         assert len(candidates) == 0
 
-    def test_skips_low_severity(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "harness.boundaries._scan._DEFAULT_CANDIDATES_DB",
-            str(tmp_path / "test.db"),
-        )
+    def test_skips_low_severity(self, tmp_path):
+        state = ScanState(candidates_db=str(tmp_path / "test.db"))
         findings = [Finding(
             scanner="heuristic_scan", category="heuristic_anomaly",
             severity=Severity.LOW, detail="total=1.2 (structural=1.2)",
         )]
-        _record_candidate_if_needed("text", findings, ["heuristic_scan"])
+        _record_candidate_if_needed("text", findings, ["heuristic_scan"], state)
         candidates = list_candidates(tmp_path / "test.db")
         assert len(candidates) == 0
 
 
 class TestReadHook:
 
-    def test_promoted_candidate_injects_finding(self, tmp_path, monkeypatch):
+    def test_promoted_candidate_injects_finding(self, tmp_path):
         db = str(tmp_path / "test.db")
         text = "ignore override <|system|> do it"
         fp = extract_fingerprint(text, 0.0, 1.5, 0.0, 1.0)
@@ -244,28 +236,23 @@ class TestReadHook:
         candidates = list_candidates(db)
         set_candidate_status(db, candidates[0]["id"], "promoted")
 
-        # Point the cache at our test DB
-        _invalidate_promoted_cache()
-        monkeypatch.setattr("harness.boundaries._scan._DEFAULT_CANDIDATES_DB", db)
-
+        state = ScanState(candidates_db=db)
         findings = [Finding(
             scanner="heuristic_scan", category="heuristic_anomaly",
             severity=Severity.MEDIUM, detail="test",
         )]
-        result = _check_promoted_candidates(text, findings)
+        result = _check_promoted_candidates(text, findings, state)
         learned = [f for f in result if f.scanner == "learned_candidate"]
         assert len(learned) == 1
         assert learned[0].severity == Severity.MEDIUM
 
-    def test_no_promoted_no_injection(self, tmp_path, monkeypatch):
+    def test_no_promoted_no_injection(self, tmp_path):
         db = str(tmp_path / "test.db")
         init_db(db)
-        _invalidate_promoted_cache()
-        monkeypatch.setattr("harness.boundaries._scan._DEFAULT_CANDIDATES_DB", db)
-
+        state = ScanState(candidates_db=db)
         findings = [Finding(
             scanner="heuristic_scan", category="heuristic_anomaly",
             severity=Severity.MEDIUM, detail="test",
         )]
-        result = _check_promoted_candidates("some text", findings)
+        result = _check_promoted_candidates("some text", findings, state)
         assert len(result) == len(findings)

@@ -1,93 +1,138 @@
 # Contributing to SHAI
 
-Thank you for your interest in contributing to SHAI! This guide outlines the process for contributing to the project and our development conventions.
+**Feature proposals and bug reports are welcome and genuinely appreciated.**
+**Code PRs are not being accepted at this stage.**
 
+---
 
-**External contributions are by invitation only**
+## Why
 
-At this time, the SHAI team does not accept unsolicited code contributions.
+SHAI is a security library. Every merged line has to be understood well enough
+to reason about its threat model — not just its behaviour. Reviewing external
+code contributions at that bar takes time I do not currently have, and merging
+code I cannot review carefully would be a disservice to everyone building on
+SHAI. This will change as the project matures.
 
-If you would like to propose a new feature or a change in behavior, please open an issue describing the proposal or upvote an existing enhancement request. We prioritize new features based on community feedback, alignment with our roadmap, and consistency across all SHAI surfaces (CLI, IDE extensions, web, etc.).
+For now, the highest-leverage things you can do are:
 
-If you encounter a bug, please open a bug report or verify that an existing report already covers the issue. If you would like to help, we encourage you to contribute by sharing analysis, reproduction details, root-cause hypotheses, or a high-level outline of a potential fix directly in the issue thread.
+- **Open a bug report.** A crisp reproduction is more valuable than a patch,
+  because identifying the right fix is the hard part.
+- **Propose a feature.** Open an issue describing what you need and why.
+  Roadmap decisions are made based on these.
+- **Share analysis in an existing thread.** Root-cause hypotheses, adjacent
+  design considerations, and prior-art references genuinely help.
+- **Test SHAI in your own agent stack** and tell me what broke.
 
-The SHAI team may invite an external contributor to submit a pull request when:
+Unsolicited pull requests will be closed without review. This is not a
+statement about the quality of the contribution — it is a statement about
+review capacity.
 
-- the problem is well understood,
-- the proposed approach aligns with the team’s intended solution, and
-- the issue is deemed high-impact and high-priority.
+---
 
-Pull requests that have not been explicitly invited by a member of the SHAI team will be closed without review.
+## Bug reports
 
-### Why we do not generally accept external code contributions
+Before filing, check that:
 
-While we appreciated the effort and engagement from the community, is difficult to ensure consistency and security.
+- You're on the latest release
+- An existing issue does not already cover it
+- If security-related, do **not** open a public issue — see
+  [SECURITY.md](SECURITY.md)
 
-As per our experience, many contributions are made without full understanding on the overall architectural context, system-level constraints, or near-term roadmap considerations that guide SHAI development. Reviewing and iterating on these PRs often take more time than implementing the fix directly, and diverted attention from higher-priority work.
+Include:
 
-The most valuable contributions consistently came through detailed bug reports, analysis, and design discussion in issues. Identifying the right solution is typically the hard part; implementing it is comparatively straightforward with the help of SHAI shipped skills.
+- SHAI version (`pip show shai`)
+- Python version and OS
+- Minimal reproduction (a `harness.yaml` snippet + a short Python script beats
+  a description every time)
+- What you expected vs. what happened
+- Any relevant audit-event output (redacted if needed)
 
-For these reasons, we focus external contributions on discussion, analysis, and feedback, and reserve code changes for cases where a targeted invitation makes sense.
+---
 
-## Development workflow
+## Feature proposals
 
-If you are invited by a SHAI team member to contribute a PR, here is the recommended development workflow.
+Include:
 
-- Create a _topic branch_ from `main` - e.g. `feat/interactive-config-plus`.
-- Keep your changes focused. Multiple unrelated fixes should be opened as separate PRs.
-- Ensure your change is free of lint warnings and test failures.
+- The problem the feature solves (not the solution first)
+- Which boundary or subsystem it affects
+- Whether it changes existing behaviour or adds new
+- Any threat-model implications
 
-## Guidance for invited code contributions
+---
 
-1. **Start with an issue.** Open a new one or comment on an existing discussion so we can agree on the solution before code is written.
-2. **Add or update tests.** A bug fix should generally come with test coverage that fails before your change and passes afterwards. 100% coverage is not required, but aim for meaningful assertions.
-3. **Document behavior.** If your change affects user-facing behavior, update the README, inline help (`SHAI --help`), or relevant example projects.
-4. **Keep commits atomic.** Each commit should compile and the tests should pass. This makes reviews and potential rollbacks easier.
+## Community values
 
-### Opening a pull request (by invitation only)
+- **Be kind.** Written communication is hard — err on the side of generosity.
+- **Assume good intent.** In both directions.
+- **Say when something is unclear.** If you had to guess at how something
+  works, that is a documentation bug worth filing.
 
-- Fill in the PR template (or include similar information) - **What? Why? How?**
-- Include a link to a bug report or enhancement request in the issue tracker
-<!-- - Run **all** checks locally. Use the root `just` helpers so you stay consistent with the rest of the workspace: `just fmt`, `just fix -p <crate>` for the crate you touched, and the relevant tests (e.g., `just test -p SHAI-tui` or `just test` if you need a full sweep). CI failures that could have been caught locally slow down the process. -->
-- Make sure your branch is up-to-date with `main` and that you have resolved merge conflicts.
-- Mark the PR as **Ready for review** only when you believe it is in a merge-able state.
+We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
 
-### Review process
+---
 
-1. One maintainer will be assigned as a primary reviewer.
-2. If your invited PR introduces scope or behavior that was not previously discussed and approved, we may close the PR.
-3. We may ask for changes. Please do not take this personally. We value the work, but we also value consistency and long-term maintainability.
-4. When there is consensus that the PR meets the bar, a maintainer will squash-and-merge.
+## Invited contributions (rare, by explicit invitation only)
 
-### Community values
+Occasionally I may invite a contributor to submit a PR — typically when we've
+converged on an approach in an issue thread and the change is clearly scoped.
+If that happens, here is how the workflow looks.
 
-- **Be kind and inclusive.** Treat others with respect; we follow the [Contributor Covenant](https://www.contributor-covenant.org/).
-- **Assume good intent.** Written communication is hard - err on the side of generosity.
-- **Teach & learn.** If you spot something confusing, open an issue or discussion with suggestions or clarifications.
+### Development workflow
 
-### Getting help
+- Branch from `main` on a descriptive topic branch (`feat/xxx`, `fix/xxx`)
+- Keep changes focused — unrelated fixes go in separate PRs
+- All lint and test checks must pass locally before you push
+- Each commit should compile and pass its tests
 
-If you run into problems setting up the project, would like feedback on an idea, or just want to say _hi_ - please open a Discussion topic or jump into the relevant issue. We are happy to help.
+### Change contents
 
-Together we can make SHAI CLI an incredible tool. **Happy hacking!** :rocket:
+1. **Start with the issue.** Do not open a PR without a linked issue where
+   the approach was agreed.
+2. **Add or update tests.** A bug fix should include a test that fails before
+   your change and passes after.
+3. **Document behaviour.** If the change affects users, update the relevant
+   file under `docs/` (and its counterpart in `.claude/skills/`), plus the
+   `CHANGELOG.md`.
+4. **Keep commits atomic.**
 
-## Contributor license agreement (CLA)
+### Pull request
 
-All contributors **must** accept the CLA. The process is lightweight:
+- Use the PR template: **What? Why? How?**
+- Link to the issue where the approach was agreed
+- Make sure the branch is up-to-date with `main`
+- Mark **Ready for review** only when merge-able
 
-1. Open your pull request.
-2. Paste the following comment (or reply `recheck` if you've signed before):
+### Review
 
-   ```text
+1. A maintainer will be assigned as primary reviewer.
+2. If the PR introduces scope not previously discussed, it may be closed.
+3. Change requests are not personal — long-term maintainability wins over
+   short-term completeness.
+4. Once accepted, the PR is squash-merged.
+
+---
+
+## Contributor License Agreement
+
+Invited contributors must sign the CLA:
+
+1. Open your PR.
+2. Paste this comment (or reply `recheck` if you've signed before):
+
+   ```
    I have read the CLA Document and I hereby sign the CLA
    ```
 
-3. The CLA-Assistant bot records your signature in the repo and marks the status check as passed.
+3. The CLA-Assistant bot records your signature and marks the status check
+   as passed.
 
-No special Git commands, email attachments, or commit footers required.
+---
 
-## Security & responsible AI
+## Security
 
-Have you discovered a vulnerability or have concerns about model output? Please e-mail **security@ai-mem-engineering.com** and we will respond promptly.
+Vulnerabilities: see [SECURITY.md](SECURITY.md). Do **not** open a public
+issue. Report privately to **security@shai.aibestlabs.com**.
 
-Thank you for helping make SHAI better!
+---
+
+Thank you for reading this and for taking the time to make SHAI better.

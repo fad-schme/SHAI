@@ -68,6 +68,10 @@ class RuleBasedPolicy:
             return PolicyDecision(action="allow")
 
         except Exception as e:
+            # Boundary catch: convert any unexpected error into the domain-level
+            # PolicyEvaluationError so callers get a stable exception type.
+            # PolicyEvaluationError raised inside the try body passes through
+            # unchanged.
             if isinstance(e, PolicyEvaluationError):
                 raise
             raise PolicyEvaluationError(

@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 env/
+.env
 venv/
 .venv/
 .venv*
@@ -24,15 +25,10 @@ build/
 dist/
 /bundled-patterns/*
 
-# Logs
+/logs
 *.log
 
-.env
 config/*.local.yaml
-
-DS_Store
-
-# Ignore pytest temporary test artifacts
 .pytest_tmp/
 tmp_pytest/
 .pytest_cache/

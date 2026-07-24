@@ -84,12 +84,11 @@ def cmd_candidates_update(args) -> int:
     ok = set_candidate_status(args.db, args.id, args.action)
     if ok:
         print(f"candidate {args.id} → {args.action}")
-        # Invalidate the in-memory cache so next scan sees the change
-        try:
-            from harness.boundaries._scan import _invalidate_promoted_cache
-            _invalidate_promoted_cache()
-        except Exception:
-            pass
+        # The CLI runs in its own process — it cannot invalidate a running
+        # SHAI instance's in-memory candidate cache. The DB update above is
+        # authoritative; the harness will pick it up on its next cold read.
+        # If a running harness needs the change reflected immediately, call
+        # SHAI._scan_state.invalidate_promoted_cache() from the same process.
         return 0
     print(f"error: candidate {args.id} not found", file=sys.stderr)
     return 1
