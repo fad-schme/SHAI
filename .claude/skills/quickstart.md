@@ -22,8 +22,15 @@ and when to dispatch tools. SHAI governs what's allowed.
 
 ### 1. Install
 
+SHAI is currently in early access and is not published on PyPI. Clone the
+repository first, then install the local source in editable mode with the
+development dependencies. `pip` builds the package from the checkout during
+this step.
+
 ```bash
-pip install shai
+git clone https://github.com/fad-schme/SHAI.git
+cd SHAI
+pip install -e ".[dev]"
 ```
 
 ### 2. `config/harness.yaml`

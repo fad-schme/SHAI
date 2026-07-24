@@ -79,6 +79,18 @@ If that happens, here is how the workflow looks.
 
 ### Development workflow
 
+SHAI is not published on PyPI during early access. Set up an invited
+development checkout from source:
+
+```bash
+git clone https://github.com/fad-schme/SHAI.git
+cd SHAI
+pip install -e ".[dev]"
+```
+
+The editable install builds SHAI from the local checkout and installs the
+development dependencies needed by the checks below. Requires Python 3.11+.
+
 - Branch from `main` on a descriptive topic branch (`feat/xxx`, `fix/xxx`)
 - Keep changes focused — unrelated fixes go in separate PRs
 - All lint and test checks must pass locally before you push

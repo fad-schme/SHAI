@@ -12,8 +12,13 @@ validation, on-call log inspection, and pattern-DB operations.
 
 ## Install
 
+SHAI is not published on PyPI during early access. Build and install the CLI
+from a local source checkout:
+
 ```bash
-pip install shai
+git clone https://github.com/fad-schme/SHAI.git
+cd SHAI
+pip install -e ".[dev]"
 which shai
 # ~/.local/bin/shai   (or your venv's bin/)
 ```
@@ -346,7 +351,8 @@ shai audit tail --file logs/audit.jsonl --decision blocked --last 100 | grep ses
 **CI: fail the build if config drifts:**
 ```yaml
 # .github/workflows/validate.yml
-- run: pip install shai
+- uses: actions/checkout@v4
+- run: pip install -e ".[dev]"
 - run: shai validate --config config/harness.yaml --agents-dir agents/
 ```
 

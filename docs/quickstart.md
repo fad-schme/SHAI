@@ -1,6 +1,6 @@
 # Quickstart
 
-Five minutes from `pip install` to a working, gated agent.
+Five minutes from a source checkout to a working, gated agent.
 
 ## What you'll build
 
@@ -22,8 +22,15 @@ SHAI does not own your LLM loop. Your agent still decides when to call the LLM a
 
 ## 1 — Install
 
+SHAI is currently in early access and is not published on PyPI. Clone the
+repository first, then install the local source in editable mode with the
+development dependencies. `pip` builds the package from the checkout during
+this step.
+
 ```bash
-pip install shai
+git clone https://github.com/fad-schme/SHAI.git
+cd SHAI
+pip install -e ".[dev]"
 ```
 
 Requires Python 3.11+.

@@ -4,7 +4,7 @@ The done-when criterion: resolve("harness.scanners", "regex_pii") returns
 RegexPIIScanner. Tests cover resolution, error cases, listing, and the
 clear_cache helper used in tests that need fresh entry-point state.
 
-NOTE: these tests rely on the package being installed (`pip install -e .`)
+NOTE: these tests rely on the package being installed (`pip install -e ".[dev]"`)
 so entry points are registered. When running without installation,
 the resolve() call will raise AdapterDiscoveryError (not found), which
 is the correct behaviour — it is tested separately in

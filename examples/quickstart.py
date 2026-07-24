@@ -3,7 +3,7 @@
 
     git clone https://github.com/fad-schme/SHAI.git
     cd SHAI
-    pip install -e .
+    pip install -e ".[dev]"
     python examples/quickstart.py
 
 No API keys. No LLM. Exercises the full scan → gate → scan cycle

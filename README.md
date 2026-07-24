@@ -53,6 +53,11 @@ Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block,
 
 ## Quick start
 
+SHAI is in early access and is not published as an installable package on
+PyPI yet. Clone the source first, then install the local checkout in editable
+mode with the development dependencies. `pip` builds the package from the
+checkout as part of this installation.
+
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
