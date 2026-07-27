@@ -1,6 +1,7 @@
 """heuristic_scan.py — structural anomaly scanner.
 
-Always on. Not configurable — prepended by _build_text_scanners.
+Always on — appended by _build_text_scanners when not explicitly declared.
+Declaring it in harness.yaml only controls its position and per-scanner action.
 Catches patterns regex catalogs miss: obfuscated payloads, instruction-dense
 text, register shifts, and embedded markup in natural language.
 

@@ -15,6 +15,7 @@ from harness.boundaries.session_budget import SessionBudget, ExecutionLimits
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
+from harness.adapters.scanners.heuristic_scan import HeuristicScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
@@ -1137,6 +1138,7 @@ def _make_injection_doc_scanner() -> InjectionScanner:
 _SCANNER_FACTORIES: dict[str, "Any"] = {
     "regex_pii":           _make_pii_scanner,
     "injection_scan":      _make_injection_scanner,
+    "heuristic_scan":      lambda cfg: HeuristicScanner(**cfg),
     "mcp_metadata_scan":   lambda cfg: MCPMetadataScanner(**cfg),
     "jailbreak_scan":      lambda cfg: __import__(
         "harness.adapters.scanners.jailbreak_scan", fromlist=["JailbreakScanner"]
@@ -1152,6 +1154,10 @@ def _build_text_scanners(adapter_refs: list) -> list:
 
     Built-in scanners (regex_pii, injection_scan) are resolved via the
     named factory table above. Custom scanners are resolved via entry points.
+
+    HeuristicScanner is the always-on structural backstop: appended here
+    unless an explicit `heuristic_scan` ref already placed it. Declaring it
+    in harness.yaml only controls its position and per-scanner action.
     """
     scanners = []
     for ref in adapter_refs:
@@ -1166,6 +1172,12 @@ def _build_text_scanners(adapter_refs: list) -> list:
             except Exception as e:
                 log.warning("scanner adapter not found — skipped",
                             extra={"adapter_name": ref.name, "error": str(e)})
+    # Appended, never prepended: scanner_actions and redact_withs are
+    # positional lists derived from adapter_refs, so inserting ahead of them
+    # would shift every per-scanner override by one. A trailing index has no
+    # entry in those lists and run_scan falls back to the boundary action.
+    if not any(getattr(s, "name", "") == HeuristicScanner.name for s in scanners):
+        scanners.append(HeuristicScanner())
     return scanners
 
 
