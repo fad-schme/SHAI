@@ -10,8 +10,9 @@ Schema:
 payload is JSON: same structure as one entry in the YAML patterns file:
     {"name": "...", "meta": {...}, "strings": {...}, "functions": [...]}
 
-Verification: HMAC-SHA256 over (rule_id + catalog + payload) using the
-operator's signing secret (same secret:// resolution as audit signing).
+Verification: HMAC-SHA256 over the canonical JSON encoding of
+{rule_id, catalog, payload} (sort_keys=True), using the operator's signing
+secret (same secret:// resolution as audit signing).
 """
 from __future__ import annotations
 
@@ -47,7 +48,18 @@ CREATE TABLE IF NOT EXISTS heuristic_candidates (
 
 
 def _sign_row(rule_id: str, catalog: str, payload: str, secret: bytes) -> str:
-    body = (rule_id + catalog + payload).encode()
+    """HMAC-SHA256 over the canonical JSON encoding of the three signed fields.
+
+    Canonical JSON rather than concatenation: `rule_id + catalog + payload` has
+    no field delimiter, so ("x", "injection") and ("xin", "jection") sign the
+    same bytes. Since `catalog` routes a rule to a scanner, that ambiguity let a
+    signed row be re-split to land on a different scanner without the key. Same
+    canonicalization the audit emitter signs with.
+    """
+    body = json.dumps(
+        {"rule_id": rule_id, "catalog": catalog, "payload": payload},
+        sort_keys=True,
+    ).encode()
     return hmac.new(secret, body, hashlib.sha256).hexdigest()
 
 

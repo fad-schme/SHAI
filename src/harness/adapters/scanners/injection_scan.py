@@ -183,7 +183,8 @@ def compile_rules_from_dicts(rules: list[dict]) -> list[_CompiledRule]:
     """Compile raw rule dicts (from pattern DB) into _CompiledRule objects.
 
     Same compilation logic as _compile_catalog but takes dicts instead of
-    reading a YAML file. Called by from_yaml() after DB verification.
+    reading a YAML file. Called by from_yaml() when patterns_db is enabled,
+    after load_verified_rules() has dropped rows failing HMAC verification.
     """
     import re as _re
     compiled: list[_CompiledRule] = []

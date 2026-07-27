@@ -199,7 +199,7 @@ The DB has two tables:
 
 | Table | Written by | Read by |
 |---|---|---|
-| `patterns` | `shai patterns apply` | `shai patterns list`, `shai patterns verify`, and explicit `load_verified_rules()` integrations |
+| `patterns` | `shai patterns apply` | `shai patterns list`, `shai patterns verify`, and `SHAI.from_yaml()` at startup when `patterns_db.enabled` is set |
 | `heuristic_candidates` | Every scan (fire-and-forget) | `shai patterns candidates`, promoted rows read by the scan pipeline |
 
 → See `13-candidates.md` for the candidate lifecycle.
@@ -284,8 +284,9 @@ its promoted-candidate cache when immediate pickup is required.
 ## Building a bundle from pattern YAML
 
 `shai patterns apply` consumes an *already-signed* bundle JSON. Producing one
-is a separate step: sign each rule's `(rule_id + catalog + payload)` with
-HMAC-SHA256 using the same secret the `apply` and `verify` commands read.
+is a separate step: HMAC-SHA256 the canonical JSON encoding of the rule's
+`{rule_id, catalog, payload}` (`json.dumps(..., sort_keys=True)`) using the
+same secret the `apply` and `verify` commands read.
 
 `make_bundle.py` (shipped with the extended-patterns delivery) does this
 end-to-end from catalog-format YAML:
@@ -343,7 +344,11 @@ For reference — the JSON schema `apply` expects:
 - `payload` — JSON *string* (not object) of the rule dict: canonical, sorted
   keys, compact separators. `apply` re-signs the verbatim string, so
   hand-editing the bundle after signing will fail verification.
-- `signature` — `HMAC-SHA256(secret, rule_id + catalog + payload)` in hex.
+- `signature` — hex `HMAC-SHA256` over
+  `json.dumps({"rule_id": ..., "catalog": ..., "payload": ...}, sort_keys=True)`.
+  Signing the three fields concatenated (the pre-0.4.0 format) is ambiguous —
+  `catalog` selects the scanner, so an undelimited body let a signed row be
+  re-split to route elsewhere. Bundles signed before 0.4.0 must be re-signed.
 - `version` — informational; defaults to `1`.
 
 Never author bundles by hand — use `make_bundle.py` from YAML.

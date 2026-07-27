@@ -10,6 +10,47 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [0.4.0] — 2026-07-27
+
+### Added
+- `patterns_db` block in `harness.yaml` (`PatternsDBConfig`: `enabled`, `path`,
+  `secret`). When enabled, `SHAI.from_yaml()` loads HMAC-SHA256 verified rules
+  from the signed pattern DB and merges them into the `injection_scan`,
+  `jailbreak_scan`, and `identity_spoof_scan` catalogs at startup. The row
+  `catalog` column is the routing key. Disabled by default.
+
+### Changed
+- `patterns_db.path` now also backs the heuristic-candidate cache, which
+  previously read a hardcoded `state/patterns.db`. Both tables resolve to one
+  configured file. Deployments that kept the DB at the default path are
+  unaffected.
+
+### Fixed
+- Signed pattern rules applied with `shai patterns apply` are now read at
+  runtime. `load_verified_rules()` had no caller and
+  `InjectionScanner.extra_rules` was never populated, so applied rules reached
+  the database but never a scanner. Rows failing signature verification are
+  skipped and logged; a missing DB file or a key mismatch degrades to the
+  bundled YAML catalog rather than failing startup.
+
+### Security
+- Detection rules distributed through the signed pattern DB now take effect at
+  runtime. Operators who applied a bundle on 0.3.0 were running the bundled
+  YAML catalog only — set `patterns_db.enabled` and restart to activate them.
+- DB-sourced rules are additive: they extend a scanner's catalog and cannot
+  disable, reorder, or suppress bundled rules. Trust in them is anchored solely
+  in the HMAC-SHA256 signing key, verified per row with `hmac.compare_digest`.
+- **BREAKING**: pattern row signatures are now HMAC-SHA256 over the canonical
+  JSON encoding of `{rule_id, catalog, payload}` (`sort_keys=True`), matching
+  how the audit emitter signs. The previous body concatenated the three fields
+  with no delimiter, so `("x", "injection")` and `("xin", "jection")` signed
+  identically. Because `catalog` now routes a rule to a scanner, that ambiguity
+  let an actor with DB write access but no signing key re-split a signed row to
+  move a rule onto a different scanner. **Bundles signed before 0.4.0 must be
+  re-signed, and existing DB rows re-applied** — they will fail verification and
+  be skipped until then. Check with
+  `shai patterns verify --db state/patterns.db --secret PATTERNS_SIGNING_KEY`.
+
 ## [0.3.0] — 2026-07-23
 
 The 0.2 line was never released. This is the first tagged release since

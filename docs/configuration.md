@@ -137,6 +137,31 @@ audit_signing:
   secret: "secret://AUDIT_HMAC_KEY"     # resolved from env var at startup
 ```
 
+### Signed pattern database (opt-in)
+
+Loads pattern rules installed with `shai patterns apply` and merges them into the
+injection-family scanner catalogs at startup. `secret` must resolve to the same
+key the bundle was signed with.
+
+```yaml
+patterns_db:
+  enabled: true
+  path: state/patterns.db               # also backs the heuristic-candidate cache
+  secret: "secret://PATTERNS_SIGNING_KEY"
+```
+
+Each row's `catalog` column routes it to a scanner: `injection` → `injection_scan`,
+`jailbreak` → `jailbreak_scan`, `identity_spoof` → `identity_spoof_scan`. A scanner
+only receives DB rules on boundaries where it is declared.
+
+Rules are verified per row. A row whose HMAC does not match is skipped and logged,
+never merged. A missing DB file or a wrong key loads zero rules and leaves the
+bundled YAML catalog running — neither condition fails startup. Enabling
+`patterns_db` without a `secret` is a config error.
+
+Rules are read once, at `from_yaml()` time. Restart the process to pick up a
+newly applied bundle.
+
 ### Cross-turn threat accumulation (opt-in)
 
 Catches crescendo attacks — sessions where each turn stays under threshold but the pattern is adversarial.

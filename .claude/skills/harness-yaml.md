@@ -176,15 +176,35 @@ over all non-null fields (excluding `signature`), `sort_keys=True`.
 ## Pattern database
 
 The CLI manages signed pattern rules and heuristic candidates in a SQLite
-database selected explicitly with `--db`. `HarnessConfig` currently has no
-`patterns_db` or `extended_patterns` field; adding either to `harness.yaml`
-fails validation because the schema forbids unknown fields.
+database selected explicitly with `--db`. The runtime reads the same file
+through the `patterns_db` block:
 
-`shai patterns apply` and `shai patterns verify` use the signing secret named
-by `--secret`. The CLI does not resolve a pattern-DB secret from
-`harness.yaml`. Runtime integrations that consume signed rules must call
-`harness.patterns.store.load_verified_rules()` explicitly with the same DB and
-secret. `SHAI.from_yaml()` does not load those rules automatically.
+```yaml
+patterns_db:
+  enabled: true
+  path: state/patterns.db
+  secret: "secret://PATTERNS_SIGNING_KEY"
+```
+
+`shai patterns apply` and `shai patterns verify` take the signing secret from
+the env var named by `--secret`; `harness.yaml` resolves its own
+`patterns_db.secret` through the standard `secret://` path. Both must name the
+same key, or every row fails verification.
+
+When `patterns_db.enabled` is set, `SHAI.from_yaml()` calls
+`load_verified_rules()` per catalog and merges the compiled rules into the
+matching scanner: `injection` → `injection_scan`, `jailbreak` →
+`jailbreak_scan`, `identity_spoof` → `identity_spoof_scan`. Rows failing HMAC
+verification are skipped and logged. A missing DB file or a key mismatch loads
+zero rules and leaves the bundled YAML catalog active — neither fails startup.
+Enabling `patterns_db` with an empty `secret` is a config error.
+
+`patterns_db.path` also backs the heuristic-candidate cache, so both tables
+resolve to one configured file. Rules load once at `from_yaml()` time; restart
+to pick up a newly applied bundle.
+
+`extended_patterns` is not a config field — `HarnessConfig` forbids unknown
+keys, so adding it fails validation.
 
 `make_bundle.py` is not part of the base source checkout; it is supplied with
 the extended-pattern delivery. `shai patterns apply` consumes its signed JSON

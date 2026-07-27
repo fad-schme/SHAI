@@ -181,6 +181,22 @@ shai patterns verify \
 
 `verify` exits with status `1` when any installed signature is invalid.
 
+### Load installed patterns at runtime
+
+Applying a bundle writes it to the database; it does not reach a running
+harness. Point `harness.yaml` at the same file to have `SHAI.from_yaml()` merge
+the verified rules into the scanner catalogs at startup:
+
+```yaml
+patterns_db:
+  enabled: true
+  path: state/patterns.db
+  secret: "secret://PATTERNS_SIGNING_KEY"    # same key `apply` signed with
+```
+
+Restart the process after an `apply` — rules are read once, at startup.
+→ See `docs/configuration.md` for catalog routing and failure behaviour.
+
 ### Manage heuristic candidates
 
 The heuristic scanner writes fingerprints of near-miss detections to a `heuristic_candidates` table — patterns that scored MEDIUM or above but weren't caught by any signature. These are things worth looking at.

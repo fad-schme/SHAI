@@ -217,6 +217,30 @@ class AuditSigningConfig(BaseModel, frozen=True, extra="forbid"):
         return self
 
 
+class PatternsDBConfig(BaseModel, frozen=True, extra="forbid"):
+    """Signed pattern database consumed at startup.
+
+    The signing key is resolved via SecretsProvider (secret:// URI) — the same
+    secret `shai patterns apply` signs with. When enabled, from_yaml() loads
+    HMAC-SHA256 verified rules from `path` and merges them into the
+    injection-family scanner catalogs. Rows failing verification are skipped,
+    never fatal: a tampered row must not take the harness down, and the bundled
+    YAML catalog stays active regardless.
+
+    `path` also backs the heuristic-candidate cache — both tables live in the
+    same DB file the CLI writes.
+    """
+    enabled: bool = False
+    path:    str  = "state/patterns.db"
+    secret:  str  = ""    # secret://ENV_VAR resolved at startup
+
+    @model_validator(mode="after")
+    def _enabled_needs_secret(self) -> "PatternsDBConfig":
+        if self.enabled and not self.secret:
+            raise ValueError("patterns_db.secret is required when patterns_db is enabled")
+        return self
+
+
 class ToolResultScanConfig(BaseModel, frozen=True, extra="forbid"):
     """Configuration for the scan_tool_result boundary.
 
@@ -335,6 +359,7 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     audit_sinks:     list[AdapterRef] = Field(default_factory=list)
     sources:         list[SourceConfig]  = Field(default_factory=list)
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
+    patterns_db:     PatternsDBConfig    = Field(default_factory=PatternsDBConfig)
     connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
 
 

@@ -155,7 +155,9 @@ class SHAI:
         # Empty = scan all results (default). Non-empty = only listed tools scanned.
         self._scan_tool_result_on: set[str] = set()
         # Per-instance scan state: circuit breakers, promoted-candidate cache.
-        self._scan_state = ScanState()
+        # Shares patterns_db.path — signed rules and heuristic candidates are two
+        # tables in the one DB file the CLI writes.
+        self._scan_state = ScanState(config.patterns_db.path)
 
     # ── Construction ──────────────────────────────────────────────────────
 
@@ -180,9 +182,40 @@ class SHAI:
         config = load_yaml(path, provider=provider)
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
-        input_scanners  = _build_text_scanners(config.scan_input.scanners)
-        output_scanners = _build_text_scanners(config.scan_output.scanners)
-        arg_scanners    = _build_text_scanners(config.check_tool_call.arg_scanners)
+        # Signed pattern DB → extra rules for the injection-family scanners.
+        # Rows failing HMAC verification are skipped inside load_verified_rules;
+        # the bundled YAML catalog stays active either way.
+        db_extra_rules: dict[str, list] = {}
+        if config.patterns_db.enabled:
+            from harness.adapters.scanners.injection_scan import compile_rules_from_dicts
+            from harness.patterns.store import load_verified_rules
+
+            raw_db_secret = config.patterns_db.secret
+            if raw_db_secret.startswith("secret://"):
+                raw_db_secret = provider.resolve(
+                    raw_db_secret[len("secret://"):]
+                ).value
+            db_secret = raw_db_secret.encode()
+
+            for scanner_name, catalog in _DB_CATALOG_FOR_SCANNER.items():
+                raw_rules = load_verified_rules(
+                    config.patterns_db.path, db_secret, catalog=catalog
+                )
+                if raw_rules:
+                    db_extra_rules[scanner_name] = compile_rules_from_dicts(raw_rules)
+            log.info(
+                "signed pattern DB loaded",
+                extra={
+                    "op":       "from_yaml",
+                    "path":     config.patterns_db.path,
+                    "catalogs": len(db_extra_rules),
+                    "rules":    sum(len(r) for r in db_extra_rules.values()),
+                },
+            )
+
+        input_scanners  = _build_text_scanners(config.scan_input.scanners, extra_rules=db_extra_rules)
+        output_scanners = _build_text_scanners(config.scan_output.scanners, extra_rules=db_extra_rules)
+        arg_scanners    = _build_text_scanners(config.check_tool_call.arg_scanners, extra_rules=db_extra_rules)
         file_scanners   = _build_file_scanners(
             config.scan_file.scanners,
             max_size_mb=config.scan_file.max_size_mb,
@@ -1134,6 +1167,18 @@ def _make_injection_doc_scanner() -> InjectionScanner:
     )
 
 
+# Signed-DB catalog name per injection-family scanner. Explicit rather than
+# derived from the scanner name: the catalog names are an operator-facing
+# contract in the bundle format and must not shift if a scanner is renamed.
+# Only InjectionScanner subclasses appear here — they are the scanners whose
+# __init__ accepts extra_rules.
+_DB_CATALOG_FOR_SCANNER: dict[str, str] = {
+    "injection_scan":      "injection",
+    "jailbreak_scan":      "jailbreak",
+    "identity_spoof_scan": "identity_spoof",
+}
+
+
 # Named registry — explicit, no magic strings
 _SCANNER_FACTORIES: dict[str, "Any"] = {
     "regex_pii":           _make_pii_scanner,
@@ -1149,11 +1194,15 @@ _SCANNER_FACTORIES: dict[str, "Any"] = {
 }
 
 
-def _build_text_scanners(adapter_refs: list) -> list:
+def _build_text_scanners(adapter_refs: list, *, extra_rules: dict[str, list] | None = None) -> list:
     """Build text scanners from AdapterRef declarations in harness.yaml.
 
     Built-in scanners (regex_pii, injection_scan) are resolved via the
     named factory table above. Custom scanners are resolved via entry points.
+
+    extra_rules maps scanner name → compiled rules from the signed pattern DB
+    (see _DB_CATALOG_FOR_SCANNER). Only injection-family names appear in it, so
+    scanners that do not accept extra_rules never receive the kwarg.
 
     HeuristicScanner is the always-on structural backstop: appended here
     unless an explicit `heuristic_scan` ref already placed it. Declaring it
@@ -1163,7 +1212,11 @@ def _build_text_scanners(adapter_refs: list) -> list:
     for ref in adapter_refs:
         factory = _SCANNER_FACTORIES.get(ref.name)
         if factory:
-            scanners.append(factory(ref.config))
+            cfg = ref.config
+            if extra_rules and ref.name in extra_rules:
+                # Copy: ref.config is shared across every boundary's build call.
+                cfg = {**cfg, "extra_rules": extra_rules[ref.name]}
+            scanners.append(factory(cfg))
         else:
             try:
                 from harness.adapters.discovery import resolve
