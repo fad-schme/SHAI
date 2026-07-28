@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -39,66 +38,13 @@ from harness.connectivity.token import (
     verify_token,
 )
 from harness.core.errors import NetworkPolicyError
+from harness.core.events import NetworkAuditEvent
 
 if TYPE_CHECKING:
     from harness.audit.emitter import AuditEmitter
     from harness.connectivity.config import ConnectivityConfig
 
 log = logging.getLogger(__name__)
-
-
-# ── NetworkAuditEvent ──────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class NetworkAuditEvent:
-    """Audit event emitted per outbound HTTP request from an MCP source.
-
-    event_type="network_egress" distinguishes these from boundary AuditEvents.
-    token_id is the join key with the gate AuditEvent in the SIEM:
-
-        SELECT gate.*, net.*
-        FROM audit_events gate
-        JOIN network_audit_events net ON gate.token_id = net.token_id
-        WHERE gate.agent_id = 'orchestrator_agent'
-
-    Written to the same AuditEmitter sinks as AuditEvent (file, stdout, etc.).
-    """
-    timestamp:    datetime
-    event_type:   str           # always "network_egress"
-    token_id:     str | None    # DispatchToken.token_id — join key with AuditEvent
-    source_name:  str           # MCPSource.name
-    agent_id:     str
-    sub_agent_id: str | None
-    tenant_id:    str
-    tool_name:    str | None    # None for SSE/init requests
-    destination:  str           # full URL
-    method:       str
-    status:       str           # "allowed" | "denied"
-    deny_reason:  str | None
-    bytes_sent:   int
-    bytes_recv:   int
-    duration_ms:  int
-
-    def model_dump_json(self) -> str:
-        """Emit as JSON for AuditEmitter sinks (matches AuditEvent interface)."""
-        import json
-        return json.dumps({
-            "timestamp":    self.timestamp.isoformat(),
-            "event_type":   self.event_type,
-            "token_id":     self.token_id,
-            "source_name":  self.source_name,
-            "agent_id":     self.agent_id,
-            "sub_agent_id": self.sub_agent_id,
-            "tenant_id":    self.tenant_id,
-            "tool_name":    self.tool_name,
-            "destination":  self.destination,
-            "method":       self.method,
-            "status":       self.status,
-            "deny_reason":  self.deny_reason,
-            "bytes_sent":   self.bytes_sent,
-            "bytes_recv":   self.bytes_recv,
-            "duration_ms":  self.duration_ms,
-        }, default=str)
 
 
 # ── ShaiTransport ──────────────────────────────────────────────────────────
@@ -356,7 +302,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             duration_ms  = duration_ms,
         )
         try:
-            await self._emitter.emit(event)  # type: ignore[arg-type]
+            await self._emitter.emit(event)
         except Exception as e:
             log.error("failed to emit NetworkAuditEvent",
                       extra={"source": self._source_name, "error": str(e)})

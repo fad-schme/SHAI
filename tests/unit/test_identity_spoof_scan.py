@@ -15,9 +15,9 @@ import pytest
 
 from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Decision
+from tests.conftest import RecordingSink
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 CTX = AgentContext(agent_id="test")
@@ -174,13 +174,6 @@ async def test_benign_text_does_not_trigger(text: str):
 
 
 # ── run_scan integration via real SHAI from YAML ──────────────────────────
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, e): self.events.append(e)
-    async def close(self): pass
-
 
 async def _make_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"

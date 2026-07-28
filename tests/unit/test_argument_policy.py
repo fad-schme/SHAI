@@ -18,19 +18,12 @@ from harness.boundaries import check_tool_call
 from harness.boundaries.argument_policy import check_argument_rules, check_irreversibility
 from harness.core.context import AgentContext
 from harness.core.errors import ArgumentViolationError, IrreversibleActionError
-from harness.core.events import AuditEvent
 from harness.core.types import Decision, Irreversibility
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import ArgumentRule, Tool
+from tests.conftest import RecordingSink
 
 # ── Helpers ───────────────────────────────────────────────────────────────
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, e): self.events.append(e)
-    async def close(self): pass
-
 
 def make_agent(tool_name: str = "pay_invoice") -> AgentConfig:
     return AgentConfig(

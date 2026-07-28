@@ -272,14 +272,12 @@ async def test_benign_text_does_not_trigger(text):
 
 async def test_jailbreak_blocked_via_run_scan():
     """End-to-end through run_scan: a jailbreak payload is blocked at HIGH."""
-    from unittest.mock import AsyncMock
-
+    from harness.audit.emitter import AuditEmitter
     from harness.boundaries._scan import ScanState, run_scan
     from harness.core.types import BoundaryName, ScanAction, Severity
+    from tests.conftest import RecordingSink
 
-    sink = AsyncMock()
-    sink.emit = AsyncMock()
-    from harness.audit.emitter import AuditEmitter
+    sink    = RecordingSink()
     emitter = AuditEmitter([sink])
 
     verdict = await run_scan(
@@ -294,19 +292,17 @@ async def test_jailbreak_blocked_via_run_scan():
         state=ScanState(),
     )
     assert verdict.blocked
-    sink.emit.assert_called_once()
-    event = sink.emit.call_args[0][0]
-    assert event.finding_count > 0
+    assert len(sink.events) == 1
+    assert sink.events[0].finding_count > 0
 
 
 async def test_benign_allowed_via_run_scan():
-    from unittest.mock import AsyncMock
-
     from harness.audit.emitter import AuditEmitter
     from harness.boundaries._scan import ScanState, run_scan
     from harness.core.types import BoundaryName, ScanAction, Severity
+    from tests.conftest import RecordingSink
 
-    sink = AsyncMock(); sink.emit = AsyncMock()
+    sink    = RecordingSink()
     emitter = AuditEmitter([sink])
 
     verdict = await run_scan(

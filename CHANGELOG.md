@@ -18,12 +18,38 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from the signed pattern DB and merges them into the `injection_scan`,
   `jailbreak_scan`, and `identity_spoof_scan` catalogs at startup. The row
   `catalog` column is the routing key. Disabled by default.
+- **Verifiable audit trail** — a signed audit line can be checked with nothing
+  but the log file and the signing key: parse the JSONL line, lift out
+  `signature`, re-encode the remainder with sorted keys, compare the
+  HMAC-SHA256. Sinks and the signer share one canonical encoding
+  (`canonical_json` in `harness.core.events`), so the written line minus its
+  signature is byte-identical to the payload that was signed.
 
 ### Changed
 - `patterns_db.path` now also backs the heuristic-candidate cache, which
   previously read a hardcoded `state/patterns.db`. Both tables resolve to one
   configured file. Deployments that kept the DB at the default path are
   unaffected.
+- **BREAKING**: audit sink output (`file`, `stdout`) is derived from the event
+  model instead of a hand-maintained field list. Every `AuditEvent` line gains
+  `token_id` and `signature` when set — both were silently dropped before — JSON
+  keys are sorted, and timestamps and enums render through Pydantic's JSON mode.
+  Log consumers that pin an exact key set or field order must be updated.
+- `NetworkAuditEvent` moved from `harness.connectivity.transport` to
+  `harness.core.events`, alongside `AuditEvent`, and is now a Pydantic model
+  rather than a dataclass. It remains re-exported from `harness.connectivity`,
+  so existing imports keep working. Its hand-rolled `model_dump_json()` is gone
+  — Pydantic supplies one.
+- **BREAKING**: audit event signatures are computed over the same canonical JSON
+  the sinks write, instead of a separately built Python-mode dump. The two
+  encoders rendered timestamps differently (`2026-07-27 12:00:00+00:00` against
+  `2026-07-27T12:00:00Z`), so a written line could never verify against the
+  signature it carried. Signature **values** therefore differ from earlier
+  builds for the same event; the written line content is unchanged. Stored log
+  files are unaffected because no release before 0.4.0 wrote `signature` to
+  disk, but a consumer that captured `event.signature` in process — via a custom
+  sink or `collect_events()` — and kept it for later comparison must
+  re-baseline.
 
 ### Fixed
 - Signed pattern rules applied with `shai patterns apply` are now read at
@@ -32,6 +58,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the database but never a scanner. Rows failing signature verification are
   skipped and logged; a missing DB file or a key mismatch degrades to the
   bundled YAML catalog rather than failing startup.
+- Network egress events now reach the audit sinks. `NetworkAuditEvent` was a
+  dataclass while `AuditEmitter` and both sinks expect a Pydantic model, so
+  every emission raised `AttributeError` and was swallowed by
+  `ShaiTransport._emit`'s log-and-continue — no `network_egress` record had ever
+  been written. Converting the event to a Pydantic model and deriving the sink
+  serializer from the model fixes both halves.
+- A failing audit sink is logged rather than masked. The failure handler in
+  `AuditEmitter.emit` read `event.boundary` unconditionally, which raised
+  `AttributeError` on a `NetworkAuditEvent` and buried the original sink error.
+- A signing failure raises `AuditEmissionError` instead of surfacing a Pydantic
+  serialization error on a boundary, preserving the rule that only
+  `AuditEmissionError` escapes the audit path. An event that cannot be encoded
+  is never emitted unsigned — a silent gap in a signed trail is the repudiation
+  risk signing exists to close.
+- `StdoutSink` and `FileSink` satisfy the `AuditSink` protocol. A stray
+  `collect_events` definition had been pasted into the Protocol body, so neither
+  reference sink structurally matched the interface it implements.
 
 ### Security
 - Detection rules distributed through the signed pattern DB now take effect at
@@ -50,6 +93,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   re-signed, and existing DB rows re-applied** — they will fail verification and
   be skipped until then. Check with
   `shai patterns verify --db state/patterns.db --secret PATTERNS_SIGNING_KEY`.
+- The `token_id` join between a tool-call gate `AuditEvent` and the
+  `NetworkAuditEvent` for the outbound request it authorised now works. Both
+  sides were broken: network events never reached a sink at all, and `token_id`
+  was absent from every written line. Correlating a gate decision with the
+  egress it permitted is possible for the first time.
+- `signature` is persisted to the audit trail, and the trail is verifiable from
+  the file. The HMAC-SHA256 stamped when `audit_signing.enabled` was computed
+  correctly but dropped by the sink serializer, so no signed trail was ever
+  written to disk. Signing and writing now share one canonical encoding, so an
+  operator holding only the JSONL file and the key can confirm every line —
+  editing a recorded decision, or checking with the wrong key, fails
+  verification.
 
 ## [0.3.0] — 2026-07-23
 

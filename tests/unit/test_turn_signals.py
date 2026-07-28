@@ -13,33 +13,20 @@ ScanVerdict — no mocks.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from harness.agents.agent_config import AgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.turn_signals import RISK_ELEVATED, RISK_HIGH, TurnSignals
 from harness.core.types import Decision, ScanStatus, Severity, Transport
 from harness.core.verdicts import Finding, ScanVerdict
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import Tool
-
+from tests.conftest import RecordingSink
 
 # ── Helpers ───────────────────────────────────────────────────────────────
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self):
-        self.events: list[AuditEvent] = []
-    async def emit(self, e):
-        self.events.append(e)
-    async def close(self):
-        pass
-
 
 class FakeScanner:
     """Minimal scanner stub for method-family testing.
@@ -440,7 +427,6 @@ class TestToolResultBlockAtAdjustment:
         """With injection in input signals, a MEDIUM tool_result finding blocks
         (block_at defaults to HIGH but shifts to MEDIUM)."""
         from harness.boundaries._scan import ScanState, run_tool_result_scan
-        from harness.core.types import BoundaryName
 
         # Scanner produces a MEDIUM finding
         scanner = FakeScanner(

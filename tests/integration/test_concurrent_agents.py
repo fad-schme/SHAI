@@ -12,22 +12,12 @@ import asyncio
 from pathlib import Path
 
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Transport
 from harness.tools.tool import Tool
+from tests.conftest import RecordingSink
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
-
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self) -> None:
-        self.events: list[AuditEvent] = []
-    async def emit(self, event: AuditEvent) -> None:
-        self.events.append(event)
-    async def close(self) -> None:
-        pass
 
 
 def _recording_sink(h: SHAI) -> RecordingSink:

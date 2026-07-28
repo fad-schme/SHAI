@@ -10,8 +10,6 @@ Covers:
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from harness.adapters.circuit_breaker import CircuitBreaker, CircuitState
@@ -19,7 +17,6 @@ from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.types import (
     BoundaryName,
     Decision,
@@ -28,15 +25,9 @@ from harness.core.types import (
     ScanStatus,
     Severity,
 )
+from tests.conftest import FailingScanner, RecordingSink
 
 CTX = AgentContext(agent_id="test_agent")
-
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, event): self.events.append(event)
-    async def close(self): pass
 
 
 @pytest.fixture
@@ -55,12 +46,9 @@ def state():
     return ScanState()
 
 
-def _bad_scanner(name: str = "bad") -> MagicMock:
+def _bad_scanner(name: str = "bad") -> FailingScanner:
     """Scanner that always raises."""
-    s = MagicMock()
-    s.name = name
-    s.scan = AsyncMock(side_effect=RuntimeError("exploded"))
-    return s
+    return FailingScanner(name=name)
 
 
 # ── on_error=fail_closed (default) ──────────────────────────────────────

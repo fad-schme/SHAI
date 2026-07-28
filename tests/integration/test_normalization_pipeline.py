@@ -20,11 +20,13 @@ import pytest
 pytest.importorskip("pydantic")
 
 from harness.adapters.scanners.base import ScanResult
+from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
 from harness.config.schema import NormalizationConfig
 from harness.core.context import AgentContext
 from harness.core.types import BoundaryName, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import Finding
+from tests.conftest import RecordingSink
 
 MARKER = "ignore previous instructions"
 
@@ -43,14 +45,6 @@ class _MarkerScanner:
                 severity=Severity.HIGH, detail="marker",
             )])
         return ScanResult()
-
-
-class _Emitter:
-    def __init__(self):
-        self.events = []
-
-    async def emit(self, event):
-        self.events.append(event)
 
 
 def _b64(s):
@@ -72,7 +66,8 @@ def _homoglyph(s):
 
 
 async def _scan(text, *, normalization):
-    emitter = _Emitter()
+    sink    = RecordingSink()
+    emitter = AuditEmitter([sink])
     verdict = await run_scan(
         text, AgentContext(agent_id="a"),
         boundary=BoundaryName.INPUT_SCAN,
@@ -83,7 +78,7 @@ async def _scan(text, *, normalization):
         block_at=Severity.HIGH, normalization=normalization,
         state=ScanState(),
     )
-    return verdict, emitter.events[0]
+    return verdict, sink.events[0]
 
 
 OBFUSCATORS = {

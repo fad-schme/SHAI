@@ -6,7 +6,8 @@ Phase 1: Token issuance
 
 Phase 2: In-process egress enforcement
   ShaiTransport      — httpx transport hook, wired into MCPSource
-  NetworkAuditEvent  — audit event emitted per outbound tool call
+  NetworkAuditEvent  — audit event emitted per outbound tool call, re-exported
+                       from harness.core.events where it lives alongside AuditEvent
 """
 from harness.connectivity.config import ConnectivityConfig
 from harness.connectivity.token import (
@@ -18,7 +19,8 @@ from harness.connectivity.token import (
     sign_token,
     verify_token,
 )
-from harness.connectivity.transport import NetworkAuditEvent, ShaiTransport
+from harness.connectivity.transport import ShaiTransport
+from harness.core.events import NetworkAuditEvent
 
 __all__ = [
     "ConnectivityConfig",

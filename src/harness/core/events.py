@@ -1,4 +1,8 @@
-"""AuditEvent — the structured event every boundary emits exactly once per call.
+"""Audit events — the structured records SHAI writes to its sinks.
+
+AuditEvent:        emitted exactly once per boundary call.
+NetworkAuditEvent: emitted per outbound HTTP request by ShaiTransport.
+AnyAuditEvent:     what an AuditSink accepts.
 
 No raw user input, LLM output, tool args, or scanner matches in any field.
 
@@ -7,6 +11,7 @@ by the agent. user_id is not on AuditEvent; operators use audit_tags for that.
 """
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -106,6 +111,60 @@ class AuditEvent(BaseModel, frozen=True):
             audit_tags=audit_tags or {},
             extra=extra or {},
         )
+
+
+class NetworkAuditEvent(BaseModel, frozen=True):
+    """Audit event emitted per outbound HTTP request from an MCP source.
+
+    event_type="network_egress" distinguishes these from boundary AuditEvents.
+    token_id is the join key with the gate AuditEvent in the SIEM:
+
+        SELECT gate.*, net.*
+        FROM audit_events gate
+        JOIN network_audit_events net ON gate.token_id = net.token_id
+        WHERE gate.agent_id = 'orchestrator_agent'
+
+    Written to the same AuditEmitter sinks as AuditEvent (file, stdout, etc.).
+    """
+    timestamp:    datetime
+    event_type:   str           # always "network_egress"
+    token_id:     str | None    # DispatchToken.token_id — join key with AuditEvent
+    source_name:  str           # MCPSource.name
+    agent_id:     str
+    sub_agent_id: str | None
+    tenant_id:    str
+    tool_name:    str | None    # None for SSE/init requests
+    destination:  str           # full URL
+    method:       str
+    status:       str           # "allowed" | "denied"
+    deny_reason:  str | None
+    bytes_sent:   int
+    bytes_recv:   int
+    duration_ms:  int
+    signature:    str | None = None  # HMAC-SHA256, stamped by AuditEmitter when configured
+
+
+# What an AuditSink accepts. Both are Pydantic models, so sinks serialise
+# either one through model_dump() without a per-type branch.
+AnyAuditEvent = AuditEvent | NetworkAuditEvent
+
+
+def canonical_json(event: AnyAuditEvent, *, exclude: set[str] | None = None) -> str:
+    """The one canonical JSON encoding of an audit event.
+
+    Sinks write exactly this, and the HMAC is computed over exactly this with
+    `signature` excluded. The two must agree byte-for-byte — otherwise a
+    written line cannot be verified against the signature it carries, which is
+    what a separate hand-rolled encoder on each side previously cost us.
+
+    mode="json" renders datetimes as ISO 8601 and enums as their values;
+    exclude_none keeps null fields off the line; sort_keys makes the encoding
+    independent of field declaration order.
+    """
+    return json.dumps(
+        event.model_dump(mode="json", exclude_none=True, exclude=exclude),
+        sort_keys=True,
+    )
 
 
 def now_ms() -> int:

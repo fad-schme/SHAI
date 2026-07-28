@@ -5,16 +5,14 @@ appropriate BoundaryName — tested through the harness or run_scan directly.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.types import BoundaryName, Decision, OnError, ScanAction, Severity
+from tests.conftest import FailingScanner, RecordingSink
 
 CTX = AgentContext(agent_id="a1")
 
@@ -23,13 +21,6 @@ CTX = AgentContext(agent_id="a1")
 def state():
     """Fresh ScanState per test — no cross-test state to reset."""
     return ScanState()
-
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, event): self.events.append(event)
-    async def close(self): pass
 
 
 @pytest.fixture
@@ -154,9 +145,7 @@ async def test_scan_input_multiple_scanners(emitter, sink, state):
 
 async def test_scan_input_scanner_failure_treated_as_empty(emitter, sink, state):
     """Scanner failure with on_error=fail_open is treated as empty findings."""
-    bad = MagicMock()
-    bad.name = "bad"
-    bad.scan = AsyncMock(side_effect=RuntimeError("exploded"))
+    bad = FailingScanner()
     verdict = await run_scan(
         "The weather is nice.", CTX,
         boundary=BoundaryName.INPUT_SCAN,

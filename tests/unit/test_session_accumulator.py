@@ -17,22 +17,15 @@ pytest.importorskip("aiosqlite")
 
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Decision, Transport
 from harness.tools.tool import Tool
+from tests.conftest import RecordingSink
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, e): self.events.append(e)
-    async def close(self): pass
-
 
 def _recording_sink(h: SHAI) -> RecordingSink:
     return next(s for s in h._emitter._sinks if isinstance(s, RecordingSink))

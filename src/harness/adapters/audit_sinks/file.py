@@ -10,8 +10,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from harness.adapters.audit_sinks.stdout import _serialize
-from harness.core.events import AuditEvent
+from harness.core.events import AnyAuditEvent, canonical_json
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +56,8 @@ class FileSink:
             if handler.stream.tell() >= handler.maxBytes:
                 handler.doRollover()
 
-    async def emit(self, event: AuditEvent) -> None:
-        line = _serialize(event) + "\n"
+    async def emit(self, event: AnyAuditEvent) -> None:
+        line = canonical_json(event) + "\n"
         async with self._lock:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._write, line)

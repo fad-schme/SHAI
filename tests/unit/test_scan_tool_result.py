@@ -9,18 +9,11 @@ from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_tool_result_scan
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.types import BoundaryName, Decision, ScanAction, Severity
+from tests.conftest import RecordingSink
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 CTX = AgentContext(agent_id="a1")
-
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, e): self.events.append(e)
-    async def close(self): pass
 
 
 @pytest.fixture

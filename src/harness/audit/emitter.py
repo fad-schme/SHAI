@@ -14,15 +14,15 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
-import json
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Protocol
 
 from harness.core.errors import AuditEmissionError
+from harness.core.events import canonical_json
 
 if TYPE_CHECKING:
-    from harness.core.events import AuditEvent
+    from harness.core.events import AnyAuditEvent
 
 log = logging.getLogger(__name__)
 
@@ -34,52 +34,24 @@ class AuditSink(Protocol):
 
     name: str
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: AnyAuditEvent) -> None:
         """Emit one event. Raise on failure — AuditEmitter handles it."""
         ...
-
-
-    @contextlib.contextmanager
-    def collect_events(self) -> AsyncIterator[list]:
-        """Context manager that collects AuditEvents emitted during the block.
-
-        Returns a list that is populated in-place as events are emitted.
-        The list is complete when the block exits.
-
-        Usage::
-
-            async with harness.collect_events() as events:
-                result = await app.ainvoke(...)
-            # events is now a list[AuditEvent]
-            for ev in events:
-                print(ev.boundary, ev.decision)
-
-        Multiple concurrent collect_events() calls are safe — each gets its
-        own independent list. Does not affect configured sinks (file, stdout).
-        """
-        bucket: list = []
-        self._subscribers.append(bucket)
-        try:
-            yield bucket
-        finally:
-            self._subscribers.remove(bucket)
 
     async def close(self) -> None:
         """Flush and release resources. No-op for stateless sinks."""
         ...
 
 
-def _sign_event(event: AuditEvent, secret: bytes) -> str:
-    """Compute HMAC-SHA256 signature over the event body (excluding signature field).
+def _sign_event(event: AnyAuditEvent, secret: bytes) -> str:
+    """Compute HMAC-SHA256 over the canonical encoding, minus `signature`.
 
-    The payload is the deterministic JSON of all non-None fields excluding
-    `signature`. Sorted keys ensure consistent ordering across Python versions.
+    Uses the same `canonical_json` the sinks write, so a written line with its
+    `signature` key removed re-encodes to exactly the payload signed here —
+    that byte-for-byte agreement is what makes the trail verifiable from the
+    file alone.
     """
-    payload = {
-        k: v for k, v in event.model_dump(exclude_none=True).items()
-        if k != "signature"
-    }
-    body = json.dumps(payload, sort_keys=True, default=str).encode()
+    body = canonical_json(event, exclude={"signature"}).encode()
     return hmac.new(secret, body, hashlib.sha256).hexdigest()
 
 
@@ -97,14 +69,23 @@ class AuditEmitter:
         # Subscribers added by collect_events() — notified after all sinks
         self._subscribers: list[list] = []
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: AnyAuditEvent) -> None:
         """Truncate oversized fields, optionally sign, then fan-out concurrently."""
         if event.deny_reason and len(event.deny_reason) > _MAX_DENY_REASON:
             object.__setattr__(event, "deny_reason",
                                event.deny_reason[:_MAX_DENY_REASON - 3] + "...")
 
         if self._signing_secret is not None:
-            sig = _sign_event(event, self._signing_secret)
+            try:
+                sig = _sign_event(event, self._signing_secret)
+            except Exception as e:
+                # Invariant 2: only AuditEmissionError may escape the audit path.
+                # Fail rather than emit unsigned — a silent gap in a signed trail
+                # is the repudiation risk signing exists to close.
+                raise AuditEmissionError(
+                    f"audit event signing failed: {e}",
+                    op="audit_sign",
+                ) from e
             object.__setattr__(event, "signature", sig)
 
         results = await asyncio.gather(
@@ -119,10 +100,17 @@ class AuditEmitter:
         ]
 
         if failures:
+            # boundary is on AuditEvent, event_type on NetworkAuditEvent —
+            # neither is common, and reading the wrong one here would raise
+            # AttributeError inside the handler and mask the sink failure.
             for sink_name, exc in failures:
                 log.error("audit sink emit failed",
-                          extra={"sink": sink_name, "boundary": event.boundary,
-                                 "agent_id": event.agent_id, "error": str(exc)})
+                          extra={"sink": sink_name,
+                                 "boundary": getattr(event, "boundary", None),
+                                 "event_type": getattr(event, "event_type", None),
+                                 "agent_id": event.agent_id,
+                                 "tenant_id": event.tenant_id,
+                                 "error": str(exc)})
 
         if len(failures) == len(self._sinks):
             raise AuditEmissionError(
@@ -167,7 +155,7 @@ class AuditEmitter:
         )
 
     @staticmethod
-    async def _emit_one(sink: AuditSink, event: AuditEvent) -> None:
+    async def _emit_one(sink: AuditSink, event: AnyAuditEvent) -> None:
         await sink.emit(event)
 
     @staticmethod

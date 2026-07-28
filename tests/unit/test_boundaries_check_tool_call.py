@@ -11,19 +11,12 @@ from harness.agents.agent_config import AgentConfig, RuleConfig, RuleMatchConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.types import Decision, Transport
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import Tool
+from tests.conftest import RecordingSink
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
-
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, e): self.events.append(e)
-    async def close(self): pass
 
 
 def make_tool(name: str, tags: list[str] | None = None) -> Tool:

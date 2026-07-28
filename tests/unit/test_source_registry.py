@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from harness.agents.agent_config import RuleConfig, RuleMatchConfig
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
 from harness.core.types import Transport
+from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, MCPSource, SourceRegistry
 from harness.tools.tool import Tool
@@ -18,14 +19,41 @@ CTX = AgentContext(agent_id="test_agent")
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
-def _make_policy(active: bool = True):
-    """Minimal policy stub."""
-    decision = MagicMock()
-    decision.active = active
-    decision.reason = "test"
-    policy = MagicMock()
-    policy.evaluate_source = AsyncMock(return_value=decision)
-    return policy
+def _make_policy(active: bool = True) -> RuleBasedPolicy:
+    """Real policy engine — suppression comes from a real rule, not a stub.
+
+    RuleBasedPolicy is pure in-process code, so there is nothing to gain from
+    faking it, and a stub cannot catch a change in how suppression is decided.
+    """
+    if active:
+        return RuleBasedPolicy()
+    return RuleBasedPolicy(rules=[RuleConfig(
+        id="suppress_for_test_agent",
+        match=RuleMatchConfig(agent_ids=[CTX.agent_id]),
+        action="suppress",
+        reason="suppressed by test policy",
+    )])
+
+
+class FailingSource:
+    """ToolSource whose load() always raises — real class, not a MagicMock.
+
+    Satisfies the ToolSource protocol exactly, so it fails the same way a
+    real source with a dead connection does.
+    """
+
+    transport = Transport.LOCAL
+    tags: list[str] = []
+
+    def __init__(self, name: str, error: str = "network error") -> None:
+        self.name   = name
+        self._error = error
+
+    async def load(self, ctx: AgentContext) -> list[Tool]:
+        raise RuntimeError(self._error)
+
+    async def close(self) -> None:
+        pass
 
 
 async def _make_registry(*tools: Tool) -> ToolRegistry:
@@ -141,12 +169,7 @@ async def test_activate_failed_required_source_raises():
     """Required source whose load() raises must raise ConfigError."""
     from harness.core.errors import ConfigError
 
-    bad = MagicMock()
-    bad.name = "bad_source"
-    bad.transport = Transport.LOCAL
-    bad.tags = []
-    bad.load = AsyncMock(side_effect=RuntimeError("network error"))
-    bad.close = AsyncMock()
+    bad = FailingSource("bad_source")
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(bad)
@@ -156,12 +179,7 @@ async def test_activate_failed_required_source_raises():
 
 async def test_activate_failed_optional_source_skipped():
     """Optional source whose load() raises is skipped, not raised."""
-    bad = MagicMock()
-    bad.name = "bad_source"
-    bad.transport = Transport.LOCAL
-    bad.tags = []
-    bad.load = AsyncMock(side_effect=RuntimeError("network error"))
-    bad.close = AsyncMock()
+    bad = FailingSource("bad_source")
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(bad)
@@ -526,16 +544,9 @@ async def test_missing_optional_source_skips():
 
 async def test_failed_required_source_raises():
     """required source whose load() fails must raise ConfigError."""
-    from unittest.mock import AsyncMock, MagicMock
-
     from harness.core.errors import ConfigError
 
-    bad = MagicMock()
-    bad.name = "bad_src"
-    bad.transport = Transport.LOCAL
-    bad.tags = []
-    bad.load = AsyncMock(side_effect=RuntimeError("connection refused"))
-    bad.close = AsyncMock()
+    bad = FailingSource("bad_src", error="connection refused")
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(bad)
@@ -546,14 +557,7 @@ async def test_failed_required_source_raises():
 
 async def test_failed_optional_source_skips():
     """Optional source whose load() fails must log and skip, not raise."""
-    from unittest.mock import AsyncMock, MagicMock
-
-    bad = MagicMock()
-    bad.name = "bad_src"
-    bad.transport = Transport.LOCAL
-    bad.tags = []
-    bad.load = AsyncMock(side_effect=RuntimeError("connection refused"))
-    bad.close = AsyncMock()
+    bad = FailingSource("bad_src", error="connection refused")
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(bad)

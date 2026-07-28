@@ -1,16 +1,26 @@
-"""Tests for ShaiTransport — in-process egress enforcement."""
+"""Tests for ShaiTransport — in-process egress enforcement.
+
+The inner httpx transport is mocked deliberately: it is the seam to the real
+network. The AuditEmitter is not — it is SHAI's own code and runs in-memory,
+so emission is asserted against a real emitter and a real sink.
+"""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import io
+import json
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
+from harness.adapters.audit_sinks.stdout import StdoutSink
+from harness.audit.emitter import AuditEmitter
 from harness.connectivity.config import ConnectivityConfig
 from harness.connectivity.token import encode_token, sign_token
-from harness.connectivity.transport import NetworkAuditEvent, ShaiTransport
+from harness.connectivity.transport import ShaiTransport
 from harness.core.errors import NetworkPolicyError
+from harness.core.events import NetworkAuditEvent
+from tests.conftest import RecordingSink
 
 SECRET  = b"test-secret-transport-phase2"
 TENANT  = "test-tenant"
@@ -40,9 +50,9 @@ def _transport(
     emitter=None,
     inner=None,
 ) -> ShaiTransport:
-    mock_inner   = inner or AsyncMock(spec=httpx.AsyncBaseTransport)
-    mock_emitter = emitter or AsyncMock()
-    mock_emitter.emit = AsyncMock()
+    # The inner transport is mocked — it is the seam to the real network.
+    # The emitter is not: it is SHAI's own code and runs in-memory.
+    mock_inner = inner or AsyncMock(spec=httpx.AsyncBaseTransport)
     return ShaiTransport(
         source_name=SOURCE,
         allowed_urls=ALLOWED if allowed_urls is None else allowed_urls,
@@ -50,7 +60,7 @@ def _transport(
         agent_id=AGENT,
         sub_agent_id=None,
         tenant_id=TENANT,
-        emitter=mock_emitter,
+        emitter=emitter or AuditEmitter([RecordingSink()]),
         connectivity=config or _config(),
         inner=mock_inner,
     )
@@ -105,14 +115,13 @@ async def test_denied_url_raises():
 
 
 async def test_denied_url_emits_audit_event():
-    emitter = AsyncMock()
-    emitter.emit = AsyncMock()
-    t = _transport(emitter=emitter)
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]))
     req = _request("https://evil.com/steal")
     with pytest.raises(NetworkPolicyError):
         await t.handle_async_request(req)
-    emitter.emit.assert_called_once()
-    event = emitter.emit.call_args[0][0]
+    assert len(sink.events) == 1
+    event = sink.events[0]
     assert event.status == "denied"
     assert "allowed_urls" in event.deny_reason
 
@@ -198,18 +207,17 @@ async def test_tampered_token_raises():
 # ── NetworkAuditEvent emission ────────────────────────────────────────────
 
 async def test_network_audit_event_emitted_on_allowed_tool_call():
-    emitter = AsyncMock()
-    emitter.emit = AsyncMock()
+    sink  = RecordingSink()
     inner = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(emitter=emitter, inner=inner)
+    t = _transport(emitter=AuditEmitter([sink]), inner=inner)
 
     tok = _token()
     req = _request(token=tok)
     await t.handle_async_request(req)
 
-    emitter.emit.assert_called_once()
-    event = emitter.emit.call_args[0][0]
+    assert len(sink.events) == 1
+    event = sink.events[0]
     assert isinstance(event, NetworkAuditEvent)
     assert event.event_type   == "network_egress"
     assert event.status       == "allowed"
@@ -223,48 +231,48 @@ async def test_network_audit_event_emitted_on_allowed_tool_call():
 
 async def test_no_audit_event_for_tokenless_requests():
     """SSE and init requests carry no token — no NetworkAuditEvent emitted."""
-    emitter = AsyncMock()
-    emitter.emit = AsyncMock()
+    sink  = RecordingSink()
     inner = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(emitter=emitter, inner=inner)
+    t = _transport(emitter=AuditEmitter([sink]), inner=inner)
 
     req = _request()  # no token — simulates SSE or init call
     await t.handle_async_request(req)
 
-    emitter.emit.assert_not_called()
+    assert sink.events == []
 
 
-async def test_network_audit_event_json_serialisable():
-    event = NetworkAuditEvent(
-        timestamp    = datetime.now(UTC),
-        event_type   = "network_egress",
-        token_id     = "uuid-1234",
-        source_name  = SOURCE,
-        agent_id     = AGENT,
-        sub_agent_id = None,
-        tenant_id    = TENANT,
-        tool_name    = "search_docs",
-        destination  = "https://mcp.slack.com/message",
-        method       = "POST",
-        status       = "allowed",
-        deny_reason  = None,
-        bytes_sent   = 256,
-        bytes_recv   = 1024,
-        duration_ms  = 42,
-    )
-    import json
-    parsed = json.loads(event.model_dump_json())
-    assert parsed["event_type"]  == "network_egress"
-    assert parsed["token_id"]    == "uuid-1234"
-    assert parsed["bytes_sent"]  == 256
+async def test_network_event_reaches_sink_as_jsonl():
+    """Real AuditEmitter + real StdoutSink — the path production actually takes.
+
+    Asserting the emitter was *called* is not enough: the event has to survive
+    serialization. When NetworkAuditEvent was a dataclass it never did, and the
+    failure was swallowed by _emit's log-and-continue.
+    """
+    buf     = io.StringIO()
+    emitter = AuditEmitter([StdoutSink(stream=buf)])
+    inner   = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(emitter=emitter, inner=inner)
+
+    await t.handle_async_request(_request(token=_token()))
+
+    data = json.loads(buf.getvalue().strip())
+    assert data["event_type"]  == "network_egress"
+    assert data["status"]      == "allowed"
+    assert data["source_name"] == SOURCE
+    assert data["tool_name"]   == "search_docs"
+    assert data["token_id"]
 
 
 # ── Token_id SIEM correlation ─────────────────────────────────────────────
 
 async def test_token_id_matches_issued_token():
-    from harness.connectivity.token import encode_token, sign_token
+    """The SIEM join key must survive serialization, not merely reach the emitter.
 
+    token_id is what joins this event to the gate AuditEvent that authorised
+    the call, so it has to be present on the written line.
+    """
     tok_obj = sign_token(
         agent_id="orchestrator_agent",
         sub_agent_id=None,
@@ -277,17 +285,16 @@ async def test_token_id_matches_issued_token():
     )
     encoded = encode_token(tok_obj)
 
-    emitter = AsyncMock()
-    emitter.emit = AsyncMock()
+    buf     = io.StringIO()
+    emitter = AuditEmitter([StdoutSink(stream=buf)])
     inner   = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
     t = _transport(emitter=emitter, inner=inner)
 
-    req = _request(token=encoded)
-    await t.handle_async_request(req)
+    await t.handle_async_request(_request(token=encoded))
 
-    event = emitter.emit.call_args[0][0]
-    assert event.token_id == tok_obj.token_id
+    data = json.loads(buf.getvalue().strip())
+    assert data["token_id"] == tok_obj.token_id
 
 
 # ── Token binding checks ───────────────────────────────────────────────────
@@ -303,14 +310,13 @@ async def test_token_wrong_source_denied():
 
 
 async def test_token_wrong_source_emits_audit_event():
-    emitter = AsyncMock()
-    emitter.emit = AsyncMock()
-    t = _transport(emitter=emitter)
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]))
     tok = _token(source_name="github_mcp")
     req = _request(token=tok)
     with pytest.raises(NetworkPolicyError):
         await t.handle_async_request(req)
-    event = emitter.emit.call_args[0][0]
+    event = sink.events[0]
     assert event.status == "denied"
     assert "source_name" in event.deny_reason
 

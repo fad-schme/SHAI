@@ -8,19 +8,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from harness.core.context import AgentContext
-from harness.core.events import AuditEvent
 from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Decision, Transport
 from harness.tools.tool import Tool
+from tests.conftest import RecordingSink
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
-
-
-class RecordingSink:
-    name = "recording"
-    def __init__(self): self.events: list[AuditEvent] = []
-    async def emit(self, e): self.events.append(e)
-    async def close(self): pass
 
 
 async def _make_harness(tmp_path: Path, *, scan_enabled: bool = False) -> SHAI:
