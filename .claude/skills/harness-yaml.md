@@ -66,13 +66,39 @@ Circuit breaker (per scanner): 5 consecutive failures → OPEN for 60 s (exponen
 
 ### scan_file extras
 
+Configured exactly like the text boundaries — same `enabled`, `block_at`,
+`action`, `on_error`, `scanners` keys — plus `max_size_mb`.
+
 ```yaml
 scan_file:
   enabled: false
   block_at: high
   action: block
-  max_size_mb: 50     # files exceeding this are rejected before content scanning
+  on_error: fail_closed
+  max_size_mb: 100    # files exceeding this are rejected before content scanning
+  scanners:
+    - name: injection_scan
+    - name: jailbreak_scan
+    - name: regex_pii
 ```
+
+Values above are the defaults; the shipped `config/harness.yaml` sets
+`max_size_mb: 50`.
+
+The structural pass (MIME, size, extension, PDF JavaScript, SVG scripts and
+external references, archive bombs and escapes, EXIF, Office macros) always
+runs first and needs no configuration. `scanners` is the **content** chain that
+runs after it: each one receives text extracted from the file and, for images,
+the EXIF/XMP metadata blob — never the path.
+Declared scanners are authoritative, as at every other boundary. Leave the key
+out and a document-tuned injection scanner runs, so an enabled boundary is
+never a no-op.
+
+Unlike the text boundaries, `scan_file` scanners take **no per-scanner
+`action` or `redact_with`** — the content chain runs inside the structural
+scanner, so the boundary has a single scanner to index overrides against.
+Setting either is a `ConfigError` rather than a silent no-op. Use the
+boundary-level `action`.
 
 ---
 

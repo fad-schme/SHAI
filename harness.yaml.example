@@ -46,7 +46,6 @@ scan_input:
     - name: jailbreak_scan       # guardrail-integrity attacks: persona override, instruction override, etc.
     - name: identity_spoof_scan  # agentic identity spoofing: claimed orchestrator/system authority
     - name: regex_pii
-    - name: injection_scan
 
 # ── File upload scanning ──────────────────────────────────────────────────
 # FileScanner handles MIME, size, PDF JS, EXIF, ZIP, Office macros, and

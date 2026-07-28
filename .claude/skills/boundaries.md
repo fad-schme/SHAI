@@ -203,18 +203,49 @@ if verdict.blocked:
     return "File rejected"
 ```
 
-**Two passes:**
-1. **Structural** — MIME type, extension, size gate, double-extension
-   disguise (`invoice.pdf.exe`), PDF marker set (`/JavaScript`, `/JS`,
-   `/OpenAction`, `/AA`, `/Launch`, `/EmbeddedFile`, `/RichMedia`),
-   SVG script/handler/`javascript:` scan, EXIF + XMP metadata extraction,
-   ZIP entry-count and compression-ratio bomb detection, Office macros.
-2. **Content** — extracted text AND image metadata routed through the
-   configured `text_scanners` chain (injection + jailbreak + identity_spoof
-   when configured). Image-metadata hits are prefixed
+**Two independent scanners**, so a failure in one cannot discard the other's
+findings and each is governed by `on_error` on its own. Audit events for this
+boundary list both adapters, `file_scanner` and `file_content_scan`.
+
+1. **Structural** (`FileScanner`) — MIME type, extension, size gate,
+   double-extension disguise (`invoice.pdf.exe`), PDF marker set
+   (`/JavaScript`, `/JS`, `/OpenAction`, `/AA`, `/Launch`, `/EmbeddedFile`,
+   `/RichMedia`), SVG inspection, archive inspection, EXIF + XMP metadata
+   extraction, Office macros.
+
+   *SVG* — `.svgz` is decompressed first, so a gzipped payload is not invisible
+   to the check. Byte patterns catch scripts, inline handlers and `javascript:`
+   URIs; a tree pass over the parsed document then catches what a regex over XML
+   structurally cannot — namespace-prefixed `<svg:script>`, CDATA-wrapped
+   bodies, numeric character references. `<image>`/`<use>`/`<feImage>` pointing
+   off-host is `file.svg_external_ref` — these fetch on render, making a hostile
+   SVG an SSRF probe. A document declaring XML entities is reported
+   (`file.svg_entity_decl`) rather than parsed. Stdlib `ElementTree`, no
+   `defusedxml`: it retrieves no external DTDs and resolves no external
+   entities, and refusing entity declarations closes expansion.
+
+   *Archives* — the zip family judged from central-directory metadata without
+   decompressing anything; `.gz`/`.bz2`/`.xz`/`.svgz` via a bounded
+   decompression probe, since they declare no trustworthy uncompressed size;
+   tar including compressed tars, plus path-traversal and symlink escapes; one
+   bounded level of nesting, which catches a bomb whose outer container is
+   stored uncompressed; `.7z`/`.rar` reported as uninspectable rather than
+   passed silently.
+
+2. **Content** (`FileContentScanner`) — extracted text AND image metadata routed through the
+   `scan_file.scanners` chain, configured just like `scan_input.scanners` and
+   subject to the same `on_error` policy. Declaring `jailbreak_scan` and
+   `identity_spoof_scan` there checks a poisoned document for guardrail
+   attacks and authority claims, not injection alone; with no `scanners` key a
+   document-tuned injection scanner runs. Image-metadata hits are prefixed
    `file.image_metadata.*` in the audit trail so operators can distinguish
    document-body findings from EXIF/XMP findings without losing the
    underlying category.
+
+   Text is extracted from `.pdf`, `.docx`, the plain-text family (`.txt`,
+   `.md`, `.csv`, `.json`, `.xml`, `.html`, `.yaml`, `.yml`) and `.svg`/`.svgz`.
+   Any other type reaches the chain with document text empty — the structural
+   scanner is the whole control for it.
 
 **Disabled by default** — set `scan_file.enabled: true` in harness.yaml.
 
@@ -237,11 +268,12 @@ if verdict.blocked:
 |---|---|---|---|
 | `RegexPIIScanner` | `harness.adapters.scanners.regex_pii` | Built-in PII + secrets (Luhn-validated cards, structure-validated SSNs, `secret.private_key`, `secret.jwt`, `secret.aws_secret`, `secret.conn_string`, `secret.slack_webhook`) | `scan_input`, `scan_output`, arg scanning |
 | `InjectionScanner` | `harness.adapters.scanners.injection_scan` | `injection_patterns.yaml` — direct injection, tool coercion, encoded payloads, delimiter smuggling (incl. KaTeX/LaTeX invisible text) | `scan_input` |
-| `InjectionScanner` (doc) | same class, different catalog | `patterns_for_doc.yaml` — tuned for document content | `scan_tool_result`, `FileScanner` content pass |
+| `InjectionScanner` (doc) | same class, different catalog | `patterns_for_doc.yaml` — tuned for document content | `scan_tool_result`, `FileContentScanner` default chain |
 | `JailbreakScanner` | `harness.adapters.scanners.jailbreak_scan` | `jailbreak_patterns.yaml` — persona override, refusal suppression, mode activation, prompt extraction, hypothetical laundering | Any text boundary |
 | `IdentitySpoofScanner` | `harness.adapters.scanners.identity_spoof_scan` | `identity_spoof_patterns.yaml` — claimed orchestrator/system authority, peer-privilege claims, tool-result authority | High value at `scan_tool_result` |
 | `HeuristicScanner` | `harness.adapters.scanners.heuristic_scan` | Not YAML-driven. 5 sub-scores: entropy, instruction density, coherence, structural markers, **typoglycemia** (Damerau-Levenshtein-1 against an intent-space keyword list, with anagram-scramble fast path and prefix-relationship rejection so morphology like `ignored`, `filters`, `systems` is not scored) | Always on |
-| `FileScanner` | `harness.adapters.scanners.file_scanner` | Structural + doc patterns + full text-scanner content pass | `scan_file` |
+| `FileScanner` | `harness.adapters.scanners.file_scanner` | Not YAML-driven. Structural only — MIME, extension, size, filename, PDF markers, SVG, archives, EXIF, Office macros | `scan_file` |
+| `FileContentScanner` | `harness.adapters.scanners.file_scanner` | Not YAML-driven. Runs the configured `scan_file.scanners` chain over extracted text and the image EXIF/XMP blob | `scan_file` |
 | `MCPMetadataScanner` | `harness.adapters.scanners.mcp_metadata_scanner` | `mcp_metadata_patterns.yaml` | MCP `tools/list` registration |
 | `RateLimiter` | `harness.adapters.scanners.rate_limiter` | — (config-driven) | `check_tool_call` pre-gate |
 

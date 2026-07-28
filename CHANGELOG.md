@@ -10,6 +10,50 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [0.4.1] — 2026-07-28
+
+### Added
+- **SVG content reaches the `scan_file` content chain.** `.svg` and `.svgz`
+  source now goes through the configured scanners, the same treatment `.xml`
+  and `.html` already got. An injection or persona-override payload sitting in
+  an SVG `<text>`, `<title>` or `<desc>` was previously invisible to
+  `injection_scan` and `jailbreak_scan` — the file produced no content for them
+  to read.
+- **`file.svg_external_ref`** (MEDIUM) — `<image>`, `<use>` and `<feImage>`
+  pointing at an external URL. These fetch when the file is rendered, which
+  makes a hostile SVG an SSRF probe and an exfiltration channel. Fragment refs
+  and `data:` URIs perform no fetch and are not flagged.
+- **`file.svg_entity_decl`** (MEDIUM) — the SVG declares XML entities, so it is
+  reported rather than parsed. Entity expansion is the one hostile-XML case a
+  parser cannot be handed safely; this is the same call the scanner makes for a
+  `.7z` it has no reader for. The ordinary SVG 1.1 doctype every drawing tool
+  emits is not affected — an external DTD reference is never retrieved.
+
+### Fixed
+- **A script-carrying `.svgz` was indistinguishable from a benign one.** `.svgz`
+  is gzip, so the SVG script patterns ran against compressed bytes and could
+  never match. The source is now decompressed first, under the same bound the
+  archive probe uses. Deployments running the default `block_at: high` are
+  unaffected in allow/block terms — `.svg`/`.svgz` already earn a HIGH
+  `file.suspicious_extension` on extension alone — but the audit trail now says
+  *why*. Deployments that lowered `block_at` or dropped `.svg` from the
+  suspicious-extension list will see these files start blocking.
+- **SVG script detection no longer depends on byte patterns alone.** A tree pass
+  over the parsed document catches what a regex over XML structurally cannot:
+  namespace-prefixed elements (`<svg:script>`), CDATA-wrapped handler bodies,
+  and numeric character references in a URI (`&#106;avascript:`). The byte
+  patterns are retained as the floor — they still fire on a document too
+  malformed for an XML parser, which a lenient HTML parser would render anyway.
+  Detection is the union of both passes.
+
+### Security
+- SVG inspection uses stdlib `xml.etree.ElementTree` — **no new dependency**.
+  ElementTree neither retrieves external DTDs nor resolves external entities, so
+  there is no XXE surface; entity expansion is closed by refusing to parse any
+  source carrying an entity declaration. The tree pass is bounded to 1 MB of
+  source, since a parsed tree costs several times the bytes it came from and the
+  structural pass has no size gate ahead of it.
+
 ## [0.4.0] — 2026-07-27
 
 ### Added
@@ -24,6 +68,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   HMAC-SHA256. Sinks and the signer share one canonical encoding
   (`canonical_json` in `harness.core.events`), so the written line minus its
   signature is byte-identical to the payload that was signed.
+- **`on_error` on every scanning boundary** — `fail_closed` (default),
+  `fail_open`, or `degrade`, settable per boundary under `scan_input`,
+  `scan_output`, `scan_tool_result`, and `scan_file`. The key was documented in
+  0.3.0 but never existed in the schema, so a config that set it was rejected
+  at startup; see Fixed. Selecting anything other than the default weakens the
+  posture deliberately — `fail_open` lets content through when a scanner
+  raises. `scan_mcp_metadata` has no `on_error`; it runs at connect time, not
+  per turn.
+- **Multi-scanner file content scanning** — `scan_file.scanners` is the content
+  chain, so a poisoned document can be checked for guardrail attacks and
+  identity spoofing, not injection alone. Declaring `jailbreak_scan` takes a
+  persona-override payload buried in a document body from allowed to blocked.
+  Image EXIF/XMP metadata goes through the same chain, prefixed
+  `file.image_metadata.*` in the audit trail.
+- **Archive inspection across container formats.** The zip family (`.zip`,
+  `.docx`, `.xlsx`, `.pptx`, `.jar`) is judged from central-directory metadata
+  without decompressing anything. Single-stream formats (`.gz`, `.bz2`, `.xz`,
+  `.svgz`) get a bounded decompression probe on stdlib `gzip`/`bz2`/`lzma` —
+  no new dependency — because they declare no trustworthy uncompressed size:
+  gzip's is modulo 2³² and attacker-controlled, so measuring real output is the
+  only honest test. Tar is covered including compressed tars. An archive nested
+  inside an archive is inspected one bounded level deep, which catches a bomb
+  whose outer container is stored uncompressed and therefore looks unremarkable
+  to any metadata check. `.7z` and `.rar` have no stdlib reader and are
+  reported as uninspectable rather than passed silently.
 
 ### Changed
 - `patterns_db.path` now also backs the heuristic-candidate cache, which
@@ -68,6 +137,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   definition, so a rejected config never leaves a partially loaded agent.
   Deployments carrying a malformed `limits:` block will fail to start until it
   is corrected.
+- **BREAKING**: `scan_file.scanners` is the file's **content** chain — each
+  scanner receives text extracted from the file and, for images, the EXIF/XMP
+  blob. Previously `run_file_scan` handed those entries the file *path*, so a
+  text scanner declared there could never match anything. Declared scanners are
+  authoritative, as at every other boundary; with no `scanners` key a
+  document-tuned injection scanner runs so an enabled boundary is never a
+  no-op. `heuristic_scan` is still appended automatically as the always-on
+  structural backstop. A config that already listed scanners there was getting
+  nothing from them and will now get real verdicts — expect new denials on
+  files that previously passed.
+- **BREAKING**: per-scanner `action` and `redact_with` are rejected under
+  `scan_file` with a `ConfigError`. The whole chain runs inside one content
+  scanner, so the boundary has a single scanner to index overrides against and
+  the keys were silently ignored. Use the boundary-level `action` instead, and
+  remove them from any existing `scan_file` block or startup fails.
+- **BREAKING**: the `file.zip_bomb` finding category is gone, replaced by
+  `file.archive_bomb` — the scope is no longer zip. Policy rules matching the
+  old name stop matching. Two categories join it: `file.archive_escape` (HIGH)
+  for tar path traversal and symlink members, and `file.unscannable_archive`
+  (MEDIUM) for a container with no available reader.
+- **Archive uploads that previously passed will now be denied.** `.tar`,
+  `.gz`, `.xz`, `.7z` and `.rar` produced no findings at all before this
+  release, so any deployment accepting them should expect new denials on first
+  upgrade. Scanning a single-stream archive also now costs up to 50 MB of
+  bounded decompression where it previously cost nothing; the zip path still
+  decompresses nothing.
+- `scan_file` audit events list two adapters, `file_scanner` and
+  `file_content_scan`, where they previously listed one. The structural pass
+  and the content chain are now separate scanners at the boundary. Log
+  consumers keying on the `adapters` array should expect both.
 
 ### Fixed
 - Signed pattern rules applied with `shai patterns apply` are now read at
@@ -107,6 +206,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A budget configured with only `loop_detection_window` never reached the
   enforcer. `ExecutionLimits.any_enabled()` tested the numeric limits and
   ignored loop detection, and callers gate the whole budget check on it.
+- `on_error` now exists and takes effect. The key was documented in 0.3.0 but
+  was never added to the config schema, so `BoundaryConfig`'s `extra="forbid"`
+  rejected any config that set it — and the facade passed no value to any
+  boundary, leaving all of them on the hardcoded `fail_closed` default. Every
+  boundary now reads its own setting. Deployments that were unknowingly running
+  `fail_closed` keep that behaviour, because it is still the default.
+- A file content scanner that raised was caught and logged inside
+  `FileScanner`, so the boundary saw a successful result and emitted
+  `decision=allow` with no `SYSTEM` event — `on_error` never applied to the
+  content chain. Exceptions now propagate so the boundary policy decides:
+  `fail_closed` blocks, `fail_open` allows, `degrade` warns, each alongside a
+  `SYSTEM` event recording the failure.
+- A failing content scanner no longer disarms the structural pass. The two now
+  run as independent scanners at the boundary, so a file carrying an embedded
+  script is still blocked on its structural findings when the content chain
+  raises — under `fail_open` and `degrade` such a file previously passed with
+  no findings at all. Their circuit breakers are independent too: repeated
+  content failures used to open the single file-scanner breaker and silently
+  stop MIME, PDF-JavaScript and ZIP checks along with it.
 
 ### Removed
 - **BREAKING**: `max_tokens_per_session` and `tool_cost_weights`, from
@@ -124,6 +242,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ignored.
 - `SessionBudget.new_prompt()` — superseded. It could not make fan-out work on
   its own, because `check()` counts a call only when `prompt_id` is supplied.
+- `FileScanner.__init__`'s singular `text_scanner` parameter — superseded by
+  `text_scanners`. It existed to keep one internal call site working, and that
+  call site now passes the chain.
+- `scan_file_scanner_actions` and `scan_file_redact_withs` from `SHAI.__init__`,
+  following the rejection of per-scanner overrides at that boundary. They could
+  only ever carry `None`. `SHAI.from_yaml()` is the documented construction path
+  and is unaffected.
 
 ### Security
 - Detection rules distributed through the signed pattern DB now take effect at
@@ -165,6 +290,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its budget could simply delegate to keep working. The same gap split
   threat-accumulator evidence across two session keys, so escalation stopped
   accumulating across a delegation.
+- Uploaded documents are checked for more than injection. The file boundary's
+  content chain accepted only one scanner in practice, so guardrail attacks and
+  identity spoofing hidden in a document body or in image EXIF/XMP passed
+  unexamined. Declaring the scanners under `scan_file.scanners` now runs them.
+- `on_error` is enforceable at the file boundary for the first time. A content
+  scanner that failed was silently skipped and the file allowed; under the
+  default `fail_closed` such a file is now blocked, and under any policy the
+  structural findings survive the failure.
+- Structural file checks are no longer collateral damage when content scanning
+  breaks. MIME, PDF `/JavaScript`, SVG script, archive-bomb and Office-macro
+  detection now run in their own scanner with their own circuit breaker, so
+  neither a raising content scanner nor a tripped content breaker can stop
+  them.
+- Compression bombs are detected outside zip. `.gz`, `.bz2`, `.xz`, `.tar`,
+  `.7z` and `.rar` previously produced **no findings of any kind** — they were
+  not merely missing bomb detection, they were invisible to the boundary. Tar
+  archives are additionally checked for path traversal and symlink escapes,
+  which is a distinct attack class: escaping the extraction root rather than
+  exhausting resources.
+
+  Two limitations worth knowing before enabling `scan_file` on untrusted
+  uploads at volume. The bomb test requires a ratio above 100 **and** output
+  above 50 MB, so a file with a merely healthy ratio passes and is then fully
+  decompressed — a 3 MB `.tar.gz` expanding to 203 MB (63:1) is judged clean
+  and all 203 MB is decompressed during member enumeration, which scales to
+  roughly 5 GB at a 50 MB upload allowance. Requiring both conditions is
+  deliberate, since legitimate archives do compress that well, but it means
+  absolute expansion is unbounded below the ratio threshold. And the probe is
+  blocking work inside an async scanner: one 29 KB `.xz` file stalled the event
+  loop for 0.21 s, which every concurrent agent turn in the process shares.
 
 ## [0.3.0] — 2026-07-23
 

@@ -6,6 +6,11 @@ scan_input:
   enabled: true
   block_at: high
   action: block               # block | alert | redact
+  # on_error: what happens when a scanner raises an exception.
+  #   fail_closed — treat as BLOCK (default, correct security posture)
+  #   fail_open   — treat as empty findings (use during rollout / testing)
+  #   degrade     — treat as WARN; content passes, audit event flagged
+  on_error: fail_closed
   scanners:
     - name: regex_pii
       action: redact          # redact PII instead of blocking
@@ -17,6 +22,7 @@ scan_output:
   enabled: true
   block_at: high
   action: block
+  on_error: fail_closed
   scanners:
     - name: regex_pii
       action: redact
@@ -26,6 +32,26 @@ scan_tool_result:
   enabled: true
   block_at: high
   action: block
+  on_error: fail_closed
+
+# ── File upload scanning ──────────────────────────────────────────────────
+# The structural pass always runs and needs no configuration: MIME, size,
+# extension, PDF JavaScript, SVG scripts and external references, EXIF, Office
+# macros, and archive inspection across the zip family, gzip/bzip2/xz, and tar
+# (bombs, path traversal, symlink escapes; 7z/rar reported as uninspectable).
+# `scanners` is the content chain that runs after it, over text extracted from
+# the file and the EXIF/XMP blob for images — configured exactly like
+# scan_input.
+scan_file:
+  enabled: false
+  block_at: high
+  action: block
+  on_error: fail_closed
+  max_size_mb: 50
+  scanners:
+    - name: injection_scan
+    - name: jailbreak_scan
+    - name: regex_pii
 
 scan_mcp_metadata:
   enabled: true

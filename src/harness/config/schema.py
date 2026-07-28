@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from harness.core.errors import ConfigError
-from harness.core.types import ScanAction, Severity, Transport
+from harness.core.types import OnError, ScanAction, Severity, Transport
 
 
 class AdapterRef(BaseModel, frozen=True, extra="forbid"):
@@ -99,10 +99,15 @@ class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
               block  — reject the content (default)
               alert  — pass through and emit a WARN audit event
               redact — replace matched PII with redact_with placeholder and pass through
+    on_error: what happens when a scanner raises.
+              fail_closed — treat as BLOCK (default, correct security posture)
+              fail_open   — treat as empty findings (rollout / testing only)
+              degrade     — treat as WARN; content passes, audit event flagged
     """
     enabled:  bool       = True
     block_at: Severity   = Severity.HIGH
     action:   ScanAction = ScanAction.BLOCK
+    on_error: OnError    = OnError.FAIL_CLOSED
     scanners: list[AdapterRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -115,14 +120,40 @@ class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
 class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
     """Configuration for the scan_file boundary.
 
-    Extends BoundaryConfig with file-specific constraints.
-    max_size_mb:  reject files above this size before any scanning.
+    Same keys as BoundaryConfig, plus file-specific constraints. `scanners`
+    means the same thing here as it does for scan_input: the content chain.
+    Each scanner receives text extracted from the file and, for images, the
+    EXIF/XMP metadata blob — never the path. The structural pass (MIME, size,
+    extension, PDF JS, SVG, ZIP, Office macros) always runs ahead of it.
+
+    max_size_mb: reject files above this size before any scanning.
     """
     enabled:             bool         = True
     block_at:            Severity     = Severity.HIGH
     action:              ScanAction   = ScanAction.BLOCK
+    on_error:            OnError      = OnError.FAIL_CLOSED
     scanners:            list[AdapterRef] = Field(default_factory=list)
     max_size_mb:         float        = 100.0
+
+    @model_validator(mode="after")
+    def _no_per_scanner_action(self) -> FileScanConfig:
+        """Reject per-scanner action/redact_with under scan_file.
+
+        The content chain runs inside FileScanner, so the boundary sees one
+        scanner and per-scanner overrides have nothing to index against — they
+        would be silently ignored. Use the boundary-level `action` instead.
+        """
+        bad = [
+            s.name for s in self.scanners
+            if s.action is not None or s.redact_with is not None
+        ]
+        if bad:
+            raise ValueError(
+                f"scan_file scanners do not support per-scanner 'action' or "
+                f"'redact_with' (set on: {', '.join(bad)}). Use the "
+                f"boundary-level 'action' for scan_file."
+            )
+        return self
 
 
 
@@ -245,10 +276,14 @@ class ToolResultScanConfig(BaseModel, frozen=True, extra="forbid"):
     Scans tool return values before they re-enter the LLM context.
     Mitigates T6 indirect prompt injection (injected content in tool results).
     Pattern file is the bundled patterns_for_doc.yaml — no config needed.
+
+    on_error: same semantics as every other boundary — fail_closed (default),
+              fail_open, or degrade.
     """
     enabled:  bool       = False
     block_at: Severity   = Severity.HIGH
     action:   ScanAction = ScanAction.BLOCK
+    on_error: OnError    = OnError.FAIL_CLOSED
 
 
 class SourceConfig(BaseModel, frozen=True, extra="forbid"):

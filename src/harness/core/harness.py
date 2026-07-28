@@ -80,8 +80,6 @@ class SHAI:
         scan_output_scanner_actions: list[ScanAction | None],
         scan_output_redact_withs: list[str | None],
         scan_file_action: ScanAction,
-        scan_file_scanner_actions: list[ScanAction | None],
-        scan_file_redact_withs: list[str | None],
         scan_tool_result_action: ScanAction,
         tool_result_scanners: list,
         scan_tool_result_enabled: bool,
@@ -113,8 +111,6 @@ class SHAI:
         self._scan_output_scanner_actions   = scan_output_scanner_actions
         self._scan_output_redact_withs      = scan_output_redact_withs
         self._scan_file_action              = scan_file_action
-        self._scan_file_scanner_actions     = scan_file_scanner_actions
-        self._scan_file_redact_withs        = scan_file_redact_withs
         self._scan_tool_result_action       = scan_tool_result_action
         self._rate_limiter              = rate_limiter
         self._session_budget            = SessionBudget()
@@ -326,7 +322,6 @@ class SHAI:
 
         inp_actions, inp_redacts     = _scanner_meta(config.scan_input.scanners)
         out_actions, out_redacts     = _scanner_meta(config.scan_output.scanners)
-        file_actions, file_redacts   = _scanner_meta(config.scan_file.scanners)
 
         rl_cfg = config.check_tool_call.rate_limit
         rate_limiter = (
@@ -372,8 +367,6 @@ class SHAI:
             scan_output_scanner_actions=out_actions,
             scan_output_redact_withs=out_redacts,
             scan_file_action=config.scan_file.action,
-            scan_file_scanner_actions=file_actions,
-            scan_file_redact_withs=file_redacts,
             scan_tool_result_action=config.scan_tool_result.action,
             connectivity_secret=connectivity_secret,
         )
@@ -557,6 +550,7 @@ class SHAI:
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
+            on_error=self._config.scan_input.on_error,
         )
 
         # Record signals from the input scan
@@ -607,6 +601,7 @@ class SHAI:
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
+            on_error=self._config.scan_input.on_error,
         )
 
     async def scan_injection(self, text: str, ctx: AgentContext) -> ScanVerdict:
@@ -636,6 +631,7 @@ class SHAI:
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
+            on_error=self._config.scan_input.on_error,
         )
 
     async def check_tool_call(
@@ -809,8 +805,10 @@ class SHAI:
         return await run_file_scan(
             str(path), ctx,
             scanners=self._file_scanners,
-            scanner_actions=self._scan_file_scanner_actions,
-            scanner_redact_withs=self._scan_file_redact_withs,
+            # scan_file has no per-scanner overrides — FileScanConfig rejects
+            # them, so the boundary action applies to the whole content chain.
+            scanner_actions=[],
+            scanner_redact_withs=[],
             boundary_action=self._scan_file_action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
@@ -819,6 +817,7 @@ class SHAI:
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
+            on_error=self._config.scan_file.on_error,
         )
 
     async def scan_tool_result(
@@ -873,6 +872,7 @@ class SHAI:
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
+            on_error=self._config.scan_tool_result.on_error,
         )
 
         # Record signals from the tool result scan
@@ -898,6 +898,7 @@ class SHAI:
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
+            on_error=self._config.scan_output.on_error,
         )
 
         # Option A: consolidated risk-based block. Even if no individual
@@ -1251,28 +1252,34 @@ _build_scanners = _build_text_scanners
 
 
 def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
-    """Build file scanners — always includes FileScanner as the structural pass.
+    """Build the scan_file scanner list.
 
-    FileScanner runs structural checks (MIME, size, extension, PDF JS, EXIF, ZIP,
-    Office macros) then runs InjectionScanner on extracted text content.
-    Additional scanners declared in config are appended after.
+    Two independent scanners, so a failing content scanner cannot discard the
+    structural findings and each is governed by on_error on its own:
+
+      FileScanner        — structural pass (MIME, size, extension, PDF JS, SVG,
+                           EXIF, ZIP, Office macros)
+      FileContentScanner — the configured chain over extracted text and image
+                           metadata
+
+    `scan_file.scanners` is that content chain and is authoritative, exactly as
+    `scan_input.scanners` is for input — declared scanners are what run over
+    extracted content. When nothing is declared, a document-tuned injection
+    scanner is the default so an enabled boundary is never a no-op.
     """
-    from harness.adapters.scanners.file_scanner import FileScanner
+    from harness.adapters.scanners.file_scanner import (
+        FileContentScanner,
+        FileScanner,
+    )
 
-    text_scanner = _make_injection_doc_scanner()
-    scanners = [FileScanner(max_size_mb=max_size_mb, text_scanner=text_scanner)]
-
-    for ref in adapter_refs:
-        if ref.name in {"file_scanner"}:
-            continue  # already added above
-        try:
-            from harness.adapters.discovery import resolve
-            cls = resolve("harness.scanners", ref.name)
-            scanners.append(cls(**ref.config))
-        except Exception as e:
-            log.warning("file scanner adapter not found — skipped",
-                        extra={"adapter_name": ref.name, "error": str(e)})
-    return scanners
+    refs = [r for r in adapter_refs if r.name != "file_scanner"]
+    text_scanners = (
+        _build_text_scanners(refs) if refs else [_make_injection_doc_scanner()]
+    )
+    return [
+        FileScanner(max_size_mb=max_size_mb),
+        FileContentScanner(text_scanners=text_scanners, max_size_mb=max_size_mb),
+    ]
 
 
 def _build_sinks(adapter_refs: list) -> list:
