@@ -90,21 +90,30 @@ sufficient on its own — the transport enforces its own URL/method lists too.
 Emitted per outbound request when a token is present. Written to the same
 audit sinks as `AuditEvent`. Distinguished by `event_type="network_egress"`.
 
+Written as one JSON object per line, keys sorted, nulls omitted:
+
 ```json
 {
-  "event_type":  "network_egress",
-  "token_id":    "uuid-1234",       ← join key with check_tool_call AuditEvent
-  "source_name": "slack_mcp",
   "agent_id":    "orchestrator",
-  "tool_name":   "search_messages",
-  "destination": "https://mcp.slack.com/api/search.messages",
-  "method":      "POST",
-  "status":      "allowed",
-  "bytes_sent":  1240,
   "bytes_recv":  8820,
-  "duration_ms": 142
+  "bytes_sent":  1240,
+  "destination": "https://mcp.slack.com/api/search.messages",
+  "duration_ms": 142,
+  "event_type":  "network_egress",
+  "method":      "POST",
+  "signature":   "a3f2b1c4d5e6...",
+  "source_name": "slack_mcp",
+  "status":      "allowed",
+  "tenant_id":   "acme",
+  "timestamp":   "2026-07-27T12:00:00Z",
+  "token_id":    "uuid-1234",
+  "tool_name":   "search_messages"
 }
 ```
+
+`token_id` is the join key with the `check_tool_call` `AuditEvent`. `signature`
+is present only when `audit_signing.enabled`. `sub_agent_id` and `deny_reason`
+are omitted here because they are null on this event.
 
 **Token_id joins gate + network events:**
 ```sql

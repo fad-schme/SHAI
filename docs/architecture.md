@@ -30,7 +30,7 @@ src/harness/
 │   └── errors.py                      HarnessError hierarchy
 ├── boundaries/
 │   ├── check_tool_call.py             four-layer tool gate (L1–L4)
-│   ├── session_budget.py              DoS budget enforcer (R2): step, token, fan-out, loop
+│   ├── session_budget.py              DoS budget enforcer (R2): step, fan-out, loop
 │   └── _scan.py                       scan_input, scan_output, scan_tool_result, scan_file
 ├── adapters/
 │   ├── scanners/
@@ -76,7 +76,7 @@ The mandatory gate. Cannot be disabled. Two pre-gate controls run before the fou
 
 ```
 R1: Rate limiter      — sliding-window token bucket (RateLimiter)
-R2: Session budget    — step counter, token burn-down, fan-out, loop detection (SessionBudget)
+R2: Session budget    — step counter, fan-out, loop detection (SessionBudget)
     Pre-gate          — agent registered?
 L1: allowed_tool_names hard gate
 L2: allowed_tags subagent capability gate
@@ -86,18 +86,19 @@ L4: arg scanning (sensitive-tagged tools only)
 
 ### Session Budget — `boundaries/session_budget.py`
 
-`SessionBudget` is a thread-safe, per-session enforcer for DoS / Unbounded Consumption (OWASP T4). One instance per SHAI facade, keyed by `(agent_id, session_id)`. All controls are opt-in via `None` defaults.
+`SessionBudget` is a thread-safe, per-session enforcer for DoS / Unbounded Consumption (OWASP T4). One instance per SHAI facade, keyed by `(agent_id, session_id)` where `session_id` is `ctx.conversation_id or ctx.agent_id`. All controls are opt-in via `None` defaults.
+
+Every control counts something SHAI observes at its own boundary.
 
 | Control | Trigger |
 |---|---|
 | **Step counter** | `state.steps >= max_steps` — blocks before the call is recorded |
-| **Token burn-down** | `state.tokens + cost > max_tokens_per_session` — cost = `tokens_consumed × tool_cost_weights.get(tool, 1)` |
-| **Per-prompt fan-out** | `state.prompt_calls >= max_tool_calls_per_prompt` — resets when `prompt_id` changes |
+| **Per-prompt fan-out** | `state.prompt_calls >= max_tool_calls_per_prompt` — resets when `prompt_id` changes, which the facade sources from `TurnSignals.turn_id` |
 | **Loop detection** | Jaccard similarity ≥ `loop_similarity_threshold` against last `loop_detection_window` fingerprints |
 
 Fingerprints are `frozenset` of `"key=value"` strings (values truncated at 128 chars). `loop_detection_window=0` (default) disables loop detection.
 
-Config lives in `harness.yaml` under `check_tool_call.execution_budget:`. Per-agent overrides in `agent-xx.yaml` under `limits:` are merged on top of global defaults at `load_agent()` time. Invalid agent overrides fall back to global defaults with a warning log.
+Config lives in `harness.yaml` under `check_tool_call.execution_budget:`. Per-agent overrides in `agent-xx.yaml` under `limits:` are merged on top of global defaults at `load_agent()` time. An invalid `limits:` block is rejected while parsing `agent-xx.yaml`, so `load_agent()` raises `ConfigError` before anything is registered and `reload_agent()` leaves the previous definition intact. Loading is therefore atomic: the harness never holds an agent whose budget could not be built, which would otherwise be gated with no budget at all. Falling back to global defaults is deliberately not an option — it would discard the agent's valid limits along with the bad key.
 
 Budget state is cleaned up in `deregister_agent()` via `session_budget.reset(agent_id)`.
 

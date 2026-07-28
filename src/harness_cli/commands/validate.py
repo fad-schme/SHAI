@@ -58,8 +58,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
     active = []
     if budget.max_steps is not None:
         active.append(f"max_steps={budget.max_steps}")
-    if budget.max_tokens_per_session is not None:
-        active.append(f"max_tokens={budget.max_tokens_per_session}")
     if budget.max_tool_calls_per_prompt is not None:
         active.append(f"fan_out={budget.max_tool_calls_per_prompt}")
     if budget.loop_detection_window > 0:

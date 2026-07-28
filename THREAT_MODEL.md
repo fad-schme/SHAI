@@ -128,20 +128,22 @@ are intersected in layer 5.
 
 ### T4 — Resource overload / runaway execution
 
-**Attack:** an agent enters an infinite loop, calls tools thousands of times,
-or blows through a token budget.
+**Attack:** an agent enters an infinite loop or calls tools thousands of times.
 
-**SHAI control:** `SessionBudget` enforces `max_steps`, `max_tokens_per_session`,
+**SHAI control:** `SessionBudget` enforces `max_steps` and
 `max_tool_calls_per_prompt`. `RateLimiter` provides per-tool and per-window
 call caps. Loop detection triggers on similarity within `loop_detection_window`.
 
-**Tests:** `tests/unit/test_session_budget.py`, `tests/unit/test_rate_limiter.py`.
+**Tests:** `tests/unit/test_session_budget.py`,
+`tests/integration/test_session_budget_wiring.py`, `tests/unit/test_rate_limiter.py`.
 
 **Residual risk:**
 - Limits are per SHAI instance. A distributed agent fleet needs a shared
   state backend (planned Enterprise feature) to enforce cross-process budgets.
-- Token accounting depends on the caller reporting token usage back to SHAI.
-  A caller that does not report token usage bypasses `max_tokens_per_session`.
+- Budgets key on `ctx.conversation_id`, which the calling application supplies
+  and SHAI cannot verify. An integrator that derives it from attacker-influenced
+  input, or rotates it per call, voids both this control and the session
+  threat accumulator.
 
 ---
 

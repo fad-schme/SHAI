@@ -25,7 +25,9 @@ class AgentContext(BaseModel, frozen=True):
     agent_id:        str
     sub_agent_id:    str | None = None
     allowed_tags:    list[str] | None = None
-    conversation_id: str | None = None  # session key for threat accumulator
+    # Session key for all session-scoped state — the threat accumulator and
+    # SessionBudget both key on `conversation_id or agent_id`.
+    conversation_id: str | None = None
 
     # Set to True by the agent after obtaining explicit human confirmation
     # for the current action. Required by SENSITIVE and IRREVERSIBLE tools.
@@ -54,6 +56,10 @@ class AgentContext(BaseModel, frozen=True):
           - agent_id preserved (identifies the parent)
           - sub_agent_id set
           - allowed_tags narrowed to the subagent's declared tags
+          - conversation_id preserved — delegation happens inside the parent's
+            conversation, so session-keyed state (SessionBudget, the threat
+            accumulator) must stay on one key. Dropping it hands a subagent a
+            fresh step budget and splits accumulated threat evidence in two.
 
         Note: turn_signals is NOT propagated to subagents. Subagent invocations
         are separate turns from the parent's perspective.
@@ -62,6 +68,7 @@ class AgentContext(BaseModel, frozen=True):
             agent_id=self.agent_id,
             sub_agent_id=sub_agent_id,
             allowed_tags=allowed_tags,
+            conversation_id=self.conversation_id,
         )
 
     def to_log_fields(self) -> dict[str, str | None]:

@@ -65,8 +65,8 @@ boundaries SHAI is designed to enforce:
   access to the signing secret
 - **Scanner bypass** — crafted input that evades all scanners despite containing
   a detectable injection or PII pattern (including encoding bypasses)
-- **Session budget bypass** — a method to exceed configured `max_steps`,
-  `max_tokens_per_session`, or `max_tool_calls_per_prompt` limits
+- **Session budget bypass** — a method to exceed configured `max_steps`
+  or `max_tool_calls_per_prompt` limits
 - **Cross-tenant data exposure** — audit events, tool results, or session state
   leaking across agent or tenant boundaries
 

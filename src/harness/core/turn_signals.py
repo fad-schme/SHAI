@@ -27,6 +27,7 @@ diminishing returns as evidence accumulates.
 from __future__ import annotations
 
 import math
+from uuid import uuid4
 
 from harness.core.types import ScanStatus, Severity
 from harness.core.verdicts import ScanVerdict
@@ -50,6 +51,7 @@ class TurnSignals:
     """
 
     __slots__ = (
+        "turn_id",
         "input_verdict",
         "input_categories",
         "input_max_severity",
@@ -62,6 +64,11 @@ class TurnSignals:
     )
 
     def __init__(self) -> None:
+        # Identifies this turn. SessionBudget uses it as the fan-out key —
+        # a fresh TurnSignals means a new turn, which resets the per-prompt
+        # counter without the caller having to track turn boundaries.
+        self.turn_id: str = uuid4().hex
+
         # Input signals
         self.input_verdict: ScanStatus | None = None
         self.input_categories: set[str] = set()

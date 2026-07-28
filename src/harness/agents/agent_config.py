@@ -102,8 +102,29 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
     log_level:  str = "INFO"
     audit_tags: dict[str, str] = Field(default_factory=dict)
     limits:     dict[str, Any] = Field(default_factory=dict)
-    # Per-agent execution budget overrides.  Parsed lazily into ExecutionBudgetConfig
-    # by the SHAI facade at load_agent() time to avoid a circular import.
+    # Per-agent execution budget overrides.  Merged onto the global budget by the
+    # SHAI facade; validated here at parse time (see _valid_limits).
+
+    @field_validator("limits")
+    @classmethod
+    def _valid_limits(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject unknown or ill-typed limit keys while parsing the file.
+
+        Validating here rather than at load_agent() keeps agent loading atomic:
+        a bad `limits:` block fails before anything is registered, so the harness
+        can never hold an agent whose execution budget could not be built — such
+        an agent would be gated with no budget at all.
+        """
+        if not v:
+            return v
+        # Local import: config.schema imports this module for RuleConfig.
+        from harness.config.schema import ExecutionBudgetConfig
+
+        try:
+            ExecutionBudgetConfig.model_validate(v)
+        except Exception as e:
+            raise ValueError(f"invalid limits: block: {e}") from e
+        return v
 
     @field_validator("id")
     @classmethod

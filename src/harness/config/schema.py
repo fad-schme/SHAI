@@ -153,21 +153,19 @@ class ExecutionBudgetConfig(BaseModel, frozen=True, extra="forbid"):
 
     All limits default to None (disabled).  Set any limit to enable enforcement.
 
+    Every control counts something SHAI observes at its own boundary.
+
     max_steps:                 maximum total tool calls per session
-    max_tokens_per_session:    cumulative token ceiling per session
     max_tool_calls_per_prompt: fan-out ceiling per user turn
-    tool_cost_weights:         {tool_name: int} cost multiplier applied to token tracking
     loop_detection_window:     how many recent fingerprints to check for duplicates
     loop_similarity_threshold: Jaccard similarity at which a call is flagged as a loop
     """
     max_steps:                  int | None        = None
-    max_tokens_per_session:     int | None        = None
     max_tool_calls_per_prompt:  int | None        = None
-    tool_cost_weights:          dict[str, int]    = Field(default_factory=dict)
     loop_detection_window:      int               = 0    # 0 = disabled
     loop_similarity_threshold:  float             = 0.95
 
-    @field_validator("max_steps", "max_tokens_per_session", "max_tool_calls_per_prompt",
+    @field_validator("max_steps", "max_tool_calls_per_prompt",
                      mode="before")
     @classmethod
     def _positive_or_none(cls, v: int | None) -> int | None:

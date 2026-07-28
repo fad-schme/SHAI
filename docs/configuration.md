@@ -227,7 +227,6 @@ policy_rules:
 # Optional per-agent overrides of the global execution budget
 limits:
   max_steps: 20
-  max_tokens_per_session: 30000
   max_tool_calls_per_prompt: 5
 ```
 

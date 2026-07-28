@@ -50,6 +50,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   disk, but a consumer that captured `event.signature` in process — via a custom
   sink or `collect_events()` — and kept it for later comparison must
   re-baseline.
+- **BREAKING**: session execution budgets are keyed per conversation
+  (`ctx.conversation_id`, falling back to `agent_id`) instead of collapsing onto
+  a single per-agent bucket. `max_steps` is now a per-conversation ceiling. For a
+  deployment running many conversations through one agent this is a
+  **loosening** — the old single bucket capped that agent's traffic in
+  aggregate, which was an accident of the broken session key rather than a
+  designed limit. Leave `conversation_id` unset to keep the aggregate behaviour.
+- Subagent contexts inherit their parent's `conversation_id`, so a delegated
+  call shares the parent's budget and threat-accumulator session.
+- **BREAKING**: an invalid `limits:` block in `agent-xx.yaml` is now rejected
+  while parsing the file, instead of logging a warning and falling back to
+  global defaults. The old behaviour discarded the block whole, so one bad key
+  silently dropped the agent's *valid* limits too — an agent declaring
+  `max_steps` could end up unbounded. `load_agent()` raises `ConfigError`
+  before registering anything and `reload_agent()` keeps the previous
+  definition, so a rejected config never leaves a partially loaded agent.
+  Deployments carrying a malformed `limits:` block will fail to start until it
+  is corrected.
 
 ### Fixed
 - Signed pattern rules applied with `shai patterns apply` are now read at
@@ -75,6 +93,37 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `StdoutSink` and `FileSink` satisfy the `AuditSink` protocol. A stray
   `collect_events` definition had been pasted into the Protocol body, so neither
   reference sink structurally matched the interface it implements.
+- Three of the four session budget controls never fired. `check_tool_call` read
+  its session key from `getattr(ctx, "session_id", ...)` and its per-prompt key
+  from `getattr(ctx, "prompt_id", None)`; `AgentContext` has neither field and
+  ignores unknown ones, so both lookups were dead by construction. Every session
+  collapsed onto one per-agent bucket and `max_tool_calls_per_prompt` never
+  enforced at all. The session key now comes from `ctx.conversation_id or
+  ctx.agent_id` — the key the threat accumulator already used — and the fan-out
+  key from `TurnSignals.turn_id`, created at `scan_input` and cleared at
+  `scan_output`, so a new user turn resets the counter without the caller
+  tracking turn boundaries. Fan-out consequently requires `scan_input` to have
+  run: a tool-only flow that never calls it gets no fan-out ceiling.
+- A budget configured with only `loop_detection_window` never reached the
+  enforcer. `ExecutionLimits.any_enabled()` tested the numeric limits and
+  ignored loop detection, and callers gate the whole budget check on it.
+
+### Removed
+- **BREAKING**: `max_tokens_per_session` and `tool_cost_weights`, from
+  `check_tool_call.execution_budget` in `harness.yaml` and from agent `limits:`
+  blocks. SHAI does not own the agent loop and never observes the LLM call, so a
+  token ceiling could only act on a figure self-reported by the process being
+  governed — an assertion, not an enforceable control. Cap token spend at the
+  model provider. `SessionBudget` is now three controls: step counter,
+  per-prompt fan-out, loop detection.
+
+  **Strip both keys from every config file before upgrading — agent files
+  included.** A stale key raises `ConfigError` wherever it appears: at
+  `SHAI.from_yaml()` for `harness.yaml`, at `load_agent()` for an agent's
+  `limits:` block. Startup fails until the keys are gone; nothing is silently
+  ignored.
+- `SessionBudget.new_prompt()` — superseded. It could not make fan-out work on
+  its own, because `check()` counts a call only when `prompt_id` is supplied.
 
 ### Security
 - Detection rules distributed through the signed pattern DB now take effect at
@@ -105,6 +154,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   operator holding only the JSONL file and the key can confirm every line —
   editing a recorded decision, or checking with the wrong key, fails
   verification.
+- The T4 resource-overload controls enforce for the first time. `max_steps`,
+  `max_tool_calls_per_prompt`, and loop detection were all reachable only by
+  accident or not at all — a deployment carrying these limits in config was
+  running without them. Expect new denials on first upgrade wherever they are
+  configured.
+- Step-limit bypass through delegation closed. `scope_subagent()` did not carry
+  `conversation_id`, so a subagent keyed on a different budget bucket than its
+  parent and received a fresh `max_steps` allowance — an agent that exhausted
+  its budget could simply delegate to keep working. The same gap split
+  threat-accumulator evidence across two session keys, so escalation stopped
+  accumulating across a delegation.
 
 ## [0.3.0] — 2026-07-23
 

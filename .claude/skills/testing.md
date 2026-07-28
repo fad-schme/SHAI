@@ -28,6 +28,51 @@ async def test_something():
 
 ---
 
+## Test doubles: real implementations, not mocks
+
+Mock what is genuinely external. Never mock SHAI's own code — it runs in
+memory and costs nothing to instantiate, and a mock of it hides exactly the
+defects the test exists to catch. A broken audit serializer survived the whole
+suite because `AuditEmitter` was mocked at every call site.
+
+Shared doubles live in `tests/conftest.py` — import them, do not re-declare:
+
+```python
+from tests.conftest import RecordingSink, FailingScanner
+
+# Real AuditEmitter + real sink — asserts on emitted event objects
+sink    = RecordingSink()
+emitter = AuditEmitter([sink])
+...
+assert len(sink.events) == 1
+assert sink.events[0].decision == Decision.BLOCKED
+
+# A scanner that raises, for on_error and circuit-breaker paths.
+# A real class, not MagicMock: a mock satisfies any attribute access and
+# keeps passing when the Scanner protocol gains a required member.
+scanners = [FailingScanner(name="bad")]
+```
+
+**When the assertion is about serialized output, `RecordingSink` is not
+enough** — it stores objects. Use the real sink so the serializer actually runs:
+
+```python
+import io, json
+from harness.adapters.audit_sinks.stdout import StdoutSink
+
+buf = io.StringIO()
+emitter = AuditEmitter([StdoutSink(stream=buf)])
+...
+line = json.loads(buf.getvalue().strip())
+assert line["token_id"] == expected_token_id
+```
+
+Legitimate mocks are the ones standing in for something outside the process:
+the inner `httpx` transport in `ShaiTransport` tests, and third-party framework
+objects in integration wrappers.
+
+---
+
 ## Testing with collect_events()
 
 The primary pattern for testing boundary behaviour:

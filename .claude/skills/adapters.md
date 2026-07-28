@@ -53,12 +53,14 @@ class MyScanner:
 ## AuditSink
 
 ```python
-from harness.core.events import AuditEvent
+from harness.core.events import AnyAuditEvent
 
 class MySink:
     name = "my_sink"
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: AnyAuditEvent) -> None:
+        # AnyAuditEvent = AuditEvent | NetworkAuditEvent. A sink receives both:
+        # boundary events and network_egress events go to the same sinks.
         # Ship the event. Raise on failure — AuditEmitter handles partial failures.
         ...
 
@@ -69,6 +71,8 @@ class MySink:
 
 **Rules:**
 - `emit()` must be safe for concurrent async calls
+- `emit()` must handle both event types — branch on `event.event_type` if you
+  need to distinguish, or serialise generically via `canonical_json(event)`
 - `close()` must be idempotent
 - Raise on failure — never swallow exceptions (AuditEmitter handles them)
 - Never log `event.extra` raw values

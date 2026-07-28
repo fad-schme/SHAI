@@ -182,13 +182,19 @@ Consumers should treat unknown `extra` keys as informational and forward-compati
 Emitted by `ShaiTransport` for outbound MCP requests when `connectivity.enabled`.
 Written to the same sinks. Distinguished by `event_type="network_egress"`.
 
+Lives in `harness.core.events` alongside `AuditEvent`, and is re-exported from
+`harness.connectivity`. A Pydantic model, not a dataclass — the audit sinks and
+the signer both serialise it through `model_dump()`.
+
 ```python
-@dataclass(frozen=True)
-class NetworkAuditEvent:
+class NetworkAuditEvent(BaseModel, frozen=True):
+    timestamp:    datetime
     event_type:   str        # "network_egress"
     token_id:     str | None # join key with AuditEvent
     source_name:  str
     agent_id:     str
+    sub_agent_id: str | None
+    tenant_id:    str
     tool_name:    str | None  # None for SSE/init requests
     destination:  str
     method:       str
@@ -197,6 +203,7 @@ class NetworkAuditEvent:
     bytes_sent:   int
     bytes_recv:   int
     duration_ms:  int
+    signature:    str | None  # HMAC-SHA256, when audit_signing.enabled
 ```
 
 **SIEM join:**

@@ -29,6 +29,7 @@ from harness.config.loader import load_yaml
 from harness.adapters.secrets.env import EnvVarProvider
 from harness.config.schema import HarnessConfig
 from harness.core.context import AgentContext
+from harness.core.errors import ConfigError
 
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.verdicts import GateDecision, ScanVerdict
@@ -664,8 +665,14 @@ class SHAI:
         # R2: session execution budget check
         limits = self._agent_limits.get(ctx.agent_id)
         if limits is not None and limits.any_enabled():
-            session_id = getattr(ctx, "session_id", ctx.agent_id)
-            prompt_id  = getattr(ctx, "prompt_id", None)
+            # Same session key as the threat accumulator (scan_input,
+            # scan_tool_result) — one spelling of "which session is this".
+            session_id = ctx.conversation_id or ctx.agent_id
+            # The turn is the prompt: TurnSignals is created at scan_input and
+            # cleared at scan_output, so a new turn_id means a new user turn
+            # and SessionBudget resets the fan-out counter. Tool-only flows
+            # that never call scan_input carry no signals — fan-out stays off.
+            prompt_id = ctx.turn_signals.turn_id if ctx.turn_signals else None
             allowed, reason = self._session_budget.check(
                 ctx.agent_id, session_id, name, args, limits,
                 prompt_id=prompt_id,
@@ -1097,9 +1104,7 @@ class SHAI:
             # Merge: agent values override global values
             merged = {
                 "max_steps":                 global_budget.max_steps,
-                "max_tokens_per_session":    global_budget.max_tokens_per_session,
                 "max_tool_calls_per_prompt": global_budget.max_tool_calls_per_prompt,
-                "tool_cost_weights":         dict(global_budget.tool_cost_weights),
                 "loop_detection_window":     global_budget.loop_detection_window,
                 "loop_similarity_threshold": global_budget.loop_similarity_threshold,
             }
@@ -1107,17 +1112,23 @@ class SHAI:
             try:
                 effective = ExecutionBudgetConfig.model_validate(merged)
             except Exception as e:
-                log.warning("agent limits config invalid — using global defaults",
-                            extra={"agent_id": cfg.id, "error": str(e)})
-                effective = global_budget
+                # Backstop. AgentConfig._valid_limits rejects a bad limits: block
+                # at parse time, so a file-loaded agent cannot reach here — this
+                # catches a directly-constructed AgentConfig. Fail closed either
+                # way: falling back to global defaults would discard the agent's
+                # *valid* limits alongside the bad key, and an agent declaring
+                # max_steps would silently run unbounded on a typo.
+                raise ConfigError(
+                    f"agent '{cfg.id}' has an invalid limits: block: {e}",
+                    agent_id=cfg.id,
+                    op="build_execution_limits",
+                ) from e
         else:
             effective = global_budget
 
         return ExecutionLimits(
             max_steps=effective.max_steps,
-            max_tokens_per_session=effective.max_tokens_per_session,
             max_tool_calls_per_prompt=effective.max_tool_calls_per_prompt,
-            tool_cost_weights=dict(effective.tool_cost_weights),
             loop_detection_window=effective.loop_detection_window,
             loop_similarity_threshold=effective.loop_similarity_threshold,
         )

@@ -124,7 +124,7 @@ Key fields on `AgentContext`:
 - `agent_id` — required
 - `sub_agent_id` — set when this call is on behalf of a subagent
 - `allowed_tags` — narrowed capability scope for subagents
-- `conversation_id` — session key for the cross-turn threat accumulator
+- `conversation_id` — session key for all session-scoped state: the cross-turn threat accumulator and the execution budget. Falls back to `agent_id` when unset, which collapses every conversation onto one budget. Propagated to subagents.
 - `human_approved` — set to `True` by the agent after explicit human confirmation, required by `SENSITIVE` / `IRREVERSIBLE` tools
 
 Subagents can only be narrower than their parent, never wider. When you scope a context for a subagent:

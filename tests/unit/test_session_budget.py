@@ -50,38 +50,6 @@ def test_step_counter_per_agent_isolation(budget):
     assert allowed
 
 
-# ── Token burn-down ───────────────────────────────────────────────────────
-
-def test_token_budget_allows_under_limit(budget):
-    limits = _limits(max_tokens_per_session=100)
-    allowed, _ = budget.check("a", "s", "search", {}, limits, tokens_consumed=50)
-    assert allowed
-    allowed, _ = budget.check("a", "s", "search", {}, limits, tokens_consumed=49)
-    assert allowed
-
-
-def test_token_budget_blocks_when_exceeded(budget):
-    limits = _limits(max_tokens_per_session=100)
-    budget.check("a", "s", "search", {}, limits, tokens_consumed=80)
-    allowed, reason = budget.check("a", "s", "search", {}, limits, tokens_consumed=30)
-    assert not allowed
-    assert "max_tokens_per_session=100" in reason
-
-
-def test_token_budget_cost_weights(budget):
-    limits = _limits(
-        max_tokens_per_session=100,
-        tool_cost_weights={"web_search": 3},
-    )
-    # 1 token × weight 3 = 3 effective tokens
-    for _ in range(33):
-        allowed, _ = budget.check("a", "s", "web_search", {}, limits, tokens_consumed=1)
-        assert allowed
-    # next call: 33*3=99 used, 1*3=3 more would exceed 100
-    allowed, reason = budget.check("a", "s", "web_search", {}, limits, tokens_consumed=1)
-    assert not allowed
-
-
 # ── Per-prompt fan-out ────────────────────────────────────────────────────
 
 def test_fanout_allows_under_limit(budget):
@@ -114,14 +82,6 @@ def test_fanout_skipped_without_prompt_id(budget):
     for _ in range(5):
         allowed, _ = budget.check("a", "s", "tool", {}, limits, prompt_id=None)
         assert allowed  # fan-out disabled when prompt_id is None
-
-
-def test_new_prompt_method_resets_fanout(budget):
-    limits = _limits(max_tool_calls_per_prompt=1)
-    budget.check("a", "s", "tool", {}, limits, prompt_id="p1")
-    budget.new_prompt("a", "s", "p2")
-    allowed, _ = budget.check("a", "s", "tool", {}, limits, prompt_id="p2")
-    assert allowed
 
 
 # ── Loop detection ────────────────────────────────────────────────────────
@@ -183,16 +143,15 @@ def test_reset_agent_clears_all_sessions(budget):
 
 def test_snapshot_returns_zero_for_new_session(budget):
     snap = budget.snapshot("a", "new_session")
-    assert snap == {"steps": 0, "tokens": 0, "prompt_calls": 0}
+    assert snap == {"steps": 0, "prompt_calls": 0}
 
 
 def test_snapshot_reflects_consumed_budget(budget):
-    limits = _limits(max_steps=10, max_tokens_per_session=100)
-    budget.check("a", "s", "tool", {}, limits, tokens_consumed=20, prompt_id="p1")
-    budget.check("a", "s", "tool", {}, limits, tokens_consumed=15, prompt_id="p1")
+    limits = _limits(max_steps=10)
+    budget.check("a", "s", "tool", {}, limits, prompt_id="p1")
+    budget.check("a", "s", "tool", {}, limits, prompt_id="p1")
     snap = budget.snapshot("a", "s")
     assert snap["steps"] == 2
-    assert snap["tokens"] == 35
     assert snap["prompt_calls"] == 2
 
 

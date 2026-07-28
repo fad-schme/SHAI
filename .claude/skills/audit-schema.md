@@ -18,6 +18,7 @@ Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output
 | `sub_agent_id` | string | No | Set when `scope_context_for_subagent` is active |
 | `tool_name` | string | No | Tool name for `tool_call_gate` events |
 | `transport` | string | No | `local`, `mcp`, or `skill` for `tool_call_gate` events |
+| `token_id` | string | No | `DispatchToken.token_id` — join key with `NetworkAuditEvent`, set when a gate call issues a dispatch token |
 | `adapters` | list[string] | Yes | Scanner or policy adapter names that ran |
 | `finding_count` | int | Yes | Number of findings (0 for gate and disabled events) |
 | `max_severity` | string | No | Highest finding severity: `info`, `low`, `medium`, `high`, `critical` |
@@ -184,6 +185,7 @@ Emitted by `ShaiTransport` for every outbound MCP request when `connectivity.ena
 | `bytes_sent` | `int` | Request body size in bytes |
 | `bytes_recv` | `int` | Response body size in bytes |
 | `duration_ms` | `int` | Round-trip time in milliseconds |
+| `signature` | `str \| null` | HMAC-SHA256 hex digest when `audit_signing.enabled: true` — verified the same way as `AuditEvent` |
 
 ### SIEM correlation
 
