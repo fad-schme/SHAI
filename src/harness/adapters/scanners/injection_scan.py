@@ -36,6 +36,7 @@ patterns:
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,17 +135,19 @@ def _score_to_severity(score: float) -> str:
 
 # ── Catalog compilation ───────────────────────────────────────────────────
 
-def _compile_catalog(path: Path) -> list[_CompiledRule]:
-    import re
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except Exception as e:
-        log.error("failed to load pattern file %s: %s", path, e)
-        return []
+def compile_rules_from_dicts(rules: list[dict]) -> list[_CompiledRule]:
+    """Compile raw rule dicts into _CompiledRule objects.
 
+    The one compiler for both rule sources: the bundled YAML catalogs (via
+    _compile_catalog) and the signed pattern DB, where from_yaml() calls this
+    after load_verified_rules() has dropped rows failing HMAC verification.
+
+    A pattern that fails to compile is skipped with a warning; the rule keeps
+    its remaining patterns. A rule with no usable pattern still compiles — it
+    simply matches nothing.
+    """
     compiled: list[_CompiledRule] = []
-    for rule in data.get("patterns", []):
+    for rule in rules:
         meta     = rule.get("meta", {})
         strings  = rule.get("strings", {})
         patterns: list[_CompiledPattern] = []
@@ -174,50 +177,26 @@ def _compile_catalog(path: Path) -> list[_CompiledRule]:
             patterns=tuple(patterns),
             function_names=tuple(rule.get("functions", [])),
         ))
-
-    log.info("injection_scan compiled %d rules from %s", len(compiled), path)
     return compiled
 
 
-def compile_rules_from_dicts(rules: list[dict]) -> list[_CompiledRule]:
-    """Compile raw rule dicts (from pattern DB) into _CompiledRule objects.
+def _compile_catalog(path: Path) -> list[_CompiledRule]:
+    """Read a YAML catalog and compile its `patterns` list.
 
-    Same compilation logic as _compile_catalog but takes dicts instead of
-    reading a YAML file. Called by from_yaml() when patterns_db is enabled,
-    after load_verified_rules() has dropped rows failing HMAC verification.
+    A catalog that cannot be read or parsed logs an error and yields no rules —
+    the caller still gets a usable scanner, just without this file's rules. A
+    file that parses to nothing at all is not handled here and raises; see the
+    empty-catalog follow-up.
     """
-    import re as _re
-    compiled: list[_CompiledRule] = []
-    for rule in rules:
-        meta    = rule.get("meta", {})
-        strings = rule.get("strings", {})
-        patterns: list[_CompiledPattern] = []
-        for key, pat in strings.items():
-            if not isinstance(pat, str):
-                continue
-            pat = pat.strip()
-            if pat.startswith("{") and pat.endswith("}"):
-                hex_str = pat.strip("{} ").replace(" ", "").lower()
-                patterns.append(_CompiledPattern(key=key, kind="hex", value=hex_str))
-            else:
-                try:
-                    patterns.append(_CompiledPattern(
-                        key=key, kind="regex",
-                        value=_re.compile(pat, _re.MULTILINE),
-                    ))
-                except _re.error:
-                    log.warning("bad pattern in DB rule %s key %s — skipped",
-                                rule.get("name"), key)
-        compiled.append(_CompiledRule(
-            name=rule["name"],
-            severity=str(meta.get("severity", "medium")),
-            category=str(meta.get("category", "unknown")),
-            threat_level=int(meta.get("threat_level", 1)),
-            patterns=tuple(patterns),
-            function_names=tuple(rule.get("functions", [])),
-        ))
-    if compiled:
-        log.info("compiled %d rules from pattern DB", len(compiled))
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        log.error("failed to load pattern file %s: %s", path, e)
+        return []
+
+    compiled = compile_rules_from_dicts(data.get("patterns", []))
+    log.info("injection_scan compiled %d rules from %s", len(compiled), path)
     return compiled
 
 

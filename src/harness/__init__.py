@@ -35,7 +35,6 @@ from harness.tools.registry import ToolRegistry
 from harness.tools.source import (
     LocalSource,
     MCPSource,
-    SkillSource,
     SourceRegistry,
     ToolSource,
 )
@@ -57,7 +56,6 @@ __all__ = [
     "ToolRegistry",
     "ToolSource",
     "LocalSource",
-    "SkillSource",
     "MCPSource",
     "SourceRegistry",
     # Agent

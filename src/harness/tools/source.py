@@ -6,7 +6,9 @@ SourceRegistry: Concrete registry. activate() builds an agent's tool set from
 
 Implementations
 ---------------
-LocalSource:    Returns a named subset of already-registered tools.
+LocalSource:    Returns a named subset of already-registered tools. Backs both
+                `transport: local` and `transport: skill` sources — the two
+                differ only in the marker they report, not in behaviour.
                 No network; no external dependencies.
 
 MCPSource:      Connects to an MCP server over SSE, discovers its tool catalog,
@@ -225,7 +227,13 @@ class SourceRegistry:
 # ── LocalSource ───────────────────────────────────────────────────────────
 
 class LocalSource:
-    """Returns a named subset of already-registered local tools.
+    """Returns a subset of already-registered tools from the shared registry.
+
+    Backs every non-MCP source. `transport` is data, read from the config that
+    declared the source: `local` for raw registration, `skill` for a curated
+    bundle. The two behave identically here — the marker travels with the
+    source, and skill semantics reach policy through the tools' own transport,
+    set at registration.
 
     Reads its shape from the SourceConfig that declared it:
       tool_names:  explicit list of tool names to include. If empty, all
@@ -235,10 +243,15 @@ class LocalSource:
     registry is the one collaborator the config cannot carry.
     """
 
-    transport = Transport.LOCAL
-
     def __init__(self, src_cfg: SourceConfig, *, registry: ToolRegistry) -> None:
+        if src_cfg.transport == Transport.MCP:
+            raise ConfigError(
+                f"source '{src_cfg.name}': LocalSource cannot serve mcp "
+                "transport — use MCPSource",
+                op="local_source_init",
+            )
         self.name        = src_cfg.name
+        self.transport   = src_cfg.transport
         self.tags        = list(src_cfg.tags)
         self._registry   = registry
         self._tool_names = list(src_cfg.tool_names)
@@ -270,64 +283,9 @@ class LocalSource:
         else:
             tools = candidates
 
-        return tools
-
-    async def close(self) -> None:
-        pass  # No resources to release
-
-
-
-# ── SkillSource ───────────────────────────────────────────────────────────
-
-class SkillSource:
-    """A named, explicitly-listed subset of already-registered local tools.
-
-    Identical to LocalSource with a fixed tool_names list and
-    transport=Transport.SKILL, which signals to policy rules that these tools
-    originate from a skill bundle rather than raw local registration.
-
-    Use LocalSource when you want all-or-filtered local tools.
-    Use SkillSource when you want a named, curated subset.
-    """
-
-    transport = Transport.SKILL
-
-    def __init__(
-        self,
-        name: str,
-        tool_names: list[str],
-        registry: ToolRegistry,
-        tags: list[str] | None = None,
-    ) -> None:
-        self.name        = name
-        self.tags        = list(tags or [])
-        self._tool_names = list(tool_names)
-        self._registry   = registry
-
-    async def load(self, ctx: AgentContext) -> list[Tool]:
-        tools: list[Tool] = []
-        for tname in self._tool_names:
-            try:
-                tool = await self._registry.get(tname)
-            except Exception:
-                log.warning("skill tool not found — skipped",
-                            extra={"tool": tname, "source": self.name})
-                continue
-
-            # Apply subagent tag filter if present
-            if ctx.allowed_tags is not None:
-                if set(tool.tags) - set(ctx.allowed_tags):
-                    continue
-
-            # Merge source-level tags onto the tool
-            if self.tags:
-                combined = sorted(set(tool.tags) | set(self.tags))
-                tool = tool.model_copy(update={"tags": combined})
-
-            tools.append(tool)
-
-        log.debug("skill source loaded",
-                  extra={"source": self.name,
+        # requested=0 means no explicit list — the whole registry was offered.
+        log.debug("local source loaded",
+                  extra={"source": self.name, "transport": self.transport,
                          "requested": len(self._tool_names),
                          "returned": len(tools)})
         return tools

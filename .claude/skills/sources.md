@@ -71,7 +71,7 @@ Sources not found in the `SourceRegistry` are logged and skipped — not a hard 
 
 ---
 
-## LocalSource (`transport: local`)
+## LocalSource (`transport: local` and `transport: skill`)
 
 Returns tools registered via `harness.register_tools()`. If `tool_names` is specified, only those tools are returned. Source-level `tags` are merged onto each returned tool.
 
@@ -85,11 +85,7 @@ sources:
     tags: [internal]
 ```
 
----
-
-## SkillSource (`transport: skill`)
-
-A named, explicitly-listed subset of registered tools. `transport=Transport.SKILL` distinguishes skill-sourced tools from raw local tools in policy rules and audit events.
+`transport: skill` uses the same class and behaves identically — it marks a curated bundle rather than raw local registration, and the source reports the transport it was declared with.
 
 ```yaml
 sources:
@@ -99,13 +95,7 @@ sources:
     tags: [skill, read, internal]
 ```
 
-```yaml
-# Policy rule that targets skill tools specifically
-- id: audit_skill_calls
-  match:
-    transport: [skill]
-  action: allow
-```
+**A policy rule matching `transport:` reads the *tool's* transport, not the source's.** A rule targeting `[skill]` matches only tools registered with `Transport.SKILL` — declaring `transport: skill` on the source does not stamp it onto the tools it returns.
 
 ---
 

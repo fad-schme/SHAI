@@ -1,4 +1,4 @@
-"""ToolSource contract suite — LocalSource and SkillSource must pass."""
+"""ToolSource contract suite — LocalSource (local and skill) must pass."""
 from __future__ import annotations
 
 import asyncio
@@ -10,12 +10,16 @@ from harness.core.context import AgentContext
 from harness.core.types import Transport
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
-from harness.tools.source import LocalSource, SkillSource, SourceRegistry
+from harness.tools.source import LocalSource, SourceRegistry
 from harness.tools.tool import Tool
 
 
 def _local(name: str = "local", **kw) -> SourceConfig:
     return SourceConfig(name=name, **kw)
+
+
+def _skill(name: str = "docs_skill", **kw) -> SourceConfig:
+    return SourceConfig(name=name, transport=Transport.SKILL, **kw)
 
 
 def make_tool(name: str, tags: list[str] | None = None) -> Tool:
@@ -43,7 +47,7 @@ async def test_local_satisfies_toolsource_protocol():
 
 async def test_skill_satisfies_toolsource_protocol():
     reg = await make_registry(make_tool("search_docs"))
-    src = SkillSource("docs_skill", ["search_docs"], reg)
+    src = LocalSource(_skill(tool_names=["search_docs"]), registry=reg)
     assert hasattr(src, "name")
     assert hasattr(src, "transport")
     assert hasattr(src, "tags")
@@ -56,6 +60,14 @@ async def test_local_name_and_transport():
     src = LocalSource(_local(), registry=ToolRegistry())
     assert src.name == "local"
     assert src.transport == Transport.LOCAL
+
+
+async def test_local_source_rejects_mcp_transport():
+    """A registry-backed source must not claim to be MCP."""
+    from harness.core.errors import ConfigError
+    cfg = SourceConfig(name="wrong", transport=Transport.MCP, url="http://x")
+    with pytest.raises(ConfigError, match="cannot serve mcp"):
+        LocalSource(cfg, registry=ToolRegistry())
 
 
 async def test_local_returns_registered_tools():
@@ -119,18 +131,20 @@ async def test_local_concurrent_safe():
     assert not any(isinstance(r, Exception) for r in results)
 
 
-# ── SkillSource ───────────────────────────────────────────────────────────
+# ── Skill transport ───────────────────────────────────────────────────────
+# Same class, same behaviour — the declared transport travels with the source.
 
 async def test_skill_name_and_transport():
+    """A skill source reports skill, not local — it is not downgraded."""
     reg = await make_registry(make_tool("search_docs"))
-    src = SkillSource("docs_skill", ["search_docs"], reg)
+    src = LocalSource(_skill(tool_names=["search_docs"]), registry=reg)
     assert src.name == "docs_skill"
     assert src.transport == Transport.SKILL
 
 
 async def test_skill_loads_declared_tools():
     reg = await make_registry(make_tool("search_docs"), make_tool("fetch_doc"))
-    src = SkillSource("docs_skill", ["search_docs"], reg)
+    src = LocalSource(_skill(tool_names=["search_docs"]), registry=reg)
     ctx = AgentContext(
         agent_id="a1")
     tools = await src.load(ctx)
@@ -140,7 +154,7 @@ async def test_skill_loads_declared_tools():
 
 async def test_skill_missing_tool_skipped():
     reg = await make_registry(make_tool("search_docs"))
-    src = SkillSource("docs_skill", ["search_docs", "nonexistent"], reg)
+    src = LocalSource(_skill(tool_names=["search_docs", "nonexistent"]), registry=reg)
     ctx = AgentContext(
         agent_id="a1")
     tools = await src.load(ctx)
@@ -154,7 +168,8 @@ async def test_skill_subagent_tag_filter():
         make_tool("read_tool",  tags=["read"]),
         make_tool("write_tool", tags=["external_write"]),
     )
-    src = SkillSource("mixed_skill", ["read_tool", "write_tool"], reg)
+    src = LocalSource(_skill("mixed_skill", tool_names=["read_tool", "write_tool"]),
+                      registry=reg)
     ctx = AgentContext(
         agent_id="a1", sub_agent_id="sub",
         allowed_tags=["read"],

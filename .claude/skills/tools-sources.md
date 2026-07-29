@@ -112,9 +112,9 @@ sources:
     tags: [internal]                       # merged onto every returned tool
 ```
 
-### SkillSource
-
-Named subset of registered tools. `transport=Transport.SKILL` in policy rules.
+`transport: skill` uses the same class — a curated bundle rather than raw
+local registration. Policy rules matching `transport:` read the tool's
+transport, not the source's.
 
 ```yaml
 sources:
