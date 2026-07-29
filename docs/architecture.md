@@ -1,6 +1,6 @@
 # Architecture
 
-**Secure Harness AI** is a security control plane for production AI agents. It enforces security boundaries around every agent turn, governs tool calls through a pre-gate + four-layer stack, and emits a tamper-evident audit trail on every decision.
+**Secure Harness AI** is a security control plane for production AI agents. It enforces security boundaries around every agent turn, governs tool calls through a pre-gate + seven-layer stack, and emits a tamper-evident audit trail on every decision.
 
 ---
 
@@ -27,18 +27,27 @@ src/harness/
 │   ├── verdicts.py                    GateDecision, ScanVerdict
 │   ├── events.py                      AuditEvent, NetworkAuditEvent
 │   ├── types.py                       enums: BoundaryName, Decision, Severity, Transport
+│   ├── normalize.py                   NFKC + obfuscation-resistant text views
+│   ├── turn_signals.py                TurnSignals — cross-boundary signal bus, one per turn
 │   └── errors.py                      HarnessError hierarchy
 ├── boundaries/
-│   ├── check_tool_call.py             four-layer tool gate (L1–L4)
+│   ├── check_tool_call.py             seven-layer tool gate (L1–L7)
+│   ├── argument_policy.py             deterministic argument-level checks (L2)
 │   ├── session_budget.py              DoS budget enforcer (R2): step, fan-out, loop
+│   ├── session_accumulator.py         cross-turn threat accumulator — crescendo attacks
+│   ├── ensemble.py                    cross-scanner severity promotion, always on
 │   └── _scan.py                       scan_input, scan_output, scan_tool_result, scan_file
 ├── adapters/
 │   ├── scanners/
-│   │   ├── injection_scan.py          InjectionScanner — 17-rule YAML catalog
-│   │   ├── regex_pii.py               RegexPIIScanner — 7 PII categories
-│   │   ├── file_scanner.py            FileScanner — MIME, macros, size gate
+│   │   ├── injection_scan.py          InjectionScanner — YAML catalog, direct + doc-tuned
+│   │   ├── jailbreak_scan.py          JailbreakScanner — guardrail-integrity classifier
+│   │   ├── identity_spoof_scan.py     IdentitySpoofScanner — claimed privileged identity
+│   │   ├── heuristic_scan.py          HeuristicScanner — structural anomaly, always on
+│   │   ├── regex_pii.py               RegexPIIScanner — PII + secret categories
+│   │   ├── file_scanner.py            FileScanner + FileContentScanner — structural, then content chain
 │   │   ├── mcp_metadata_scanner.py    MCPMetadataScanner — tool description injection
 │   │   ├── rate_limiter.py            RateLimiter — sliding-window (R1)
+│   │   ├── rule_functions.py          shared rule helpers for the YAML catalogs
 │   │   └── base.py                    Scanner Protocol
 │   ├── audit_sinks/                   stdout, rotating file
 │   ├── secrets/                       EnvVarProvider
@@ -51,6 +60,9 @@ src/harness/
 ├── config/
 │   ├── schema.py                      HarnessConfig, all sub-configs including ExecutionBudgetConfig
 │   └── loader.py                      YAML loader + secret resolution
+├── patterns/
+│   ├── store.py                       signed pattern DB — SQLite + HMAC-SHA256 per row
+│   └── fingerprint.py                 structural fingerprint / skeleton for candidates
 ├── policy/
 │   ├── engine.py                      PolicyEngine Protocol + RuleBasedPolicy
 │   └── rules.py                       rule evaluation
@@ -70,7 +82,7 @@ src/harness/
 
 ## Tool Governance — `check_tool_call`
 
-The mandatory gate. Cannot be disabled. Two pre-gate controls run before the four policy layers. First denial wins. Exactly one `AuditEvent` per call on every code path.
+The mandatory gate. Cannot be disabled. Two pre-gate controls run before the seven gate layers. First denial wins. Exactly one `AuditEvent` per call on every code path.
 
 ### Execution order
 

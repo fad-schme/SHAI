@@ -1,6 +1,6 @@
 """check_tool_call — the mandatory tool-call gate.
 
-Six layers, strict order. Exactly one AuditEvent per call.
+Seven layers, strict order. Exactly one AuditEvent per call.
 Never dispatches the tool — gates only.
 
 Receives pre-resolved AgentConfig and tools dict from the Harness instance.
