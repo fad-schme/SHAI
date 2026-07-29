@@ -177,3 +177,61 @@ async def test_unknown_subagent_denied():
                          allowed_tags=["read"])
     gate, _ = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
     assert not gate.allowed
+
+
+# ── L4: parent capability gate (SHAI-011) ────────────────────────────────
+#
+# allowed_tags used to bind subagents only: L4 read ctx.allowed_tags, which is
+# None on a parent turn, so a top-level agent declaring `allowed_tags: [read]`
+# got no gate enforcement from it at all. It now binds both, intersected — a
+# hand-built AgentContext cannot widen the config, and a deliberately narrowed
+# one is not ignored.
+
+async def test_parent_allowed_tags_denies_uncovered_tag():
+    """A parent's own declaration gates its own calls."""
+    tools, sink, emitter, policy = setup()
+    agent = make_agent(allowed_tags=["read"])          # tool carries read+internal
+    ctx   = AgentContext(agent_id="test_agent")        # no ctx.allowed_tags
+
+    gate, sink = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
+    assert not gate.allowed
+    assert "internal" in gate.deny_reason
+    assert "agent capability set" in gate.deny_reason
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.DENY
+
+
+async def test_parent_allowed_tags_allows_full_cover():
+    """Declaring every tag the tool carries lets it through."""
+    tools, sink, emitter, policy = setup()
+    agent = make_agent(allowed_tags=["read", "internal"])
+    ctx   = AgentContext(agent_id="test_agent")
+
+    gate, _ = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
+    assert gate.allowed
+
+
+async def test_context_cannot_widen_the_configured_capability_set():
+    """A hand-built context claiming more tags than the config does not win.
+
+    ctx.allowed_tags is caller-supplied. Preferring it over the config would
+    make L4 bypassable by constructing an AgentContext directly.
+    """
+    tools, sink, emitter, policy = setup()
+    agent = make_agent(allowed_tags=["read"])
+    ctx   = AgentContext(agent_id="test_agent",
+                         allowed_tags=["read", "internal", "external_write"])
+
+    gate, _ = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
+    assert not gate.allowed, "context widened the agent's configured capability set"
+
+
+async def test_context_can_still_narrow():
+    """A narrower context is honoured — intersection, not replacement."""
+    tools, sink, emitter, policy = setup()
+    agent = make_agent(allowed_tags=["read", "internal"])
+    ctx   = AgentContext(agent_id="test_agent", allowed_tags=["read"])
+
+    gate, _ = await _run("search_docs", {}, ctx, agent_config=agent, tools=tools)
+    assert not gate.allowed
+    assert "internal" in gate.deny_reason

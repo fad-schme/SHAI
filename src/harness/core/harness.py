@@ -599,6 +599,14 @@ class SHAI:
             tenant_id=self._tenant_id,
             scan_args_for_tags=self._scan_args_for_tags,
             turn_signals=ctx.turn_signals,
+            source_name=source_name,
+            # The gate calls this only when it allows, and before it emits, so
+            # token_id lands on the event that authorised the dispatch.
+            issue_token=(
+                (lambda: self._mint_dispatch_token(name, source_name, ctx))
+                if self._connectivity.enabled and self._connectivity_secret
+                else None
+            ),
         )
 
         # Record gate outcome to TurnSignals for downstream boundaries
@@ -607,62 +615,6 @@ class SHAI:
             tool_tags = frozenset(tool_obj.tags) if tool_obj else frozenset()
             ctx.turn_signals.record_gate(gate.allowed, name, tool_tags)
 
-        # Issue dispatch token when gate allows and connectivity is enabled
-        if gate.allowed and self._connectivity.enabled and self._connectivity_secret:
-            from harness.connectivity.token import (
-                default_allowed_urls,
-                encode_token,
-                sign_token,
-            )
-            tool_obj     = tools.get(name)
-            source_cfg   = next(
-                (s for s in self._config.sources if s.name == source_name),
-                None,
-            )
-            allowed_urls = (
-                list(source_cfg.allowed_urls)
-                if source_cfg and source_cfg.allowed_urls
-                else (default_allowed_urls(source_cfg.url)
-                      if source_cfg and source_cfg.url else [])
-            )
-            allowed_methods = (
-                list(source_cfg.allowed_methods)
-                if source_cfg and source_cfg.allowed_methods
-                else ["GET", "POST", "PUT", "DELETE", "PATCH"]
-            )
-            token = sign_token(
-                agent_id=ctx.agent_id,
-                sub_agent_id=ctx.sub_agent_id,
-                tenant_id=self._tenant_id,
-                tool_name=name,
-                source_name=source_name,
-                allowed_urls=allowed_urls,
-                allowed_methods=allowed_methods,
-                secret=self._connectivity_secret,
-                ttl_seconds=self._connectivity.token_ttl_seconds,
-            )
-            encoded = encode_token(token)
-            # Rebuild GateDecision with token and source_name
-            gate = GateDecision(
-                allowed=True,
-                redacted_args=gate.redacted_args,
-                dispatch_token=encoded,
-                source_name=source_name,
-            )
-            log.debug("dispatch token issued",
-                      extra={"agent_id": ctx.agent_id, "tool": name,
-                             "token_id": token.token_id,
-                             "expires_at": token.expires_at.isoformat()})
-
-        # Stamp source_name on the gate decision if not already set
-        if gate.allowed and gate.source_name is None:
-            gate = GateDecision(
-                allowed=gate.allowed,
-                deny_reason=gate.deny_reason,
-                redacted_args=gate.redacted_args,
-                dispatch_token=gate.dispatch_token,
-                source_name=source_name,
-            )
         return gate
 
     async def scan_file(self, path: str | Path, ctx: AgentContext) -> ScanVerdict:
@@ -887,6 +839,52 @@ class SHAI:
         return await self._source_registry.get(name)
 
     # ── Internal helpers ──────────────────────────────────────────────────
+
+    def _mint_dispatch_token(
+        self, tool_name: str, source_name: str, ctx: AgentContext
+    ) -> tuple[str, str]:
+        """Issue a dispatch token for an allowed call. Returns (encoded, token_id).
+
+        Called by the gate on its allow path only. The destination allow-lists
+        come from the source that owns the tool, falling back to the source's
+        own host when it declares none — a token is never issued unbounded.
+        """
+        from harness.connectivity.token import (
+            default_allowed_urls,
+            encode_token,
+            sign_token,
+        )
+
+        source_cfg = next(
+            (s for s in self._config.sources if s.name == source_name), None
+        )
+        allowed_urls = (
+            list(source_cfg.allowed_urls)
+            if source_cfg and source_cfg.allowed_urls
+            else (default_allowed_urls(source_cfg.url)
+                  if source_cfg and source_cfg.url else [])
+        )
+        allowed_methods = (
+            list(source_cfg.allowed_methods)
+            if source_cfg and source_cfg.allowed_methods
+            else ["GET", "POST", "PUT", "DELETE", "PATCH"]
+        )
+        token = sign_token(
+            agent_id=ctx.agent_id,
+            sub_agent_id=ctx.sub_agent_id,
+            tenant_id=self._tenant_id,
+            tool_name=tool_name,
+            source_name=source_name,
+            allowed_urls=allowed_urls,
+            allowed_methods=allowed_methods,
+            secret=self._connectivity_secret,
+            ttl_seconds=self._connectivity.token_ttl_seconds,
+        )
+        log.debug("dispatch token issued",
+                  extra={"agent_id": ctx.agent_id, "tool": tool_name,
+                         "token_id": token.token_id,
+                         "expires_at": token.expires_at.isoformat()})
+        return encode_token(token), token.token_id
 
     async def _deny_pre_gate(
         self,

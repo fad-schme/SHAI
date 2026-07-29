@@ -323,3 +323,143 @@ async def test_connectivity_config_requires_secret_when_enabled(tmp_path):
 
     with pytest.raises((ValidationError, ValueError)):
         ConnectivityConfig(enabled=True, token_secret="")
+
+
+# ── token_id joins the gate event to the network event (SHAI-007) ─────────
+
+async def test_gate_event_carries_the_token_id_it_issued(tmp_path):
+    """Regression (SHAI-007): AuditEvent.token_id was structurally always null.
+
+    The gate emitted its allow event, then the facade minted the token
+    afterwards — so the field documented as the SIEM join key with
+    NetworkAuditEvent never held a value, and the join had only a right-hand
+    side. The token is now minted before the event is built.
+    """
+    import os
+
+    from harness import SHAI, Tool
+    from harness.audit.emitter import AuditEmitter
+    from harness.core.context import AgentContext
+    from harness.core.types import Transport
+    from tests.conftest import RecordingSink
+
+    os.environ["SHAI_TEST_TOKEN_SECRET"] = "a-strong-test-secret-1234567890ab"
+    try:
+        cfg = tmp_path / "h.yaml"
+        cfg.write_text(
+            "version: 1\n"
+            "scan_input:\n  enabled: false\n"
+            "scan_output:\n  enabled: false\n"
+            "policy:\n  rules: []\n"
+            "connectivity:\n"
+            "  enabled: true\n"
+            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
+            "  token_ttl_seconds: 15\n"
+        )
+        agent = tmp_path / "agent.yaml"
+        agent.write_text(
+            "id: agent_a\n"
+            "allowed_tool_names:\n  - search_docs\n"
+            "allowed_tags:\n  - read\n"
+        )
+        harness = await SHAI.from_yaml(cfg)
+        sink = RecordingSink()
+        harness._emitter = AuditEmitter([sink])
+        await harness.register_tools([
+            Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
+        ])
+        await harness.load_agent(agent)
+
+        ctx  = AgentContext(agent_id="agent_a")
+        gate = await harness.check_tool_call("search_docs", {"q": "x"}, ctx)
+        assert gate.allowed and gate.dispatch_token
+
+        gate_events = [e for e in sink.events if e.boundary == "tool_call_gate"]
+        assert len(gate_events) == 1
+        event = gate_events[0]
+
+        assert event.token_id, "gate event carries no token_id — the join is broken"
+        # The id on the event must be the id inside the token handed to the caller.
+        issued = verify_token(gate.dispatch_token, b"a-strong-test-secret-1234567890ab")
+        assert event.token_id == issued.token_id
+        assert gate.source_name is not None
+        await harness.close()
+    finally:
+        del os.environ["SHAI_TEST_TOKEN_SECRET"]
+
+
+async def test_no_token_id_when_connectivity_disabled(tmp_path):
+    """Connectivity off issues no token, so the field stays null."""
+    from harness import SHAI, Tool
+    from harness.audit.emitter import AuditEmitter
+    from harness.core.context import AgentContext
+    from harness.core.types import Transport
+    from tests.conftest import RecordingSink
+
+    cfg = tmp_path / "h.yaml"
+    cfg.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  rules: []\n"
+    )
+    agent = tmp_path / "agent.yaml"
+    agent.write_text(
+        "id: agent_a\n"
+        "allowed_tool_names:\n  - search_docs\n"
+        "allowed_tags:\n  - read\n"
+    )
+    harness = await SHAI.from_yaml(cfg)
+    sink = RecordingSink()
+    harness._emitter = AuditEmitter([sink])
+    await harness.register_tools([
+        Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
+    ])
+    await harness.load_agent(agent)
+
+    gate = await harness.check_tool_call("search_docs", {}, AgentContext(agent_id="agent_a"))
+    assert gate.allowed
+    assert gate.dispatch_token is None
+    assert sink.events[0].token_id is None
+    await harness.close()
+
+
+async def test_denied_call_mints_no_token(tmp_path):
+    """issue_token runs on the allow path only — a refusal signs nothing."""
+    import os
+
+    from harness import SHAI, Tool
+    from harness.core.context import AgentContext
+    from harness.core.types import Transport
+
+    os.environ["SHAI_TEST_TOKEN_SECRET"] = "a-strong-test-secret-1234567890ab"
+    try:
+        cfg = tmp_path / "h.yaml"
+        cfg.write_text(
+            "version: 1\n"
+            "scan_input:\n  enabled: false\n"
+            "scan_output:\n  enabled: false\n"
+            "policy:\n  rules: []\n"
+            "connectivity:\n"
+            "  enabled: true\n"
+            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
+        )
+        agent = tmp_path / "agent.yaml"
+        agent.write_text(
+            "id: agent_a\n"
+            "allowed_tool_names:\n  - search_docs\n"
+            "allowed_tags:\n  - read\n"
+        )
+        harness = await SHAI.from_yaml(cfg)
+        await harness.register_tools([
+            Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
+        ])
+        await harness.load_agent(agent)
+
+        # Not in allowed_tool_names — denied at L1, before any token work.
+        gate = await harness.check_tool_call("other_tool", {}, AgentContext(agent_id="agent_a"))
+        assert not gate.allowed
+        assert gate.dispatch_token is None
+        await harness.close()
+    finally:
+        del os.environ["SHAI_TEST_TOKEN_SECRET"]

@@ -25,6 +25,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it.
 
 ### Changed
+- **BREAKING**: an agent's `allowed_tags:` now gates the agent's own tool calls.
+  It never did. Layer 4 read only the capability set on the context, which is
+  populated for subagents and left empty on a parent turn — so a top-level
+  agent declaring `allowed_tags: [read]` got no enforcement from it at all, and
+  the field's only effect was constraining that agent's subagents at load time.
+  An operator reading their own config had every reason to believe otherwise.
+  The declared set now binds the agent too, intersected with any narrower set
+  the context carries: a hand-built `AgentContext` cannot widen what the config
+  allows, and a deliberately narrowed one is still honoured. Semantics are
+  unchanged and match what subagents always had — a tool's tags must be a
+  *subset* of the allowed set, not merely overlap it.
+  **Migration**: `allowed_tags` must list every tag carried by every tool the
+  agent may call, or those calls are denied with `requires tags [...] not in
+  agent capability set`. An agent allowing `[read]` and calling a tool tagged
+  `[read, internal]` now fails until `internal` is added. Agents consuming MCP
+  sources are most affected — those tools carry an `mcp` tag plus any
+  source-level tags. Read the deny reasons in the audit trail to enumerate what
+  each agent actually needs.
 - **BREAKING**: `scan_file` can now block a document two techniques agree on.
   Neither of the boundary's scanners declared a detection technique, so every
   finding was labelled `unknown`, the whole boundary reported one technique,
@@ -147,6 +165,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   requires, so every finding was stamped `unknown`. Audit events at this
   boundary now carry the real technique, and `structural_file` joins the
   vocabulary. See the `Changed` entry above for the verdict consequence.
+- **`AuditEvent.token_id` was always null, so the documented SIEM join had only
+  one side.** The field exists to correlate a gate decision with the
+  `NetworkAuditEvent` its dispatch produced, and the schema documentation shows
+  the join — but the gate emitted its allow event first and the dispatch token
+  was minted afterwards, so nothing ever filled it in. The token is now issued
+  before the event is built, on the allow path only, and its id is stamped on
+  the event. A denied call still mints no token. Correlating gate decisions
+  against outbound requests works for the first time.
 - **A secret whose value began with `secret://` resolved twice.** After the
   config loader resolved a reference, `from_yaml()` tested the *result* for the
   same prefix and resolved again — so an operator whose signing key, dispatch
@@ -224,6 +250,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A total audit-sink outage fails source connection rather than proceeding.
   `AuditEmissionError` propagates out of the metadata scan, so `load_agent()`
   raises instead of connecting a source whose refusals could not be written.
+- Least privilege applies to the agent that declared it, not only to its
+  children. A deployment that scoped a top-level agent to `[read]` was running
+  it unscoped; the capability set is now enforced where an operator would
+  expect it, and cannot be widened by the calling code.
+- Gate decisions correlate with the network requests they authorised. Without
+  `token_id` on the gate event, an outbound request could be traced back to a
+  token but not to the decision that issued it — the half of the audit trail
+  that answers "what authorised this egress" was missing.
 - Corroborating techniques raise severity at `scan_file` as they already do at
   every other scan boundary. Two independent techniques agreeing on a category
   is the strongest signal the ensemble has, and it was structurally unreachable
