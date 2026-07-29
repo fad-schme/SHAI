@@ -8,6 +8,10 @@ class BoundaryName(StrEnum):
     OUTPUT_SCAN    = "output_scan"
     FILE_SCAN          = "file_scan"
     TOOL_RESULT_SCAN   = "tool_result_scan"
+    # Source-connection time, not per-turn: MCP tool metadata is scanned once
+    # per tool at tools/list, before the tool is registered. A tool refused
+    # here never reaches the gate, so this is the only record of the refusal.
+    MCP_METADATA_SCAN  = "mcp_metadata_scan"
     SYSTEM             = "system"
 
 

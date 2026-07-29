@@ -35,8 +35,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
+from harness.core.context import AgentContext
 from harness.core.errors import ConfigError, MCPInvocationError
-from harness.core.types import Severity, Transport
+from harness.core.events import AuditEvent, now_ms
+from harness.core.types import BoundaryName, Decision, Severity, Transport
 from harness.tools.registry import ToolRegistry
 from harness.tools.tool import Tool
 
@@ -44,7 +46,6 @@ if TYPE_CHECKING:
     from harness.audit.emitter import AuditEmitter
     from harness.config.schema import SourceConfig
     from harness.connectivity.config import ConnectivityConfig
-    from harness.core.context import AgentContext
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
@@ -478,9 +479,24 @@ class MCPSource:
         Returns (blocked, findings). blocked=True means the tool must not
         be registered. findings is the combined list across all scanners.
         Called only when scan_mcp_metadata.enabled and scanners are present.
+
+        Emits exactly one AuditEvent per tool scanned, on every path — clean,
+        flagged, and blocked alike. A blocked tool is never registered, so it
+        never reaches the gate to be recorded there: this event is the only
+        durable record that SHAI refused it. Emission is unconditional on
+        findings for the same reason it is in run_scan — "we scanned all N
+        tools from this source" is only provable from the trail if the clean
+        ones are in it too.
+
+        An AuditEmissionError from a total sink outage propagates: it fails
+        load_agent() rather than connecting a source whose refusals cannot be
+        recorded.
         """
+        start = now_ms()
         all_findings = []
+        adapters: list[str] = []
         for scanner in self._mcp_metadata_scanners:
+            adapters.append(getattr(scanner, "name", type(scanner).__name__))
             try:
                 result = await scanner.scan_tool(mcp_tool, source_name=self.name)
                 all_findings.extend(result.findings)
@@ -490,24 +506,15 @@ class MCPSource:
                                    "scanner": getattr(scanner, "name", "?"),
                                    "error": str(e)})
 
-        if not all_findings:
-            return False, []
-
-        # Block if any finding meets or exceeds the configured block_at severity
-        block_at = self._mcp_metadata_block_at
-        if block_at is None:
-            block_at = Severity.MEDIUM
-
-        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH]
-        try:
-            threshold_idx = severity_order.index(block_at)
-        except ValueError:
-            threshold_idx = 1  # default to MEDIUM
-
-        should_block = any(
-            severity_order.index(f.severity) >= threshold_idx
-            for f in all_findings
-            if f.severity in severity_order
+        # Block if any finding meets or exceeds the configured block_at severity.
+        # Severity.__ge__ is the one comparison — a local ladder previously
+        # enumerated [LOW, MEDIUM, HIGH] and dropped CRITICAL findings on the
+        # floor, which is the opposite of what a threshold is for.
+        block_at     = self._mcp_metadata_block_at or Severity.MEDIUM
+        should_block = any(f.severity >= block_at for f in all_findings)
+        max_sev      = (
+            max(all_findings, key=lambda f: f.severity._index()).severity
+            if all_findings else None
         )
 
         if should_block:
@@ -517,14 +524,34 @@ class MCPSource:
                     "source":   self.name,
                     "tool":     tool_name,
                     "findings": len(all_findings),
-                    "max_sev":  str(max(
-                        (severity_order.index(f.severity)
-                         for f in all_findings
-                         if f.severity in severity_order),
-                        default=0,
-                    )),
+                    "max_sev":  str(max_sev),
+                    "block_at": str(block_at),
                 },
             )
+
+        # Findings below block_at register the tool but still land in the trail
+        # with finding_count set — the same ALLOW-with-findings shape run_scan
+        # produces when nothing crosses the threshold.
+        if self._emitter is not None:
+            await self._emitter.emit(AuditEvent.build(
+                boundary=BoundaryName.MCP_METADATA_SCAN,
+                decision=Decision.BLOCKED if should_block else Decision.ALLOW,
+                ctx=self._agent_ctx or AgentContext(agent_id="unknown"),
+                tenant_id=self._tenant_id or "default",
+                duration_ms=now_ms() - start,
+                tool_name=tool_name,
+                transport=str(Transport.MCP),
+                adapters=adapters,
+                finding_count=len(all_findings),
+                max_severity=max_sev,
+                # Category and threshold only — the matched metadata is the
+                # payload we are refusing and must not be echoed into the trail.
+                deny_reason=(
+                    f"tool metadata scan refused registration (block_at={block_at})"
+                    if should_block else None
+                ),
+                extra={"source": self.name},
+            ))
 
         return should_block, all_findings
 

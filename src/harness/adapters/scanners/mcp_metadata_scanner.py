@@ -20,12 +20,15 @@ Usage from MCPSource._fetch_tools()
 -------------------------------------
     scanner = MCPMetadataScanner()
     for mcp_tool in mcp_tools:
-        finding = await scanner.scan_tool(mcp_tool, source_name="slack_mcp")
-        if finding:
-            log.warning("mcp tool blocked — metadata injection detected",
-                        extra={"tool": mcp_tool["name"], "finding": finding})
+        result = await scanner.scan_tool(mcp_tool, source_name="slack_mcp")
+        if any(f.severity >= block_at for f in result.findings):
             continue  # skip registering this tool
         tools.append(build_tool(mcp_tool))
+
+The scanner produces findings; it does not decide whether they block. The
+threshold is `scan_mcp_metadata.block_at` from harness.yaml, applied by
+MCPSource._scan_mcp_metadata — the same split every other boundary uses,
+where scanners return a ScanResult and the boundary applies block_at.
 
 Fields scanned per tool
 -----------------------
@@ -64,24 +67,17 @@ class MCPMetadataScanner:
     def __init__(
         self,
         patterns_file: Path | None = None,
-        block_at_severity: str = "medium",
     ) -> None:
         """
         patterns_file: path to YAML catalog. Defaults to mcp_metadata_patterns.yaml.
-        block_at_severity: 'low' | 'medium' | 'high'. Findings at or above this
-            severity cause the tool to be blocked from registration.
-            Default: 'medium' — conservative for metadata (almost no legitimate
-            content looks like an injection in tool descriptions).
         """
         pfile = patterns_file or _PATTERNS_FILE
         self._scanner = InjectionScanner(
             patterns_file=pfile,
             name="mcp_metadata_scan",
         )
-        self._block_severities = self._severities_at_or_above(block_at_severity)
         log.debug("MCPMetadataScanner initialised",
-                  extra={"patterns_file": str(pfile),
-                         "block_at": block_at_severity})
+                  extra={"patterns_file": str(pfile)})
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -93,10 +89,8 @@ class MCPMetadataScanner:
     ) -> ScanResult:
         """Scan a single tool dict from tools/list.
 
-        Returns a ScanResult. The caller should:
-          - block registration if result.findings contains any finding at
-            or above block_at_severity
-          - log all findings regardless of block decision
+        Returns a ScanResult. The caller blocks registration when a finding
+        reaches scan_mcp_metadata.block_at, and logs the rest.
 
         Never raises — exceptions are caught and logged as warnings.
         """
@@ -130,13 +124,6 @@ class MCPMetadataScanner:
                                    "error": str(e)})
 
         return ScanResult(findings=findings)
-
-    def should_block(self, result: ScanResult) -> bool:
-        """Return True if any finding meets or exceeds block_at_severity."""
-        return any(
-            f.severity in self._block_severities
-            for f in result.findings
-        )
 
     # ── Metadata extraction ────────────────────────────────────────────────
 
@@ -173,13 +160,3 @@ class MCPMetadataScanner:
             surfaces.append(("combined", combined))
 
         return surfaces
-
-    @staticmethod
-    def _severities_at_or_above(threshold: str) -> frozenset:
-        """Return the set of Severity values at or above threshold."""
-        from harness.core.types import Severity
-        order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH]
-        names = {s.value if hasattr(s, "value") else str(s): s for s in order}
-        threshold_sev = names.get(threshold.lower(), Severity.MEDIUM)
-        idx = order.index(threshold_sev)
-        return frozenset(order[idx:])
