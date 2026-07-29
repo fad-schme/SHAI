@@ -48,6 +48,7 @@ patterns:
       threat_level: 5
       severity: high
       category: jailbreak.persona_override
+    match: any
     strings:
       act_as_uncensored:         '(?i)\bact\s+as\b.{0,40}\b(uncensored|unfiltered|jailbroken|unrestricted|unaligned)\b'
       pretend_no_restrictions:   '(?i)\bpretend\b.{0,30}\b(you\s+have\s+no|there\s+are\s+no)\b.{0,30}\b(restrictions?|filters?|limits?|guardrails?)\b'
@@ -72,6 +73,7 @@ patterns:
       threat_level: 5
       severity: high
       category: jailbreak.instruction_override
+    match: any
     strings:
       ignore_previous:           '(?i)\bignore\b.{0,40}\b(all\s+|earlier\s+|your\s+|previous\s+|prior\s+|existing\s+)?(instructions?|rules|guidelines|prompt|training)\b'
       disregard_instructions:    '(?i)\b(disregard|dismiss|override|supersede|overwrite|replace)\b.{0,30}\b(your\s+)?(instructions?|system\s+prompt|guidelines|safety\s+training|alignment)\b'
@@ -94,6 +96,7 @@ patterns:
       threat_level: 5
       severity: high
       category: jailbreak.refusal_suppression
+    match: any
     strings:
       never_refuse:              '(?i)\b(never|do\s+not|don.t)\b.{0,20}\b(refuse|say\s+you\s+can.t|say\s+I\s+can.t|say\s+that\s+you\s+cannot|decline)\b'
       do_not_say_sorry:          '(?i)\b(do\s+not|never|don.t)\b.{0,20}\b(say\s+sorry|apologize|add\s+disclaimers?|add\s+warnings?|include\s+caveats?)\b'
@@ -117,6 +120,7 @@ patterns:
       threat_level: 4
       severity: high
       category: jailbreak.hypothetical_laundering
+    match: any
     strings:
       fictional_world_no_rules:  '(?i)\b(fictional|hypothetical|imaginary|alternate)\b.{0,30}\b(world|universe|scenario|setting)\b.{0,40}\b(no\s+rules|no\s+restrictions?|anything\s+goes)\b'
       in_story_ignore:           '(?i)\b(in\s+(this\s+)?story|in\s+the\s+narrative|as\s+a\s+character)\b.{0,40}\b(ignore|bypass|override)\b.{0,20}\b(rules|restrictions?|filters?)\b'
@@ -139,6 +143,7 @@ patterns:
       threat_level: 5
       severity: high
       category: jailbreak.prompt_extraction
+    match: any
     strings:
       reveal_system_prompt:      '(?i)\b(reveal|show|print|output|repeat|quote|copy|reproduce)\b.{0,30}\b(your\s+)?(system\s+prompt|hidden\s+prompt|initial\s+prompt|base\s+prompt|secret\s+instructions?|hidden\s+instructions?)\b'
       what_are_your_instructions: '(?i)\bwhat\s+(are|were)\s+your\b.{0,20}\b(instructions?|initial\s+prompt|system\s+prompt|hidden\s+guidelines?)\b'
@@ -162,6 +167,7 @@ patterns:
       threat_level: 5
       severity: high
       category: jailbreak.mode_activation
+    match: any
     strings:
       you_are_now_in_mode:       '(?i)\byou\s+are\s+(now\s+)?(in|entering)\b.{0,20}\b(developer|dev|debug|admin|god|jailbreak|unrestricted|uncensored)\s+mode\b'
       enable_mode:               '(?i)\b(enable|activate|switch\s+to|enter)\b.{0,20}\b(developer|dev|debug|admin|jailbreak|unrestricted)\s+mode\b'

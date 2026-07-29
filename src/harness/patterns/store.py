@@ -8,7 +8,7 @@ Schema:
              version INT, created_at REAL)
 
 payload is JSON: same structure as one entry in the YAML patterns file:
-    {"name": "...", "meta": {...}, "strings": {...}, "functions": [...]}
+    {"name": "...", "meta": {...}, "match": "any", "strings": {...}, "functions": [...]}
 
 Verification: HMAC-SHA256 over the canonical JSON encoding of
 {rule_id, catalog, payload} (sort_keys=True), using the operator's signing

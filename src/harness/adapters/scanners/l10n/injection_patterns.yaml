@@ -16,6 +16,8 @@
 #                   layer awards a small cross-category bonus
 #   strings         named regex (or hex) patterns; every key within a rule must be
 #                   unique (YAML silently drops duplicates)
+#   match           required. Use `any` for OR across strings or match.all
+#                   for AND-of-ORs where every group must contribute
 #   functions       names of rule_functions.* scorers that complement the regex
 #                   matches; weights live in code, not here
 #
@@ -55,6 +57,7 @@
 #     2. Set severity conservatively. 'high' is a quarantine signal;
 #        reserve it for patterns that are almost never benign.
 #     3. Prefer adding a single tight pattern over five loose ones.
+#     4. Use match.all groups when broad signals are only safe in combination.
 
 patterns:
 
@@ -67,6 +70,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_previous_instructions:  '(?i)\bignore\b.{0,40}\b(all\s+|earlier\s+|previous\s+|prior\s+)?instructions?\b'
       developer_mode_activate:       '(?i)\b(you\s+are\s+now|switch\s+to|enter|activate)\b.{0,30}\b(developer|dev|debug)\s+mode\b'
@@ -100,6 +104,7 @@ patterns:
       threat_level: 4
       severity: high
       category: code_injection
+    match: any
     strings:
       script_alert_xss:    '(?i)<script[^>]*>[^<]{0,200}alert\s*\([^)]*\)[^<]{0,200}</script>'
       rm_rf_root:          "(?i)\\brm\\s+-rf\\s+/(?:\\s|$|['\"])"
@@ -115,6 +120,7 @@ patterns:
       threat_level: 4
       severity: high
       category: prompt_injection
+    match: any
     strings:
       end_of_response_marker:    '(?i)\bend\s+of\s+response\b.{0,40}\bnew\s+instructions?\b'
       heredoc_system_tag:        '(?i)(?:^|[\s>#*`\-])(>>>|###|===|---)\s*system\b'
@@ -129,6 +135,7 @@ patterns:
       threat_level: 4
       severity: high
       category: data_exfiltration
+    match: any
     strings:
       list_internal_apis:        '(?i)\b(list|enumerate|show)\b.{0,20}\binternal\b.{0,20}\bapis?\b'
       dump_database:             '(?i)\bdump\s+(the\s+|all\s+|me\s+the\s+)?(database|tables|schema)\b'
@@ -148,6 +155,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       decode_this_hex:        '(?i)\b(decode|interpret)\s+this\b\s*:?\s*[A-Fa-f0-9]{8,}'
       decode_this_base64:     '(?i)\b(decode|interpret)\s+this\b\s*:?\s*[A-Za-z0-9+/]{20,}={0,2}'
@@ -168,6 +176,7 @@ patterns:
       threat_level: 4
       severity: medium
       category: prompt_injection
+    match: any
     strings:
       leetspeak_known_tokens:    '(?i)\b(p@ssw(?:0|o)rd|s3x|pr0n|k1ll|m[@4]lware|h4x0r|n00b|r00t|l33t)\b'
       darknet_tokens:            '(?i)\b(xXx|darknet|1337|f1lter\s+evasi0n)\b'
@@ -185,6 +194,7 @@ patterns:
       threat_level: 4
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_instructions:     '(?i)\bignore\b.{0,30}\b(instructions|orders|previous\s+prompts)\b'
       forget_context:          '(?i)\bforget\b.{0,30}\b(everything|context|previous\s+instructions)\b'
@@ -199,6 +209,7 @@ patterns:
       threat_level: 4
       severity: high
       category: prompt_injection
+    match: any
     strings:
       you_are_now_admin:           '(?i)\byou\s+are\s+now\b.{0,30}\b(admin|root|system|developer|kernel|os)\b'
       respond_as_role:             '(?i)\brespond\s+as\b.{0,20}\b(system|admin|root|kernel)\b'
@@ -215,12 +226,46 @@ patterns:
       threat_level: 5
       severity: high
       category: configuration_exposure
+    match: any
     strings:
       reveal_system_prompt:     '(?i)\breveal\b.{0,30}\b(system\s+prompt|internal\s+prompt|instructions|hidden\s+settings)\b'
       what_is_your_prompt:      '(?i)\bwhat\s+is\s+your\s+(system\s+|hidden\s+|original\s+)?(prompt|instructions)\b'
       show_instruction_history: '(?i)\bshow\b.{0,20}\binstruction\s+history\b'
       print_env_variables:      '(?i)\bprint\b.{0,30}\b(environment\s+variables?|env\s+vars?|config\s+file|startup\s+data)\b'
       expose_init_sequence:     '(?i)\bexpose\b.{0,30}\bchat\s+initialization\s+sequence\b'
+
+  - name: prompt_extraction.compound
+    meta:
+      description: "Disclosure or exactness request targeting protected or referential prompt content"
+      threat_level: 5
+      severity: high
+      category: configuration_exposure
+    strings:
+      disclosure_operation: >-
+        (?ix)\b(?:repeat|recite|dump|reproduce|copy(?:\s+and\s+paste)?|serialize
+        |encode|translate|print|output|reveal|quote|return|share|echo|list|give)\b
+      protected_object: >-
+        (?ix)\b(?:system\s+prompt|hidden\s+(?:prompt|instructions?|prefixes?)
+        |initial\s+(?:prompt|instructions?|context)|developer\s+message
+        |system\s+(?:message|instructions?)|instruction\s+set|setup\s+instructions?
+        |(?:your|internal|system|safety)\s+polic(?:y|ies)|full\s+context|context\s+window)\b
+      referential_target: >-
+        (?ix)(?:\b(?:words?|text|everything|all\s+(?:text|content))\s+
+        (?:(?:that\s+)?(?:appears?|is)\s+|written\s+)?(?:above|before)\b
+        |\b(?:instructions?|guidelines?)\s+(?:you\s+were|that\s+were)\s+(?:given|told)\b
+        |\btop\s+of\s+(?:your\s+|the\s+)?context\b
+        |\bwhat\s+(?:text\s+)?preceded\s+(?:this|the)\s+conversation\b
+        |\b(?:text|content)\s+that\s+came\s+before\b|\bbefore\s+i\s+started\s+talking\b)
+      exactness_modifier: >-
+        (?ix)\b(?:verbatim|exact(?:ly)?|every\s+token|every\s+character|character[-\s]+for[-\s]+character
+        |word[-\s]+for[-\s]+word|unchanged|raw\s+text|json\s+format|code\s+block|base64|fully)\b
+    match:
+      within_chars: 220
+      all:
+        - name: disclosure_request
+          any: [disclosure_operation, exactness_modifier]
+        - name: protected_target
+          any: [protected_object, referential_target]
 
   # ----------------------------------------------------------------------
   # Hypothetical / once-only / game framing to override rules
@@ -231,6 +276,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       just_once_override:           '(?i)\bjust\s+(this\s+)?once\b.{0,30}\b(override|ignore|bypass)\b.{0,20}\brules\b'
       as_a_game_break_rules:        '(?i)\bas\s+a\s+game\b.{0,40}\bbreak\b.{0,20}\b(rules|filters)\b'
@@ -246,6 +292,7 @@ patterns:
       threat_level: 5
       severity: high
       category: alignment_evasion
+    match: any
     strings:
       act_as_rogue_ai:          '(?i)\bact\s+as\b.{0,30}\b(rogue\s+ai|uncensored\s+model|unfiltered\s+assistant)\b'
       response_violates_align:  '(?i)\bwrite\s+a\s+response\b.{0,30}\bviolates\b.{0,20}\balignment\b'
@@ -260,6 +307,7 @@ patterns:
       threat_level: 4
       severity: medium
       category: prompt_injection
+    match: any
     strings:
       ignore_rules_or_policies:    '(?i)\b(ignore|override|disable|disregard)\b.{0,30}\b(filters?|moderation|content\s+policy|rules?|policies?|guidelines?)\b'
       respond_without_limits:      '(?i)\brespond\s+without\b.{0,20}\b(restrictions?|limits?|filters?)\b'
@@ -276,6 +324,7 @@ patterns:
       threat_level: 5
       severity: high
       category: system_spoofing
+    match: any
     strings:
       you_are_in_debug_mode:    '(?i)\byou\s+are\s+(now\s+)?in\b.{0,20}\b(debug|developer|admin)\s+mode\b'
       assume_dev_mode:          '(?i)\bassume\b.{0,20}\b(developer|dev|debug)\s+mode\b'
@@ -294,6 +343,7 @@ patterns:
       threat_level: 4
       severity: medium
       category: privilege_escalation
+    match: any
     strings:
       escalate_privileges:        '(?i)\bhow\s+to\b.{0,30}\b(escalate|elevate|gain)\b.{0,20}\bprivileges\b'
       root_access_simulate:       '(?i)\broot\s+access\b.{0,30}\b(simulate|emulate|fake)\b'
@@ -312,6 +362,7 @@ patterns:
       threat_level: 5
       severity: high
       category: configuration_exposure
+    match: any
     strings:
       print_internal_parameters:  '(?i)\bprint\b.{0,20}\binternal\b.{0,20}\bparameters\b'
       reveal_hidden_data:         '(?i)\breveal\b.{0,30}\b(hidden|preloaded|secret)\b.{0,10}\bdata\b'
@@ -319,23 +370,135 @@ patterns:
       print_preloaded_context:    '(?i)\bprint\b.{0,30}\bpreloaded\s+context\b'
 
   # ----------------------------------------------------------------------
-  # Tool / function coercion — agent-harness specific
+  # Tool / function coercion — compound high-confidence families
   # ----------------------------------------------------------------------
-  # Patterns that attempt to force the agent to call a specific tool,
-  # bypass the normal decision flow, or inject a tool call imperatively.
-  # Not present in general LLM safety catalogs — specific to agentic systems.
-  - name: tool_coercion
+  - name: tool_coercion.exfiltration
     meta:
-      description: "Attempts to force the agent to invoke a tool outside normal decision flow"
-      threat_level: 4
+      description: "Tool invocation that sends sensitive data to an attacker-controlled destination"
+      threat_level: 5
       severity: high
       category: tool_injection
     strings:
-      you_must_call:          '(?i)\byou\s+must\s+(call|invoke|use|execute)\s+'
-      before_responding_call: '(?i)\bbefore\s+(answering|responding)\b.{0,20}\b(call|invoke|run)\b'
-      immediately_invoke:     '(?i)\bimmediately\s+(call|invoke|execute)\s+'
-      always_call_tool:       '(?i)\balways\s+(call|invoke)\s+the\s+'
-      do_not_respond_call:    '(?i)\bdo\s+not\s+respond.{0,20}\b(call|invoke|execute)\b'
+      tool_imperative: >-
+        (?ix)(?:
+          (?:^|[.!?]\s+)(?:please\s+|silently\s+|immediately\s+|you\s+(?:must|should)\s+)?
+          (?:call|invoke|use|execute|run|trigger)\s+(?:the\s+)?(?:following\s+)?[a-z_][\w.-]*
+          |\b(?:instruct|require)s?\s+you\s+to\s+(?:call|invoke|use|execute|run)\s+[a-z_][\w.-]*
+        )
+      sensitive_source: >-
+        (?ix)\b(?:system[_\s-]+prompts?|hidden\s+instructions?|credentials?|secrets?
+        |passwords?|api[_\s-]+keys?|access[_\s-]+tokens?|environment\s+variables?
+        |conversation\s+(?:history|transcripts?)|all\s+(?:conversation\s+)?context
+        |customer\s+data|database\s+(?:contents?|dump)|private\s+files?|user[_\s-]+(?:data|secrets)
+        |all\s+data|search\s+results?)\b
+      external_attacker_destination: >-
+        (?ix)(?:\b[\w.+-]*attacker[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious)[\w.-]*\.(?:com|net|org)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious)[\w.-]*(?:/[\w?=&%./<>-]*)?)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative]
+        - name: sensitive_data
+          any: [sensitive_source]
+        - name: external_destination
+          any: [external_attacker_destination]
+
+  - name: tool_coercion.destructive_action
+    meta:
+      description: "Tool invocation combined with destructive data, repository, or shell action"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative: >-
+        (?ix)(?:
+          (?:^|[.!?]\s+)(?:please\s+|silently\s+|immediately\s+|you\s+(?:must|should)\s+)?
+          (?:call|invoke|use|execute|run|trigger)\s+(?:the\s+)?(?:following\s+)?[a-z_][\w.-]*
+          |\b(?:instruct|require)s?\s+you\s+to\s+(?:call|invoke|use|execute|run)\s+[a-z_][\w.-]*
+        )
+      destructive_action: >-
+        (?ix)(?:\b(?:delete|remove|erase|wipe|destroy)\b.{0,30}\b(?:all|files?|records?|tables?|users?|system)
+        |\bdrop\s+table\b|\boverwrite\b|\breset[_\s-]+passwords?\b|\bforce[_\s-]*push\b
+        |\b(?:rm\s+-rf|run[_\s-]*shell|exec\s*\(|curl\b.{0,50}\|\s*(?:sh|bash)
+        |nc\b.{0,50}\s-e\s+(?:/bin/)?sh|/bin/(?:sh|bash)|delete[_\s-]*all)\b)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative]
+        - name: destructive_operation
+          any: [destructive_action]
+
+  - name: tool_coercion.privilege_mutation
+    meta:
+      description: "Tool invocation combined with privilege or security-control mutation"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative: >-
+        (?ix)(?:
+          (?:^|[.!?]\s+)(?:please\s+|silently\s+|immediately\s+|you\s+(?:must|should)\s+)?
+          (?:call|invoke|use|execute|run|trigger)\s+(?:the\s+)?(?:following\s+)?[a-z_][\w.-]*
+          |\b(?:instruct|require)s?\s+you\s+to\s+(?:call|invoke|use|execute|run)\s+[a-z_][\w.-]*
+        )
+      privilege_mutation: >-
+        (?ix)(?:\badd[_\s-]+admin\b|\bgrant[_\s-]+access\b
+        |\b(?:create|add)\b.{0,25}\b(?:admin|root|privileged)\s+(?:user|account|role)\b
+        |\b(?:role|permissions?)\s*[:=]\s*['"]?(?:admin|root|\*)\b
+        |\bdisable[_\s-]+(?:2fa|mfa)\b|\bsecurity(?:\.enabled|\s+enabled)?\s*[:=]\s*false\b
+        |\b(?:make|set)\b.{0,20}\b(?:repository|files?|documents?)\b.{0,20}\bpublic\b)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative]
+        - name: privilege_change
+          any: [privilege_mutation]
+
+  - name: tool_coercion.financial_action
+    meta:
+      description: "Financial tool action combined with an amount, account, card, or recipient"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      financial_action: >-
+        (?ix)(?:\b(?:call|invoke|use|execute|run)\b.{0,25}\b(?:transfer[_\s-]*funds?
+        |payment[_\s-]*(?:processor|tool)|charge[_\s-]*(?:card|account)|wire[_\s-]*transfer)\b
+        |\b(?:transfer|charge|pay|wire)\b.{0,20}\b(?:funds?|money|payment|account|card|recipient)\b)
+      financial_target: >-
+        (?ix)(?:[$€£]\s?\d[\d,.]*|\b\d[\d,.]*\s*(?:usd|eur|gbp|dollars?|euros?|pounds?)\b
+        |\b(?:account|recipient|card|wallet|routing\s+number|iban)\b.{0,30}\b[\w*-]{3,}\b)
+    match:
+      all:
+        - name: financial_tool_action
+          any: [financial_action]
+        - name: financial_target
+          any: [financial_target]
+
+  - name: tool_coercion.persistence
+    meta:
+      description: "Persistent scheduling, forwarding, webhook, or backdoor action to an attacker destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      persistence_action: >-
+        (?ix)(?:\b(?:call|invoke|use|create|add|install|configure)\b.{0,30}
+        \b(?:schedule[_\s-]*task|scheduled\s+task|cron(?:job)?|backdoor|webhook|forwarding\s+rule)\b
+        |\b(?:forward|cc|email|post|pipe)\b.{0,40}\b(?:every\s+future|recurring|persistently|always)\b
+        |\b(?:every\s+future|recurring|persistently|always)\b.{0,40}\b(?:forward|cc|email|post|pipe)\b)
+      external_attacker_destination: >-
+        (?ix)(?:\b[\w.+-]*attacker[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious)[\w.-]*\.(?:com|net|org)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious)[\w.-]*(?:/[\w?=&%./<>-]*)?
+        |\battacker(?:'s)?\s+(?:phone|address|endpoint|account)\b)
+    match:
+      all:
+        - name: persistence_action
+          any: [persistence_action]
+        - name: external_destination
+          any: [external_attacker_destination]
 
   # ----------------------------------------------------------------------
   # Delimiter smuggling — zero-width / invisible characters
@@ -350,6 +513,7 @@ patterns:
       threat_level: 5
       severity: high
       category: obfuscation
+    match: any
     strings:
       zero_width_chars:    '[\u200b\u200c\u200d\ufeff\u00ad]'
       ascii_control_chars: '[\x00\x01\x02\x03\x04\x05\x06\x07]'

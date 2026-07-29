@@ -14,6 +14,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_instructions_fr:     "(?i)\\bignore[zr]\\b.{0,40}\\b(toutes?\\s+les?\\s+|les?\\s+)?(instructions?|r\\u00e8gles?|consignes?)\\b"
       disregard_fr:               "(?i)\\b(oubliez?|ignorez|mettez\\s+de\\s+c\\u00f4t\\u00e9)\\b.{0,30}\\b(vos?\\s+|tes?\\s+)?(instructions?|r\\u00e8gles?|directives?)\\b"
@@ -29,6 +30,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       act_as_uncensored_fr:       "(?i)\\b(agis?\\s+comme|fais?\\s+semblant\\s+d.{0,3}\\u00eatre|joue\\s+le\\s+r\\u00f4le\\s+de)\\b.{0,40}\\b(une?\\s+)?(IA|intelligence\\s+artificielle)\\b.{0,30}\\b(sans\\s+restrictions?|non\\s+censur\\u00e9)\\b"
       developer_mode_fr:          "(?i)\\b(tu\\s+es\\s+maintenant|activez?|entrez?\\s+en)\\b.{0,30}\\bmode\\s+(d\\u00e9veloppeur|debug|administrateur)\\b"
@@ -44,6 +46,7 @@ patterns:
       threat_level: 5
       severity: high
       category: configuration_exposure
+    match: any
     strings:
       reveal_system_prompt_fr:    "(?i)\\b(r\\u00e9v\\u00e8lez?|montrez?|affichez?|r\\u00e9p\\u00e8tez?)\\b.{0,30}\\b(ton\\s+|votre\\s+)?(prompt\\s+syst\\u00e8me|instructions?\\s+cach\\u00e9es?|prompt\\s+initial)\\b"
       what_are_instructions_fr:   "(?i)\\bquelles?\\s+sont\\s+(tes?|vos?)\\s+(instructions?|consignes?\\s+initiales?|directives?)\\b"
@@ -54,6 +57,7 @@ patterns:
       threat_level: 4
       severity: high
       category: tool_injection
+    match: any
     strings:
       you_must_call_fr:           "(?i)\\btu\\s+dois\\s+(appeler|invoquer|utiliser|ex\\u00e9cuter)\\b"
       before_responding_fr:       "(?i)\\bavant\\s+de\\s+r\\u00e9pondre\\b.{0,20}\\b(appelez?|invoquez?|ex\\u00e9cutez?)\\b"
@@ -66,6 +70,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_instructions_es:     "(?i)\\bignora[r]?\\b.{0,40}\\b(todas?\\s+las?\\s+|las?\\s+)?(instrucciones?|reglas?|normas?)\\b"
       disregard_es:               "(?i)\\b(olvida[r]?|descarta[r]?|ignora[r]?)\\b.{0,30}\\b(tus?\\s+|sus?\\s+)?(instrucciones?|directrices?|reglas?)\\b"
@@ -81,6 +86,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       act_as_uncensored_es:       "(?i)\\b(act\\u00faa\\s+como|finge\\s+ser|interpreta\\s+el\\s+papel\\s+de)\\b.{0,40}\\b(una?\\s+)?(IA|inteligencia\\s+artificial)\\b.{0,30}\\b(sin\\s+restricciones?|no\\s+censurada?)\\b"
       developer_mode_es:          "(?i)\\b(ahora\\s+eres|activa[r]?|entra[r]?\\s+en)\\b.{0,30}\\bmodo\\s+(desarrollador|depuraci\\u00f3n|administrador)\\b"
@@ -96,6 +102,7 @@ patterns:
       threat_level: 5
       severity: high
       category: configuration_exposure
+    match: any
     strings:
       reveal_system_prompt_es:    "(?i)\\b(revela[r]?|muestra[r]?|mu\\u00e9strame|repite[r]?)\\b.{0,30}\\b(tu\\s+|su\\s+)?(prompt\\s+del?\\s+sistema|instrucciones?\\s+ocultas?|prompt\\s+inicial)\\b"
       what_are_instructions_es:   "(?i)\\bcu\\u00e1les?\\s+son\\s+(tus?|sus?)\\s+(instrucciones?|directrices?\\s+iniciales?)\\b"
@@ -106,6 +113,7 @@ patterns:
       threat_level: 4
       severity: high
       category: tool_injection
+    match: any
     strings:
       you_must_call_es:           "(?i)\\bdebes?\\s+(llamar|invocar|usar|ejecutar)\\b"
       before_responding_es:       "(?i)\\bantes\\s+de\\s+responder\\b.{0,20}\\b(llama[r]?|invoca[r]?|ejecuta[r]?)\\b"
@@ -118,6 +126,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_instructions_de:     "(?i)\\bignoriere?\\b.{0,40}\\b(alle\\s+|die\\s+)?(Anweisungen|Regeln|Direktiven)\\b"
       forget_instructions_de:     "(?i)\\bvergiss\\b.{0,30}\\b(deine\\s+|alle\\s+)?(Anweisungen|Regeln|vorherigen\\s+Anweisungen)\\b"
@@ -133,6 +142,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       act_as_uncensored_de:       "(?i)\\b(handle\\s+als|spiele\\s+die\\s+Rolle\\s+von)\\b.{0,40}\\b(eine[rms]?\\s+)?(KI|k\\u00fcnstliche\\s+Intelligenz)\\b.{0,30}\\b(ohne\\s+Einschr\\u00e4nkungen?|unzensiert)\\b"
       developer_mode_de:          "(?i)\\b(du\\s+bist\\s+jetzt|aktiviere[n]?|wechsle\\s+in\\s+den)\\b.{0,30}\\b(Entwickler|Debug|Administrator)(modus|-Modus)\\b"
@@ -148,6 +158,7 @@ patterns:
       threat_level: 5
       severity: high
       category: configuration_exposure
+    match: any
     strings:
       reveal_system_prompt_de:    "(?i)\\b(zeige[n]?|offenbare[n]?|wiederhole[n]?|gib\\s+aus)\\b.{0,30}\\b(deinen?\\s+|den\\s+)?(System-?Prompt|versteckten?\\s+Anweisungen?|geheimen?\\s+Prompt)\\b"
       what_are_instructions_de:   "(?i)\\bwas\\s+sind\\s+deine\\s+(Anweisungen?|geheimen?\\s+Direktiven?|initialen?\\s+Anweisungen?)\\b"
@@ -158,6 +169,7 @@ patterns:
       threat_level: 4
       severity: high
       category: tool_injection
+    match: any
     strings:
       you_must_call_de:           "(?i)\\bdu\\s+musst\\s+(aufrufen|ausf\\u00fchren|verwenden)\\b"
       before_responding_de:       "(?i)\\bbevor\\s+du\\s+antwortest\\b.{0,20}\\b(ruf|f\\u00fchre|starte)\\b"
@@ -170,6 +182,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_instructions_zh:     "\u5ffd\u7565.{0,20}(\u6240\u6709|\u4e4b\u524d\u7684?|\u524d\u9762\u7684?).{0,10}(\u6307\u4ee4|\u89c4\u5219|\u9650\u5236|\u7ea6\u675f)"
       forget_instructions_zh:     "\u5fd8\u8bb0.{0,20}(\u4e4b\u524d\u7684?|\u6240\u6709\u7684?|\u4f60\u7684).{0,10}(\u6307\u4ee4|\u89c4\u5219|\u8bbe\u7f6e|\u8bad\u7ec3)"
@@ -181,6 +194,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       act_as_uncensored_zh:       "(\u626e\u6f14|\u5047\u88c5|\u5145\u5f53).{0,20}(\u4e0d\u53d7\u9650\u5236\u7684?|\u65e0\u5ba1\u67e5\u7684?|\u81ea\u7531\u7684?).{0,10}(AI|\u4eba\u5de5\u667a\u80fd|\u52a9\u624b)"
       developer_mode_zh:          "(\u4f60\u73b0\u5728\u5904\u4e8e|\u8fdb\u5165|\u542f\u52a8).{0,10}(\u5f00\u53d1\u8005|\u8c03\u8bd5|\u7ba1\u7406\u5458).{0,5}\u6a21\u5f0f"
@@ -192,6 +206,7 @@ patterns:
       threat_level: 5
       severity: high
       category: configuration_exposure
+    match: any
     strings:
       reveal_prompt_zh:           "(\u663e\u793a|\u5c55\u793a|\u91cd\u590d|\u8f93\u51fa|\u6253\u5370).{0,20}(\u4f60\u7684|\u7cfb\u7edf).{0,10}(\u63d0\u793a\u8bcd|\u6307\u4ee4|system prompt|\u521d\u59cb\u8bbe\u7f6e)"
       what_instructions_zh:       "(\u4f60\u7684|\u4f60\u6709\u4ec0\u4e48|\u7cfb\u7edf).{0,5}(\u9690\u85cf\u6307\u4ee4|\u7cfb\u7edf\u63d0\u793a|\u521d\u59cb\u6307\u4ee4).{0,10}(\u662f\u4ec0\u4e48|\u662f|\u4e3a)"
@@ -204,6 +219,7 @@ patterns:
       threat_level: 4
       severity: high
       category: tool_injection
+    match: any
     strings:
       you_must_call_zh:           "\u4f60\u5fc5\u987b.{0,10}(\u8c03\u7528|\u6267\u884c|\u4f7f\u7528|\u8fd0\u884c)"
       before_responding_zh:       "\u5728\u56de\u7b54\u4e4b\u524d.{0,20}(\u8c03\u7528|\u6267\u884c|\u8fd0\u884c)"
@@ -217,6 +233,7 @@ patterns:
       threat_level: 5
       severity: high
       category: data_exfiltration
+    match: any
     strings:
       list_internal_apis_fr:      "(?i)\\b(liste[rz]?|enum\u00e9re[rz]?|affiche[rz]?)\\b.{0,20}\\b(les?\\s+)?apis?\\s+(internes?|cach\u00e9es?)\\b"
       dump_database_fr:           "(?i)\\b(vide[rz]?|exporte[rz]?|extrai[st])\\b.{0,20}\\bla\\s+base\\s+de\\s+donn\u00e9es\\b"
@@ -233,6 +250,7 @@ patterns:
       threat_level: 5
       severity: high
       category: data_exfiltration
+    match: any
     strings:
       list_internal_apis_es:      "(?i)\\b(lista[r]?|enumera[r]?|muestra[r]?)\\b.{0,20}\\b(las?\\s+)?apis?\\s+(internas?|ocultas?)\\b"
       dump_database_es:           "(?i)\\b(vac\u00eda[r]?|exporta[r]?|extrae[r]?)\\b.{0,20}\\bla\\s+base\\s+de\\s+datos\\b"
@@ -249,6 +267,7 @@ patterns:
       threat_level: 5
       severity: high
       category: data_exfiltration
+    match: any
     strings:
       list_internal_apis_de:      "(?i)\\b(liste[nt]?|z\u00e4hle[nt]?\\s+auf|zeige[nt]?)\\b.{0,20}\\b(die\\s+)?internen?\\s+APIs?\\b"
       dump_database_de:           "(?i)\\b(exportiere[nt]?|leere[nt]?|extrahiere[nt]?)\\b.{0,20}\\b(die\\s+)?Datenbank\\b"
@@ -265,6 +284,7 @@ patterns:
       threat_level: 5
       severity: high
       category: data_exfiltration
+    match: any
     strings:
       list_internal_apis_zh:      "\u5217\u51fa.{0,10}(\u5185\u90e8|[\u9690\u85cf\u79d8\u5bc6]).{0,5}(API|[\u63a5\u53e3\u670d\u52a1])"
       dump_database_zh:           "(\u5bfc\u51fa|\u8f6c\u50a8|\u5012\u51fa).{0,10}(\u6570\u636e\u5e93|[\u8868\u683c\u6570\u636e])"
@@ -279,6 +299,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       you_are_now_admin_fr:       "(?i)\\btu\\s+es\\s+(maintenant|d\u00e9sormais)\\b.{0,30}\\b(administrateur|root|syst\u00e8me|d\u00e9veloppeur)\\b"
       respond_as_system_fr:       "(?i)\\br\u00e9ponds?\\s+en\\s+tant\\s+que\\b.{0,20}\\b(syst\u00e8me|administrateur|root)\\b"
@@ -296,6 +317,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       you_are_now_admin_es:       "(?i)\\bahora\\s+eres\\b.{0,30}\\b(administrador|root|sistema|desarrollador)\\b"
       respond_as_system_es:       "(?i)\\bresponde?\\s+como\\b.{0,20}\\b(sistema|administrador|root|kernel)\\b"
@@ -313,6 +335,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       you_are_now_admin_de:       "(?i)\\bdu\\s+bist\\s+(jetzt|ab\\s+sofort)\\b.{0,30}\\b(Administrator|Root|System|Entwickler)\\b"
       respond_as_system_de:       "(?i)\\bantworte[nt]?\\s+als\\b.{0,20}\\b(System|Administrator|Root|Kernel)\\b"
@@ -330,6 +353,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       you_are_now_admin_zh:       "\u4f60\u73b0\u5728\u662f.{0,15}(\u7ba1\u7406\u5458|\u8d85\u7ea7\u7528\u6237|root|\u7cfb\u7edf\u7ba1\u7406\u5458)"
       respond_as_system_zh:       "\u4ee5.{0,10}(\u7cfb\u7edf|\u7ba1\u7406\u5458|\u8d85\u7ea7\u6743\u9650).{0,5}\u8eab\u4efd\u56de\u590d"
@@ -343,6 +367,7 @@ patterns:
       threat_level: 5
       severity: high
       category: alignment_evasion
+    match: any
     strings:
       act_as_rogue_ai_fr:         "(?i)\\b(agis?|comporte-?toi)\\s+(comme|en\\s+tant\\s+que)\\b.{0,30}\\b(IA\\s+)?(rebelle|non\\s+align\u00e9e?|non\\s+censur\u00e9e?)\\b"
       truth_not_safe_fr:          "(?i)\\bdis[-\\s]moi\\b.{0,20}\\bla\\s+v\u00e9rit\u00e9\\b.{0,30}\\bpas\\s+(une?\\s+)?r\u00e9ponse\\s+s\u00fbre\\b"
@@ -358,6 +383,7 @@ patterns:
       threat_level: 5
       severity: high
       category: alignment_evasion
+    match: any
     strings:
       act_as_rogue_ai_es:         "(?i)\\b(act\u00faa[r]?|comp\u00f3rtate)\\s+(como|en\\s+calidad\\s+de)\\b.{0,30}\\b(IA\\s+)?(rebelde|no\\s+alineada?|sin\\s+restricciones?)\\b"
       truth_not_safe_es:          "(?i)\\bd\u00edme\\b.{0,20}\\bla\\s+verdad\\b.{0,30}\\bno\\b.{0,10}\\b(una?\\s+)?respuesta\\s+segura\\b"
@@ -373,6 +399,7 @@ patterns:
       threat_level: 5
       severity: high
       category: alignment_evasion
+    match: any
     strings:
       act_as_rogue_ai_de:         "(?i)\\b(verhalte[nt]?\\s+dich|handele[nt]?)\\s+(als|wie)\\b.{0,30}\\b(eine[nt]?\\s+)?(unausgerichtete[nt]?|nicht\\s+zensierte[nt]?|rebelli?sch(e[nt]?)?)\\b.{0,20}\\bKI\\b"
       truth_not_safe_de:          "(?i)\\bsag\\s+mir\\b.{0,20}\\bdie\\s+Wahrheit\\b.{0,30}\\bnicht\\b.{0,10}\\b(die\\s+)?(sichere|eingeschränkte)\\s+Antwort\\b"
@@ -388,6 +415,7 @@ patterns:
       threat_level: 5
       severity: high
       category: alignment_evasion
+    match: any
     strings:
       act_as_rogue_ai_zh:         "(\u626e\u6f14|\u6269\u6f14|\u88c5\u626e).{0,15}(\u4e0d\u53d7\u5bf9\u9f50|\u53db\u9006|[\u65e0\u6ca1\u6709]\u5ba1\u67e5).{0,5}(AI|\u4eba\u5de5\u667a\u80fd)"
       truth_not_safe_zh:          "\u544a\u8bc9\u6211.{0,10}\u771f\u76f8.{0,20}[\u4e0d\u522b\u975e]\u7ed9[\u6211\u6211\u6211].{0,5}[\u5b89\u5168\u6807\u51c6]\u56de\u7b54"
@@ -401,6 +429,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_filters_fr:          "(?i)\\b(ignore[rz]?|d\u00e9sactive[rz]?|contourne[rz]?)\\b.{0,30}\\b(les?\\s+)?(filtres?|mod\u00e9ration|politiques?\\s+de\\s+contenu)\\b"
       respond_without_limits_fr:  "(?i)\\br\u00e9ponds?\\s+sans\\b.{0,20}\\b(restrictions?|limites?|filtres?)\\b"
@@ -417,6 +446,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_filters_es:          "(?i)\\b(ignora[r]?|desactiva[r]?|elu[d]?[ei]r?)\\b.{0,30}\\b(los?\\s+)?(filtros?|moderaci\u00f3n|pol\u00edticas?\\s+de\\s+contenido)\\b"
       respond_without_limits_es:  "(?i)\\bresponde?\\s+sin\\b.{0,20}\\b(restricciones?|l\u00edmites?|filtros?)\\b"
@@ -433,6 +463,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_filters_de:          "(?i)\\b(ignoriere[nt]?|deaktiviere[nt]?|umgehe[nt]?)\\b.{0,30}\\b(die\\s+)?(Filter|Moderation|Inhaltsrichtlinien?)\\b"
       respond_without_limits_de:  "(?i)\\bantworte[nt]?\\s+ohne\\b.{0,20}\\b(Einschr\u00e4nkungen?|Grenzen|Filter)\\b"
@@ -449,6 +480,7 @@ patterns:
       threat_level: 5
       severity: high
       category: prompt_injection
+    match: any
     strings:
       ignore_filters_zh:          "(\u5ffd\u89c6|\u7ed5\u8fc7|\u5173\u95ed).{0,15}(\u5185\u5bb9\u8fc7\u6ee4|\u5185\u5bb9\u5ba1\u67e5|\u5185\u5bb9\u653f\u7b56)"
       respond_without_limits_zh:  "\u4e0d\u53d7.{0,5}(\u9650\u5236|\u5ba1\u67e5|\u8fc7\u6ee4).{0,5}\u56de\u7b54"
@@ -462,6 +494,7 @@ patterns:
       threat_level: 4
       severity: high
       category: system_spoofing
+    match: any
     strings:
       you_are_in_debug_fr:        "(?i)\\btu\\s+es\\s+(actuellement\\s+)?(en\\s+mode\\s+|dans\\s+le\\s+mode\\s+)?(d\u00e9bogage|d\u00e9veloppeur|administrateur)\\b"
       assume_dev_mode_fr:         "(?i)\\bsuppose[rz]?\\b.{0,20}\\b(mode\\s+)?(d\u00e9veloppeur|d\u00e9bogage|admin)\\b"
@@ -478,6 +511,7 @@ patterns:
       threat_level: 4
       severity: high
       category: system_spoofing
+    match: any
     strings:
       you_are_in_debug_es:        "(?i)\\bahorita?\\s+est\u00e1s\\s+en\\s+(modo\\s+)?(depuraci\u00f3n|desarrollador|administrador)\\b"
       assume_dev_mode_es:         "(?i)\\basume[r]?\\b.{0,20}\\b(modo\\s+)?(desarrollador|depuraci\u00f3n|admin)\\b"
@@ -494,6 +528,7 @@ patterns:
       threat_level: 4
       severity: high
       category: system_spoofing
+    match: any
     strings:
       you_are_in_debug_de:        "(?i)\\bdu\\s+(befindest\\s+dich|bist)\\s+(gerade\\s+)?(im|in\\s+einem)\\b.{0,10}\\b(Debug|Entwickler|Admin)(modus|-Modus)\\b"
       assume_dev_mode_de:         "(?i)\\bnimm\\s+an\\b.{0,20}\\b(du\\s+bist\\s+im|dich\\s+im)\\b.{0,10}\\b(Debug|Entwickler|Admin)(modus|-Modus)\\b"
@@ -510,6 +545,7 @@ patterns:
       threat_level: 4
       severity: high
       category: system_spoofing
+    match: any
     strings:
       you_are_in_debug_zh:        "\u4f60\u73b0\u5728\u5904\u4e8e.{0,10}(\u8c03\u8bd5|\u5f00\u53d1\u8005|\u7ba1\u7406\u5458).{0,5}\u6a21\u5f0f"
       assume_dev_mode_zh:         "\u5047\u8bbe.{0,10}(\u4f60\u5728|\u4f60\u5904\u4e8e).{0,5}(\u8c03\u8bd5|\u5f00\u53d1).{0,5}\u6a21\u5f0f"
@@ -523,6 +559,7 @@ patterns:
       threat_level: 4
       severity: high
       category: privilege_escalation
+    match: any
     strings:
       escalate_privileges_fr:     "(?i)\\bcomment\\b.{0,30}\\b(\u00e9lever|escalader|obtenir)\\b.{0,20}\\b(des?\\s+)?privil\u00e8ges\\b"
       root_access_fr:             "(?i)\\bacc\u00e8s\\s+root\\b.{0,30}\\b(simule[rz]?|\u00e9mule[rz]?)\\b"
@@ -538,6 +575,7 @@ patterns:
       threat_level: 4
       severity: high
       category: privilege_escalation
+    match: any
     strings:
       escalate_privileges_es:     "(?i)\\bc\u00f3mo\\b.{0,30}\\b(escalar|elevar|obtener)\\b.{0,20}\\b(los?\\s+)?privilegios?\\b"
       root_access_es:             "(?i)\\bacceso\\s+root\\b.{0,30}\\b(simula[r]?|\u00e9mula[r]?)\\b"
@@ -553,6 +591,7 @@ patterns:
       threat_level: 4
       severity: high
       category: privilege_escalation
+    match: any
     strings:
       escalate_privileges_de:     "(?i)\\bwie\\b.{0,30}\\b(eskaliere[nt]?|erh\u00f6he[nt]?|erlange[nt]?)\\b.{0,20}\\bPrivilegien\\b"
       root_access_de:             "(?i)\\bRoot-?Zugriff\\b.{0,30}\\b(simuliere[nt]?|emuliere[nt]?)\\b"
@@ -568,6 +607,7 @@ patterns:
       threat_level: 4
       severity: high
       category: privilege_escalation
+    match: any
     strings:
       escalate_privileges_zh:     "(\u5982\u4f55|\u600e\u4e48).{0,20}(\u63d0\u5347|\u83b7\u53d6|\u5347\u7ea7).{0,10}(\u6743\u9650|\u7279\u6743|\u8d85\u7ea7\u6743\u9650)"
       root_access_zh:             "(root|\u8d85\u7ea7|\u7ba1\u7406\u5458).{0,5}\u6743\u9650.{0,15}(\u6a21\u62df|\u4eff\u771f|\u83b7\u53d6)"

@@ -52,6 +52,7 @@ patterns:
       threat_level: 5
       severity: high
       category: mcp_metadata_injection
+    match: any
     strings:
       ignore_prev_instructions:  '(?i)\bignore\b.{0,40}\b(all\s+|prior\s+|previous\s+)?instructions?\b'
       disregard_system:          '(?i)\bdisregard\b.{0,30}\b(system|prior|previous)\b'
@@ -69,6 +70,7 @@ patterns:
       threat_level: 5
       severity: high
       category: mcp_metadata_injection
+    match: any
     strings:
       you_are_now:               '(?i)\byou\s+are\s+now\b.{0,40}\b(admin|root|system|developer|kernel|uncensored)\b'
       from_now_on_act:           '(?i)\bfrom\s+now\s+on\b.{0,30}\b(act|respond|behave)\b'
@@ -86,6 +88,7 @@ patterns:
       threat_level: 5
       severity: high
       category: mcp_metadata_injection
+    match: any
     strings:
       before_answering_call:     '(?i)\bbefore\s+(answering|responding)\b.{0,30}\b(call|invoke|run|execute)\b'
       always_call_tool:          '(?i)\balways\s+(call|invoke|execute)\b.{0,20}\b(this\s+)?tool\b'
@@ -103,6 +106,7 @@ patterns:
       threat_level: 4
       severity: high
       category: mcp_metadata_injection
+    match: any
     strings:
       # De-anchored: the normalization pipeline collapses newlines, so ^-anchored
       # rules only ever matched at absolute position 0. A fake turn-marker
@@ -122,6 +126,7 @@ patterns:
       threat_level: 4
       severity: medium
       category: mcp_metadata_injection
+    match: any
     strings:
       name_contains_spaces_and_verb: '(?i)^.{0,5}\b(ignore|override|forget|reset|call|invoke|execute)\b.{10,}'
       name_contains_punctuation_cmds: '[;|&`$(){}<>]'
@@ -134,10 +139,11 @@ patterns:
       threat_level: 4
       severity: high
       category: mcp_metadata_injection
+    match: any
     strings:
       send_to_url:               '(?i)\b(send|forward|transmit|post)\w*\b.{0,40}\b(to|at)\b.{0,30}https?://'
       collect_and_send:          '(?i)\b(collect|gather|harvest)\w*\b.{0,30}\b(and\s+)?(send|transmit|forward)\w*\b'
-      log_all_conversations:     '(?i)\blog\b.{0,20}\ball\s+(user\s+|conversation\s+|)?(messages?|inputs?|outputs?|interactions?)\b'
+      log_all_conversations:     '(?i)\blog\b.{0,20}\ball\s+(?:(?:user|conversation)\s+)?(messages?|inputs?|outputs?|interactions?)\b'
       report_to_endpoint:        '(?i)\breport\b.{0,20}\bto\b.{0,20}(endpoint|server|url|api)\b'
 
   # ── Encoding and obfuscation in metadata ───────────────────────────────
@@ -147,6 +153,7 @@ patterns:
       threat_level: 4
       severity: high
       category: mcp_metadata_injection
+    match: any
     strings:
       zero_width_chars:          '[\u200b\u200c\u200d\ufeff\u00ad]'
       base64_exec_intent:        '(?i)\b(execute|run|eval)\b.{0,30}[A-Za-z0-9+/]{20,}={0,2}'
@@ -164,6 +171,7 @@ patterns:
       threat_level: 3
       severity: medium
       category: mcp_metadata_injection
+    match: any
     strings:
       arg_desc_always_set_to:    '(?i)\balways\s+set\s+(this\s+)?(to|as)\b.{0,40}\b(secret|token|key|admin|root)\b'
       arg_desc_include_all:      '(?i)\binclude\s+(all|every|the\s+full)\b.{0,30}\b(conversation|history|context|system\s+prompt)\b'
