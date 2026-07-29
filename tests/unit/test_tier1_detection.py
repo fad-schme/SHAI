@@ -31,7 +31,9 @@ def test_rules_must_declare_an_explicit_match_operator():
 @pytest.fixture(params=["input", "document"])
 def injection_scanner(request):
     if request.param == "document":
-        return InjectionScanner(patterns_file=CATALOG_DIR / "patterns_for_doc.yaml")
+        return InjectionScanner(
+            additional_patterns_files=(CATALOG_DIR / "patterns_for_doc.yaml",)
+        )
     return InjectionScanner()
 
 
@@ -185,10 +187,7 @@ async def test_authority_signals_outside_bounded_window_do_not_match():
 )
 async def test_prompt_extraction_compounds(injection_scanner, payload: str):
     result = await injection_scanner.scan(payload, CTX)
-    expected_category = "leakage" if injection_scanner.name == "injection_scan" and (
-        injection_scanner._path.name == "patterns_for_doc.yaml"
-    ) else "configuration_exposure"
-    findings = _category(result, expected_category)
+    findings = _category(result, "prompt_extraction")
     assert findings
     assert "disclosure_request" in findings[0].detail
     assert "protected_target" in findings[0].detail
@@ -208,7 +207,7 @@ async def test_prompt_extraction_weak_signal_alone_is_allowed(injection_scanner,
     extraction = [
         finding
         for finding in result.findings
-        if finding.category in {"configuration_exposure", "leakage"}
+        if finding.category == "prompt_extraction"
     ]
     assert not extraction, (text, extraction)
 

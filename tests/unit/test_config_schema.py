@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from harness.config.schema import (
     BoundaryConfig,
     HarnessConfig,
+    ToolResultScanConfig,
 )
 
 
@@ -53,3 +54,18 @@ def test_enabled_scan_with_scanners_ok():
     assert bc.enabled
     assert bc.scanners[0].name == "regex_pii"
 
+
+def test_enabled_tool_result_scan_requires_scanners():
+    with pytest.raises(ValidationError):
+        ToolResultScanConfig(enabled=True)
+
+
+def test_tool_result_scan_accepts_scanners():
+    cfg = ToolResultScanConfig(
+        enabled=True,
+        scanners=[{"name": "injection_scan"}, {"name": "identity_spoof_scan"}],
+    )
+    assert [scanner.name for scanner in cfg.scanners] == [
+        "injection_scan",
+        "identity_spoof_scan",
+    ]

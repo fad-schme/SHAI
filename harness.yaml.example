@@ -48,29 +48,43 @@ scan_input:
     - name: regex_pii
 
 # ── File upload scanning ──────────────────────────────────────────────────
-# FileScanner handles MIME, size, PDF JS, EXIF, ZIP, Office macros, and
-# runs InjectionScanner on extracted text automatically.
+# FileScanner handles MIME, size, PDF JS, EXIF, ZIP, and Office macros.
+# The configured scanners below run over extracted text.
 scan_file:
   enabled: false
   block_at: high
   max_size_mb: 50
+  scanners:
+    - name: injection_scan
+    - name: jailbreak_scan
+    - name: regex_pii
 
 # ── Tool result scanning (indirect injection) — T6 ───────────────────────
 scan_tool_result:
   enabled: false
   block_at: high
+  scanners:
+    - name: injection_scan
+    - name: identity_spoof_scan
 
 # ── Tool call gate ────────────────────────────────────────────────────────
 check_tool_call:
   rate_limit:
     enabled: false
     window_seconds: 60
-    max_calls_per_window: 60
-    max_calls_per_tool: 20
+    max_calls_per_window: 30
+    max_calls_per_tool: 10
   arg_scanners:
     - name: regex_pii
   scan_args_for_tags:
     - sensitive
+
+scan_mcp_metadata:
+  enabled: true
+  block_at: medium      # medium is correct — metadata injection is high signal
+  action: block
+  scanners:
+    - name: mcp_metadata_scan
 
 # ── Output scanning ───────────────────────────────────────────────────────
 scan_output:
@@ -82,9 +96,16 @@ scan_output:
 
 # ── Policy ────────────────────────────────────────────────────────────────
 policy:
-  name: rules
-  config:
-    rules_path: ./policies/rules.yaml
+  rules:
+    - id: allow_local_tools
+      match:
+        transport: [local, skill]
+      action: allow
+    - id: deny_mcp_by_default
+      match:
+        transport: [mcp]
+      action: deny
+      reason: "MCP tools require explicit agent-level allow rule"
 
 # ── Audit sinks ───────────────────────────────────────────────────────────
 # Optional — defaults to stdout when not specified.
@@ -145,4 +166,3 @@ audit_signing:
 #       - read
 #       - internal
 #     required: true
-

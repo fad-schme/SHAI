@@ -219,12 +219,9 @@ class SHAI:
 
         emitter = AuditEmitter(sinks, signing_secret=signing_secret)
 
-        # R2: tool result scanner — uses bundled patterns_for_doc.yaml.
-        # Not operator-declared, so it carries no per-scanner override and the
-        # boundary action governs it.
-        tool_result_scanners = (
-            [ConfiguredScanner(_make_injection_doc_scanner())]
-            if config.scan_tool_result.enabled else []
+        tool_result_scanners = _build_text_scanners(
+            config.scan_tool_result.scanners,
+            extra_rules=db_extra_rules,
         )
 
         # MCP metadata scanners run inside MCPSource via scan_tool(), not
@@ -862,7 +859,6 @@ class SHAI:
             # {
             #   'regex_pii':          RegexPIIScanner(...),
             #   'injection_scan':     InjectionScanner(...),
-            #   'injection_scan_doc': InjectionScanner(patterns_for_doc),
             #   'heuristic_scan':     HeuristicScanner(...),   # always-on backstop
             #   'file_scanner':       FileScanner(...),
             #   'file_content_scan':  FileContentScanner(...),
@@ -1073,17 +1069,12 @@ def _make_injection_scanner(cfg: dict) -> InjectionScanner:
     return InjectionScanner(**cfg)
 
 
-def _make_injection_doc_scanner() -> InjectionScanner:
-    """Build an InjectionScanner using patterns_for_doc.yaml.
-
-    Used for tool_result scanning and file content scanning — tuned for
-    structured content (lower false-positive rate than injection_patterns.yaml).
-    """
-    from pathlib import Path as _Path
-    doc_patterns = _Path(__file__).parent.parent / "adapters/scanners/l10n/patterns_for_doc.yaml"
+def _make_file_injection_scanner(cfg: dict) -> InjectionScanner:
+    """Build the common + input + document catalog union for file content."""
+    doc_patterns = Path(__file__).parent.parent / "adapters/scanners/l10n/patterns_for_doc.yaml"
     return InjectionScanner(
-        patterns_file=doc_patterns if doc_patterns.exists() else None,
-        name="injection_scan_doc",
+        additional_patterns_files=(doc_patterns,),
+        **cfg,
     )
 
 
@@ -1117,7 +1108,10 @@ _SCANNER_FACTORIES: dict[str, Any] = {
 
 
 def _build_text_scanners(
-    adapter_refs: list, *, extra_rules: dict[str, list] | None = None
+    adapter_refs: list,
+    *,
+    extra_rules: dict[str, list] | None = None,
+    include_document_patterns: bool = False,
 ) -> list[ConfiguredScanner]:
     """Build text scanners from AdapterRef declarations in harness.yaml.
 
@@ -1145,7 +1139,11 @@ def _build_text_scanners(
             if extra_rules and ref.name in extra_rules:
                 # Copy: ref.config is shared across every boundary's build call.
                 cfg = {**cfg, "extra_rules": extra_rules[ref.name]}
-            scanner = factory(cfg)
+            scanner = (
+                _make_file_injection_scanner(cfg)
+                if include_document_patterns and ref.name == "injection_scan"
+                else factory(cfg)
+            )
         else:
             try:
                 from harness.adapters.discovery import resolve
@@ -1176,8 +1174,7 @@ def _build_file_scanners(
 
     `scan_file.scanners` is that content chain and is authoritative, exactly as
     `scan_input.scanners` is for input — declared scanners are what run over
-    extracted content. When nothing is declared, a document-tuned injection
-    scanner is the default so an enabled boundary is never a no-op.
+    extracted content.
     """
     from harness.adapters.scanners.file_scanner import (
         FileContentScanner,
@@ -1188,10 +1185,10 @@ def _build_file_scanners(
     # The content chain runs inside FileContentScanner, which calls the
     # scanners directly — FileScanConfig rejects per-scanner overrides, so
     # only the instances travel down.
-    text_scanners = (
-        [c.scanner for c in _build_text_scanners(refs)] if refs
-        else [_make_injection_doc_scanner()]
-    )
+    text_scanners = [
+        c.scanner
+        for c in _build_text_scanners(refs, include_document_patterns=True)
+    ]
     return [
         ConfiguredScanner(FileScanner(max_size_mb=max_size_mb)),
         ConfiguredScanner(

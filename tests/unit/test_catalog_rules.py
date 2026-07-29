@@ -154,3 +154,20 @@ def test_all_bundled_catalogs_are_lint_clean():
             for issue in lint_catalog(yaml.safe_load(path.read_text()))
         )
     assert failures == []
+
+
+def test_injection_catalog_layers_have_disjoint_rule_ownership():
+    catalog_names = {}
+    for filename in (
+        "injection_common.yaml",
+        "injection_patterns.yaml",
+        "patterns_for_doc.yaml",
+    ):
+        data = yaml.safe_load((CATALOG_DIR / filename).read_text())
+        catalog_names[filename] = {rule["name"] for rule in data["patterns"]}
+
+    for filename, names in catalog_names.items():
+        other_names = set().union(
+            *(value for key, value in catalog_names.items() if key != filename)
+        )
+        assert names.isdisjoint(other_names), filename

@@ -37,6 +37,11 @@ scan_input:
     - name: heuristic_scan
 ```
 
+Enabled input, output, and tool-result boundaries must declare at least one
+scanner. `heuristic_scan` is then added automatically if it is not already
+listed. File scanning can run its structural checks with only that heuristic
+content backstop.
+
 **`block_at`** decides which severity level blocks the turn. Lower-severity findings still appear in audit events — they just don't block. Default: `high`.
 
 **`on_error`** decides what happens when a scanner raises an exception:
@@ -59,22 +64,27 @@ The five built-in scanners:
 
 | Scanner | Catches |
 |---|---|
-| `injection_scan` | Direct and indirect prompt injection, tool coercion, context spoofing (17 EN rules + FR/ES/DE/ZH catalogs) |
+| `injection_scan` | Direct and indirect prompt injection, tool coercion, context spoofing (6 common + 16 input rules; file scanning adds 9 document rules; localized overlays included) |
 | `jailbreak_scan` | Persona override, instruction override, refusal suppression, prompt extraction (6 rules + multilingual) |
 | `identity_spoof_scan` | Claimed orchestrator/system authority, peer privilege escalation (4 rules + multilingual) |
 | `regex_pii` | 7 PII categories with Luhn-validated credit cards and SSN structural rules — supports redaction |
 | `heuristic_scan` | Structural anomalies: entropy, instruction density, coherence, structural markers. Always on (not configurable). |
 
-For tool-result scanning (indirect injection), use the document-tuned catalog:
+For tool-result scanning, configure the normal injection scanner:
 
 ```yaml
 scan_tool_result:
   enabled: true
   block_at: high
   scanners:
-    - name: injection_scan       # uses patterns_for_doc.yaml — different tuning
+    - name: injection_scan
     - name: identity_spoof_scan
 ```
+
+`injection_scan` loads `injection_common.yaml` and `injection_patterns.yaml`
+for input, output, and tool-result boundaries. On `scan_file`, it additionally
+loads `patterns_for_doc.yaml`, giving file content the union of common, input,
+and document rules without duplicating rule ownership.
 
 ### The tool-call gate
 

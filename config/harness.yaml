@@ -33,6 +33,9 @@ scan_tool_result:
   block_at: high
   action: block
   on_error: fail_closed
+  scanners:
+    - name: injection_scan
+    - name: identity_spoof_scan
 
 # ── File upload scanning ──────────────────────────────────────────────────
 # The structural pass always runs and needs no configuration: MIME, size,

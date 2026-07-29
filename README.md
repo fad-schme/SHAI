@@ -43,9 +43,9 @@ user input → [scan] → LLM → [gate] → tool → [scan result] → LLM → 
 |---|---|---|
 | `scan_input` | PII regex, injection catalogs, heuristic scanner | Direct prompt injection, PII, credentials in user text |
 | `check_tool_call` | 7-layer gate | Unauthorised tools, argument violations, irreversibility without approval, subagent scope violations, policy denies, cross-boundary signal correlation |
-| `scan_tool_result` | Injection catalog (document-tuned) | Indirect injection in fetched documents, MCP responses, web pages |
+| `scan_tool_result` | Configured scanner chain (common + input injection catalogs, plus heuristic) | Indirect injection and authority spoofing in fetched documents, MCP responses, web pages |
 | `scan_output` | PII regex, consolidated-risk block | PII leakage, data exfiltration, turn-level risk accumulation |
-| `scan_file` | Structural + content scan | Malicious PDFs, Office macros, EXIF anomalies, embedded payloads |
+| `scan_file` | Structural + configured content scan (common + input + document injection catalogs) | Malicious PDFs, Office macros, EXIF anomalies, embedded payloads |
 
 Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block, or degraded. No raw user text, LLM response, or matched substring ever appears in the log.
 

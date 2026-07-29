@@ -122,11 +122,15 @@ Budget state is cleaned up in `deregister_agent()` via `session_budget.reset(age
 
 Runs before the LLM. Scanners run concurrently via `asyncio.gather`. Per-scanner exceptions produce empty findings — pipeline never raises. Disable-able; emits `disabled=True` event when off.
 
-**Scanners:** `InjectionScanner` (17 rules) · `RegexPIIScanner` (7 categories) · `FileScanner` (size gate, MIME, macros, extracted text scan)
+**Scanners:** `InjectionScanner` (common + input rules; files also add the
+document overlay) · `RegexPIIScanner` (7 categories) · `FileScanner` (size
+gate, MIME, macros, extracted text scan)
 
 ### Tool Stream Control — `scan_tool_result`
 
-Runs before tool results re-enter the LLM context. Uses `patterns_for_doc.yaml` (9 rules, doc-tuned). Disabled by default. Closes the ClawJacked-style indirect injection vector.
+Runs before tool results re-enter the LLM context. Configured injection
+scanners use the common and input catalogs. Disabled by default. Closes the
+ClawJacked-style indirect injection vector.
 
 ### Egress Scan — `scan_output`
 

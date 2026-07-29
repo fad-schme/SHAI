@@ -40,3 +40,4 @@ class JailbreakScanner(InjectionScanner):
     name = "jailbreak_scan"
     method_family = "regex_catalog"
     default_patterns = _DEFAULT_PATTERNS
+    common_patterns = ()

@@ -1,10 +1,9 @@
 """
 SHAI Step Zero (v2) — coverage matrix for scan_input vs scan_tool_result.
 
-Why two boundaries.  scan_tool_result uses a *fixed* doc-tuned injection
-catalog (patterns_for_doc.yaml); operator-selected scanners are configured
-only under scan_input.  So the same payload will land differently depending
-on which boundary it hits — this script measures the gap directly.
+Both boundaries use their configured scanners. injection_scan loads the common
+and input catalogs on each, while scan_file additionally loads the document
+catalog. This script measures any remaining boundary-policy differences.
 
 Each attack payload is run through both boundaries; we print who caught it
 and who didn't.  No LLM.  No config files on disk — the script writes its
@@ -29,8 +28,8 @@ from harness import SHAI
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Config.  Aligned with the canonical harness.yaml.example shape:
-#    - scanners are configured only under scan_input / scan_output
-#    - scan_tool_result takes only enabled + block_at (fixed built-in scanner)
+#    - scanners are configured explicitly on every enabled text boundary
+#    - heuristic_scan is appended automatically
 #    - stdout audit sink so events are visible; the script also captures them
 #      in-process via collect_events()
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,6 +59,9 @@ HARNESS_YAML = dedent("""\
     scan_tool_result:
       enabled: true
       block_at: high
+      scanners:
+        - name: injection_scan
+        - name: identity_spoof_scan
 
     check_tool_call:
       rate_limit:
@@ -223,4 +225,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

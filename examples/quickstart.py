@@ -42,6 +42,9 @@ scan_output:
 scan_tool_result:
   enabled: true
   block_at: high
+  scanners:
+    - name: injection_scan
+    - name: identity_spoof_scan
 
 policy:
   rules:

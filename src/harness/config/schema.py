@@ -265,20 +265,14 @@ class PatternsDBConfig(BaseModel, frozen=True, extra="forbid"):
         return self
 
 
-class ToolResultScanConfig(BaseModel, frozen=True, extra="forbid"):
+class ToolResultScanConfig(BoundaryConfig):
     """Configuration for the scan_tool_result boundary.
 
     Scans tool return values before they re-enter the LLM context.
     Mitigates T6 indirect prompt injection (injected content in tool results).
-    Pattern file is the bundled patterns_for_doc.yaml — no config needed.
-
-    on_error: same semantics as every other boundary — fail_closed (default),
-              fail_open, or degrade.
+    Configured injection_scan instances use the common and input catalogs.
     """
-    enabled:  bool       = False
-    block_at: Severity   = Severity.HIGH
-    action:   ScanAction = ScanAction.BLOCK
-    on_error: OnError    = OnError.FAIL_CLOSED
+    enabled: bool = False
 
 
 class SourceConfig(BaseModel, frozen=True, extra="forbid"):
@@ -385,5 +379,3 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
     patterns_db:     PatternsDBConfig    = Field(default_factory=PatternsDBConfig)
     connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
-
-

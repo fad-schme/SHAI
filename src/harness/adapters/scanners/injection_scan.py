@@ -2,7 +2,8 @@
 
 Replaces the earlier basic_injection and yaml_rule_scanner implementations.
 Default pattern catalog: injection_patterns.yaml (ships with harness).
-Alternate catalog for document content: patterns_for_doc.yaml.
+Shared rules live in injection_common.yaml. File content additionally loads
+the patterns_for_doc.yaml overlay.
 
 Catalog is compiled once at scanner construction — never per call.
 Rule functions are only invoked when at least one regex in the rule matched,
@@ -59,6 +60,7 @@ from harness.core.verdicts import Finding
 log = logging.getLogger(__name__)
 
 _DEFAULT_PATTERNS = Path(__file__).parent / "l10n" / "injection_patterns.yaml"
+_COMMON_PATTERNS = Path(__file__).parent / "l10n" / "injection_common.yaml"
 
 # ── Compiled catalog types ────────────────────────────────────────────────
 
@@ -359,17 +361,28 @@ class InjectionScanner:
     name = "injection_scan"
     method_family = "regex_catalog"
     default_patterns: Path = _DEFAULT_PATTERNS
+    common_patterns: tuple[Path, ...] = (_COMMON_PATTERNS,)
 
     def __init__(
         self,
         patterns_file: str | Path | None = None,
+        additional_patterns_files: tuple[str | Path, ...] = (),
         extra_rules: list[_CompiledRule] | None = None,
         name: str | None = None,
     ) -> None:
         self.name        = name or type(self).name
         self._path       = (Path(patterns_file) if patterns_file
                             else type(self).default_patterns)
-        self._catalog    = _compile_catalog_with_l10n(self._path)
+        self._paths      = (
+            *(type(self).common_patterns if patterns_file is None else ()),
+            self._path,
+            *(Path(path) for path in additional_patterns_files),
+        )
+        self._catalog    = [
+            rule
+            for path in self._paths
+            for rule in _compile_catalog_with_l10n(path)
+        ]
         if extra_rules:
             self._catalog = self._catalog + extra_rules
         self._functions  = _load_scoring_functions()

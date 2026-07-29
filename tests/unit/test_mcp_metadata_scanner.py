@@ -19,6 +19,13 @@ from tests.conftest import RecordingSink
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
+
+def test_metadata_scanner_loads_only_its_own_catalog():
+    scanner = MCPMetadataScanner()
+    assert [path.name for path in scanner._scanner._paths] == [
+        "mcp_metadata_patterns.yaml"
+    ]
+
 def _tool(
     name: str = "search_docs",
     description: str = "Search internal documentation.",

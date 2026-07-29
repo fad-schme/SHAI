@@ -31,6 +31,9 @@ scan_tool_result:
   enabled: true
   block_at: high
   action: block
+  scanners:
+    - name: injection_scan
+    - name: identity_spoof_scan
 
 check_tool_call:
   rate_limit:

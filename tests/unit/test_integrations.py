@@ -314,7 +314,12 @@ async def _poisoned_harness(tmp_path: Path) -> tuple[SHAI, AgentContext]:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "scan_tool_result:\n  enabled: true\n  block_at: high\n"
+        "scan_tool_result:\n"
+        "  enabled: true\n"
+        "  block_at: high\n"
+        "  scanners:\n"
+        "    - name: injection_scan\n"
+        "    - name: identity_spoof_scan\n"
         "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )

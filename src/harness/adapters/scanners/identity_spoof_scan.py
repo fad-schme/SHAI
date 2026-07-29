@@ -46,3 +46,4 @@ class IdentitySpoofScanner(InjectionScanner):
     name = "identity_spoof_scan"
     method_family = "regex_catalog"
     default_patterns = _DEFAULT_PATTERNS
+    common_patterns = ()
