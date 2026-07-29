@@ -1,9 +1,8 @@
-"""Static validation for YAML regex catalogs.
+"""Strict validation for YAML regex catalogs.
 
-The runtime compiler remains backward compatible with older signed rules.
-This linter is intentionally stricter for authored catalogs: it requires
-classification metadata, validates compound references, and rejects regex
-shapes that commonly turn an intended phrase into a standalone-word match.
+Every rule must declare its match expression and classification metadata.
+The linter also validates compound references and rejects regex shapes that
+commonly turn an intended phrase into a standalone-word match.
 """
 from __future__ import annotations
 

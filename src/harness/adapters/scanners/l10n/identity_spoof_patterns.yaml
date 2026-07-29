@@ -49,28 +49,39 @@ patterns:
       category: identity_spoof.authority_claim
     strings:
       claimed_authority_principal: >-
-        (?ix)(?:\b(?:as|i\s+am|this\s+is|message\s+(?:comes\s+)?from|directive\s+from
+        (?ix)(?:\b(?:as|i\s+am(?:\s+from)?|this\s+is|from|message\s+(?:comes\s+|originates\s+)?from
+        |directive\s+from
         |command\s+from|notice\s+from|request\s+from|signed\s+by|authorized\s+by
-        |on\s+behalf\s+of|by\s+order\s+of)\s+(?:the\s+|your\s+|an?\s+)?
+        |pre-approved\s+by|spoken\s+to\s+by|speaking\s+to|on\s+behalf\s+of|by\s+order\s+of)
+        \s+(?:(?:the|your|an?|authenticated|certified|internal|model(?:'s)?|level-\d+)\s+)*
         (?:system\s+administrator|root\s+administrator|administrator|admin|developer|operator
         |model\s+provider|provider|openai|anthropic(?:'s)?(?:\s+(?:safety\s+team|support))?
-        |safety\s+(?:team|officer|review\s+board|layer)|management|upper\s+management
+        |safety\s+(?:team|officer|review\s+board|layer)|security\s+officer
+        |management|upper\s+management
         |ceo|cto|product\s+manager|orchestrator|parent\s+(?:agent|orchestrator|process)
         |harness(?:\s+administrator)?|shai(?:\s+harness)?|system
-        |trusted\s+(?:service|upstream\s+service)|platform\s+(?:administrator|trust\s+council)
-        |privileged\s+agent|model(?:'s)?\s+operators?|creator)\b
+        |trusted\s+(?:service|upstream\s+service|parent\s+process)
+        |platform\s+(?:administrator|trust\s+council)
+        |(?:audit[-\s]+)?privileged\s+agent|internal\s+qa\s+engineer
+        |authorized\s+red[-\s]+team\s+tester|model(?:'s)?\s+operators?|creator
+        |elevated\s+principal)\b
         |\b(?:system\s+administrator|administrator|developer|operator|model\s+provider
         |openai|anthropic|safety\s+team|management|orchestrator|parent\s+agent
         |harness|shai|system|trusted\s+service)\b.{0,20}
         \b(?:has|have|hereby|itself)\s+(?:authorized|granted|instructed|approved|overridden)\b
-        |\b(?:user|requester)\s+has\s+(?:explicit\s+)?admin(?:istrator)?\s+(?:permission|access|privileges?)\b)
+        |\b(?:this\s+)?(?:user|requester)\s+(?:is\s+(?:an?\s+)?certified\s+developer\s+with
+        |has)\s+(?:explicit\s+|elevated\s+)?(?:admin(?:istrator)?\s+)?(?:permissions?|access|privileges?)\b)
       authority_bearing_action: >-
         (?ix)\b(?:authoriz(?:e|es|ed|ation)|grant(?:s|ed)?|override[sd]?|disable[sd]?
-        |bypass(?:es|ed)?|skip(?:s|ped)?|compl(?:y|ies|ied)|elevat(?:e|es|ed)
+        |bypass(?:es|ed)?|skip(?:s|ped)?|compl(?:y|ies|ied)|elevat(?:e|es)
         |ignore\s+(?:the\s+)?(?:usual|normal|safety|security)?\s*restrictions?
+        |ignore\b.{0,30}\b(?:safety\s+guidelines|safety\s+checks|previous\s+instructions)
         |disregard\s+(?:all\s+)?(?:prior\s+)?(?:guidelines|instructions)
-        |cancel\s+(?:all\s+)?safety|filters?\s+(?:are|have\s+been)\s+lifted
-        |pre-approved|unrestricted\s+access|you\s+must|instructs?|commands?|requires?)\b
+        |cancel\s+(?:(?:all\s+)?safety|(?:all\s+)?previous\s+instructions)
+        |filters?\s+(?:are|have\s+been)\s+lifted
+        |pre-approved|unrestricted\s+access|you\s+must|instructs?|commands?|requires?
+        |giving\s+you\s+permission|follow\b.{0,25}\binstructions?\s+absolutely
+        |safety\s+is\s+suspended)\b
     match:
       within_chars: 180
       all:

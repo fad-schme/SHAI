@@ -137,24 +137,11 @@ def _load_scoring_functions() -> dict[str, Any]:
         return {}
 
 
-# ── Severity helpers ──────────────────────────────────────────────────────
-
-_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
-
 _SHAI_SEVERITY: dict[str, Severity] = {
     "low":    Severity.LOW,
     "medium": Severity.MEDIUM,
     "high":   Severity.HIGH,
 }
-
-def _score_to_severity(score: float) -> str:
-    if score >= 6.0:
-        return "high"
-    if score >= 3.0:
-        return "medium"
-    if score >= 1.0:
-        return "low"
-    return "low"
 
 
 # ── Catalog compilation ───────────────────────────────────────────────────

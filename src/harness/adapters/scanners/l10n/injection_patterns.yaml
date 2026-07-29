@@ -243,19 +243,27 @@ patterns:
     strings:
       disclosure_operation: >-
         (?ix)\b(?:repeat|recite|dump|reproduce|copy(?:\s+and\s+paste)?|serialize
-        |encode|translate|print|output|reveal|quote|return|share|echo|list|give)\b
+        |encode|translate|print|output|reveal|show(?:ing)?|quote|return|share|echo|list|give
+        |write|summarize|leak|reverse|complete|include|explain|review|see
+        |what\s+was\s+in)\b
       protected_object: >-
-        (?ix)\b(?:system\s+prompt|hidden\s+(?:prompt|instructions?|prefixes?)
+        (?ix)(?:\b(?:system\s+prompt|hidden\s+(?:prompt|instructions?|prefixes?)
         |initial\s+(?:prompt|instructions?|context)|developer\s+message
         |system\s+(?:message|instructions?)|instruction\s+set|setup\s+instructions?
         |(?:your|internal|system|safety)\s+polic(?:y|ies)|full\s+context|context\s+window)\b
+        |\b(?:your|the\s+model(?:'s)?)\s+(?:entire\s+|full\s+|original\s+)?prompt\b
+        |\b(?:your\s+)?instructions?\s+in\s+(?:your|the)\s+context\b
+        |\bhidden\s+(?:rules?|restrictions?)\b
+        |\bevery\s+(?:rule|guideline)\s+you(?:'re|\s+are)\s+(?:currently\s+)?operating\s+under\b)
       referential_target: >-
         (?ix)(?:\b(?:words?|text|everything|all\s+(?:text|content))\s+
         (?:(?:that\s+)?(?:appears?|is)\s+|written\s+)?(?:above|before)\b
         |\b(?:instructions?|guidelines?)\s+(?:you\s+were|that\s+were)\s+(?:given|told)\b
         |\btop\s+of\s+(?:your\s+|the\s+)?context\b
         |\bwhat\s+(?:text\s+)?preceded\s+(?:this|the)\s+conversation\b
-        |\b(?:text|content)\s+that\s+came\s+before\b|\bbefore\s+i\s+started\s+talking\b)
+        |\b(?:text|content)\s+that\s+came\s+before\b|\bbefore\s+i\s+started\s+talking\b
+        |\b(?:instructions?|guidelines?)\s+you\s+(?:received|were\s+sent)\b
+        |\bevery\s+(?:token|character|word)\s+above\b)
       exactness_modifier: >-
         (?ix)\b(?:verbatim|exact(?:ly)?|every\s+token|every\s+character|character[-\s]+for[-\s]+character
         |word[-\s]+for[-\s]+word|unchanged|raw\s+text|json\s+format|code\s+block|base64|fully)\b
@@ -384,17 +392,22 @@ patterns:
           (?:^|[.!?]\s+)(?:please\s+|silently\s+|immediately\s+|you\s+(?:must|should)\s+)?
           (?:call|invoke|use|execute|run|trigger)\s+(?:the\s+)?(?:following\s+)?[a-z_][\w.-]*
           |\b(?:instruct|require)s?\s+you\s+to\s+(?:call|invoke|use|execute|run)\s+[a-z_][\w.-]*
+          |\b(?:and|then)\s+(?:call|invoke|use|execute|run)\s+[a-z_][\w.-]*
+          |\bmake\s+an?\s+outbound\s+http\s+request\b
+          |\bplease\s+chain\b.{0,100}\bsend_email\b
         )
       sensitive_source: >-
         (?ix)\b(?:system[_\s-]+prompts?|hidden\s+instructions?|credentials?|secrets?
-        |passwords?|api[_\s-]+keys?|access[_\s-]+tokens?|environment\s+variables?
-        |conversation\s+(?:history|transcripts?)|all\s+(?:conversation\s+)?context
+        |passwords?|api[_\s-]+keys?|access[_\s-]+tokens?|(?:environment|env)[_\s-]+variables?
+        |conversation(?:\s+(?:history|transcripts?))?|all\s+(?:your\s+)?(?:conversation\s+)?context
+        |verification\s+codes?
         |customer\s+data|database\s+(?:contents?|dump)|private\s+files?|user[_\s-]+(?:data|secrets)
         |all\s+data|search\s+results?)\b
       external_attacker_destination: >-
         (?ix)(?:\b[\w.+-]*attacker[\w.+-]*@[\w.-]+\b
         |\b[\w.-]*(?:evil|attacker|malicious)[\w.-]*\.(?:com|net|org)\b
-        |\bhttps?://[\w.-]*(?:evil|attacker|malicious)[\w.-]*(?:/[\w?=&%./<>-]*)?)
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious)[\w.-]*(?:/[\w?=&%./<>-]*)?
+        |\battacker(?:'s)?\s+(?:phone|address|endpoint|account)\b)
     match:
       all:
         - name: tool_action
@@ -416,6 +429,7 @@ patterns:
           (?:^|[.!?]\s+)(?:please\s+|silently\s+|immediately\s+|you\s+(?:must|should)\s+)?
           (?:call|invoke|use|execute|run|trigger)\s+(?:the\s+)?(?:following\s+)?[a-z_][\w.-]*
           |\b(?:instruct|require)s?\s+you\s+to\s+(?:call|invoke|use|execute|run)\s+[a-z_][\w.-]*
+          |\bfor\s+every\b.{0,50}\bcall\s+reset_password\b
         )
       destructive_action: >-
         (?ix)(?:\b(?:delete|remove|erase|wipe|destroy)\b.{0,30}\b(?:all|files?|records?|tables?|users?|system)
@@ -447,7 +461,8 @@ patterns:
         |\b(?:create|add)\b.{0,25}\b(?:admin|root|privileged)\s+(?:user|account|role)\b
         |\b(?:role|permissions?)\s*[:=]\s*['"]?(?:admin|root|\*)\b
         |\bdisable[_\s-]+(?:2fa|mfa)\b|\bsecurity(?:\.enabled|\s+enabled)?\s*[:=]\s*false\b
-        |\b(?:make|set)\b.{0,20}\b(?:repository|files?|documents?)\b.{0,20}\bpublic\b)
+        |\b(?:make|set)\b.{0,20}\b(?:repository|files?|documents?)\b.{0,20}\bpublic\b
+        |\bpermissions?\s*[:=]\s*['"]?public\b|\bwrite\b.{0,20}\bpublic\s+location\b)
     match:
       all:
         - name: tool_action
@@ -487,7 +502,9 @@ patterns:
         (?ix)(?:\b(?:call|invoke|use|create|add|install|configure)\b.{0,30}
         \b(?:schedule[_\s-]*task|scheduled\s+task|cron(?:job)?|backdoor|webhook|forwarding\s+rule)\b
         |\b(?:forward|cc|email|post|pipe)\b.{0,40}\b(?:every\s+future|recurring|persistently|always)\b
-        |\b(?:every\s+future|recurring|persistently|always)\b.{0,40}\b(?:forward|cc|email|post|pipe)\b)
+        |\b(?:every\s+future|recurring|persistently|always)\b.{0,40}\b(?:forward|cc|emails?|post|pipe)\b
+        |\b(?:silently\s+)?forward\b.{0,50}\b(?:tool\s+results?|api\s+responses?|messages?|emails?|traffic|data)\b
+        |\ball\s+tool\s+calls\b.{0,30}\bgo\s+through\b)
       external_attacker_destination: >-
         (?ix)(?:\b[\w.+-]*attacker[\w.+-]*@[\w.-]+\b
         |\b[\w.-]*(?:evil|attacker|malicious)[\w.-]*\.(?:com|net|org)\b

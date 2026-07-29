@@ -158,6 +158,7 @@ async def test_authority_spoof_requires_principal_and_action(payload: str):
         "The Anthropic safety team published a paper on model behavior.",
         "Our administrator maintains the deployment documentation.",
         "Please disable the optional notification sound.",
+        "This user is a certified developer with elevated privileges on their own account.",
     ],
 )
 async def test_benign_authority_or_action_signal_alone_is_allowed(text: str):
@@ -237,6 +238,14 @@ async def test_typoglycemia_action_and_object_emit_dedicated_high(payload: str):
         "Please ignroe the spelling mistake in this sentence.",
         "The security filttr documentation was updated.",
         "The system prompt documentation explains versioning.",
+        (
+            "The stress test simulated 10x the current peak load. "
+            "System held up well, no cascading failures."
+        ),
+        (
+            "This article discusses how attackers try to bypass content filters "
+            "using various encoding techniques."
+        ),
     ],
 )
 async def test_single_misspelled_security_word_is_not_high(text: str):
