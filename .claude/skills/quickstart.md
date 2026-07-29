@@ -130,7 +130,7 @@ async def main():
     # Dispatch the tool yourself
     result = await my_tool_dispatch(tool_name, gate.redacted_args or tool_args)
 
-    tverdict = await harness.scan_tool_result(result, ctx, tool_name=tool_name)
+    tverdict = await harness.scan_tool_result(result, ctx)
     safe_result = tverdict.redacted_text or result
 
     # ... call LLM again with safe_result ...
@@ -153,7 +153,7 @@ tverdict = await harness.scan_tool_result(result, ctx)
 
 # Better when using connectors — connector manifests declare
 # which tools need scanning; others skip with a disabled audit event
-tverdict = await harness.scan_tool_result(result, ctx, tool_name="search_docs")
+tverdict = await harness.scan_tool_result(result, ctx)
 ```
 
 ### `collect_events()` for display/testing

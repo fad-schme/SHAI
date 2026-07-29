@@ -146,7 +146,7 @@ async def main():
     result = await my_tool_dispatch(tool_name, gate.redacted_args or tool_args)
 
     # Boundary 3: scan the result before it re-enters the LLM context.
-    tverdict = await harness.scan_tool_result(result, ctx, tool_name=tool_name)
+    tverdict = await harness.scan_tool_result(result, ctx)
     safe_result = tverdict.redacted_text or result
 
     # ... call LLM again with safe_result to get the final response ...

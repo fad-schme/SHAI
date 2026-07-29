@@ -1,7 +1,7 @@
 # examples/connectors/harness.yaml
 # Demonstrates shai-connectors: three pre-built manifests in one config.
 # Each connector: line loads a manifest that supplies url, allowed_urls,
-# tags, tool specs, and scan_tool_result_on automatically.
+# tags, and tool specs automatically.
 # The operator only provides credentials and optional overrides.
 
 version: 1
@@ -62,7 +62,7 @@ audit_sinks:
 
 # ── Connectors — one line each instead of hand-configuring everything ─────
 # Each connector: loads a pre-built manifest: url, allowed_urls, tags,
-# tool security specs, and scan_tool_result_on.
+# and tool security specs.
 # In production replace secret:// values with your real env vars.
 
 sources:

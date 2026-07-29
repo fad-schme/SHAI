@@ -114,22 +114,26 @@ Denied calls raise `ToolException` — the agent sees the denial and continues.
 ## Anthropic SDK
 
 ```python
+from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.integrations.anthropic_sdk import gated_dispatch, make_tool_result_from_denial
 
-# In your tool dispatch loop
-gate = await harness.check_tool_call(tool_name, tool_args, ctx)
+# In your tool dispatch loop. gated_dispatch runs check_tool_call, dispatches
+# on allow, then scans the result for indirect injection (T6) — you do not
+# call scan_tool_result yourself.
+result = await gated_dispatch(
+    tool_name, tool_args, ctx, harness=harness, dispatch=dispatch,
+)
 
-if not gate.allowed:
-    denial_block = make_tool_result_from_denial(gate, tool_use_id)
+if isinstance(result, (GateDecision, ScanVerdict)):
+    # GateDecision — the gate denied the call, it never ran.
+    # ScanVerdict  — it ran, but the result was blocked as indirect injection.
+    denial_block = make_tool_result_from_denial(result, tool_use_id)
     messages.append({"role": "user", "content": [denial_block]})
 else:
-    result = await dispatch(tool_name, gate.redacted_args or tool_args)
-    tverdict = await harness.scan_tool_result(result, ctx, tool_name=tool_name)
-    safe = tverdict.redacted_text or result
     messages.append({"role": "user", "content": [{
         "type": "tool_result",
         "tool_use_id": tool_use_id,
-        "content": safe,
+        "content": result,
     }]})
 ```
 
@@ -194,7 +198,7 @@ async def run_loop(llm, messages, harness, ctx):
                 continue
 
             raw     = await dispatch(tc["name"], gate.redacted_args or tc["args"])
-            tv      = await harness.scan_tool_result(str(raw), ctx, tool_name=tc["name"])
+            tv      = await harness.scan_tool_result(str(raw), ctx)
             content = tv.redacted_text or str(raw)
             if tv.blocked:
                 content = "Tool result blocked by security policy"

@@ -104,11 +104,7 @@ gate.dispatch_token  # str | None — pass to source.call()
 ## Tool Stream Control (`scan_tool_result`)
 
 ```python
-# Basic — always scans
 tverdict = await harness.scan_tool_result(result, ctx)
-
-# Better — with tool_name lets connector manifests skip non-risky tools
-tverdict = await harness.scan_tool_result(result, ctx, tool_name="get_issue")
 
 if tverdict.blocked:
     result = "Tool result blocked by security policy"
@@ -127,13 +123,9 @@ is in motion — treat lower-severity result findings as blocking evidence
 they are not yet the top of the funnel. Transparent to the caller; the
 audit event records the effective severity used.
 
-**`tool_name` parameter and `scan_tool_result_on`:**
-When a connector manifest declares `scan_tool_result_on`, only those tools
-are scanned. Tools not in the list emit a `disabled=True` audit event and
-return `ScanVerdict(allow)` without running scanners.
-
-When `tool_name` is `None` or no manifest is loaded, all results are scanned.
-This is the safe default — backward compatible.
+**No per-tool opt-out.** Every result is scanned. There is no `tool_name`
+parameter and no manifest field to exempt a tool — a tool whose output looks
+like control-plane data is exactly where an injection payload arrives unnoticed.
 
 ---
 

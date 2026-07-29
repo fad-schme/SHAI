@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from harness import SHAI, Tool
 from harness.core.context import AgentContext
 from harness.core.types import Transport
+from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.integrations.anthropic_sdk import gated_dispatch
 
 CONFIG     = Path(__file__).parent.parent / "config"
@@ -97,6 +98,8 @@ async def agent_turn(
             return await search_docs(**args)
         raise ValueError(f"unknown tool: {name}")
 
+    # gated_dispatch gates the call, dispatches on allow, then scans the
+    # result for indirect injection (T6) before it re-enters LLM context.
     tool_result = await gated_dispatch(
         simulated_tool_call[0],
         simulated_tool_call[1],
@@ -104,17 +107,16 @@ async def agent_turn(
         harness=harness,
         dispatch=dispatcher,
     )
-    gate_allowed = not hasattr(tool_result, "allowed") or tool_result.allowed
-    print(f"[SHAI gate]     allowed={gate_allowed}")
 
-    if gate_allowed:
-        # Scan tool result before it re-enters the LLM context (T6)
-        tverdict = await harness.scan_tool_result(str(tool_result), ctx)
-        print(f"[SHAI tool_res] status={tverdict.status}")
-        if tverdict.blocked:
-            tool_result = "[tool result blocked]"
-        else:
-            tool_result = tverdict.redacted_text or str(tool_result)
+    if isinstance(tool_result, GateDecision):
+        print(f"[SHAI gate]     allowed=False reason={tool_result.deny_reason}")
+        tool_result = "[tool call denied]"
+    elif isinstance(tool_result, ScanVerdict):
+        print("[SHAI tool_res] status=BLOCK — indirect injection")
+        tool_result = "[tool result blocked]"
+    else:
+        print("[SHAI gate]     allowed=True")
+        print("[SHAI tool_res] status=ALLOW")
 
     print(f"[tool result]   {tool_result!r}")
 

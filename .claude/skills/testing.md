@@ -160,25 +160,12 @@ async def test_injected_result_blocked(harness, ctx):
     )
 
     with harness.collect_events() as events:
-        tv = await harness.scan_tool_result(poisoned, ctx, tool_name="search_code")
+        tv = await harness.scan_tool_result(poisoned, ctx)
 
     assert tv.blocked
     ev = events[0]
     assert str(ev.boundary) == "tool_result_scan"
     assert str(ev.decision) == "blocked"
-
-
-async def test_non_scanned_tool_skipped(harness, ctx):
-    """Tools not in scan_tool_result_on emit disabled=True event."""
-    # Assumes harness loaded with a connector that has scan_tool_result_on
-
-    with harness.collect_events() as events:
-        tv = await harness.scan_tool_result("clean data", ctx, tool_name="list_channels")
-
-    # list_channels is not in scan_tool_result_on for Slack
-    assert not tv.blocked
-    ev = events[0]
-    assert ev.disabled is True
 ```
 
 ---

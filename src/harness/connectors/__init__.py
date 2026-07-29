@@ -13,9 +13,8 @@ instead of hand-configuring every field:
           token: "secret://GITHUB_TOKEN"
 
 The manifest supplies: url, allowed_urls, allowed_methods, tags, and the
-per-tool security metadata (which tools carry sensitive/external_write tags,
-which tools trigger scan_tool_result). The operator only needs to supply
-credentials and optionally override any field.
+per-tool security metadata (which tools carry sensitive/external_write tags).
+The operator only needs to supply credentials and optionally override any field.
 
 Manifests ship inside the shai package under harness/connectors/manifests/.
 Each connector is a YAML file named <connector_id>.yaml.
@@ -48,10 +47,6 @@ class ConnectorManifest(BaseModel, frozen=True):
 
     Fields map directly to SourceConfig — the manifest is merged with
     any operator overrides declared alongside `connector:` in harness.yaml.
-
-    scan_tool_result_on lists tool names that should have scan_tool_result
-    applied to their output — these are tools that return external content
-    that may contain indirect injection payloads.
     """
     id:                  str
     display_name:        str
@@ -61,7 +56,6 @@ class ConnectorManifest(BaseModel, frozen=True):
     allowed_methods:     list[str]          = Field(default_factory=lambda: ["GET", "POST"])
     tags:                list[str]          = Field(default_factory=list)
     tools:               list[ConnectorToolSpec] = Field(default_factory=list)
-    scan_tool_result_on: list[str]          = Field(default_factory=list)
     auth:                dict[str, Any]     = Field(default_factory=dict)
     required:            bool               = True
     notes:               str                = ""
@@ -120,7 +114,6 @@ def manifest_to_source_config_fields(
             t.name: {"tags": list(t.tags), "action": t.action}
             for t in manifest.tools
         },
-        "scan_tool_result_on": list(manifest.scan_tool_result_on),
     }
     # Operator overrides take precedence
     fields.update({k: v for k, v in overrides.items() if v is not None})

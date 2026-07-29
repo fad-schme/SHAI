@@ -76,12 +76,6 @@ tools:
     action: allow
     description: "List commits on a branch"
 
-scan_tool_result_on:
-  - search_code
-  - get_file_contents
-  - get_pull_request
-  - get_issue
-
 auth:
   type: token
   credential_key: token

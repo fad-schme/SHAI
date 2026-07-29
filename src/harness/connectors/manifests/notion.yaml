@@ -55,11 +55,6 @@ tools:
     action: block
     description: "Update a database item"
 
-scan_tool_result_on:
-  - search
-  - get_page
-  - query_database
-
 auth:
   type: token
   credential_key: token

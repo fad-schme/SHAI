@@ -5,14 +5,15 @@ Canonical reference — read this before implementing other integrations.
 Two public helpers:
 
   gated_dispatch(tool_name, tool_args, ctx, *, harness, dispatch)
-      Gate one tool call then dispatch if allowed.
+      Gate one tool call, dispatch if allowed, then scan the result for
+      indirect injection before it re-enters the model's context.
       Use this inside a hand-rolled agent loop.
 
-  run_turn(user_text, ctx, *, harness, llm_fn, tools)
+  run_turn(user_text, ctx, *, harness, llm_fn)
       Full turn wrapper: scan_input → llm_fn loop → scan_output.
       llm_fn receives (user_text, tools, ctx) and returns the LLM response
       string. It is responsible for calling gated_dispatch for each tool
-      call the model requests.
+      call the model requests — that is where tool results get scanned.
 
 The Anthropic SDK is imported lazily — this module is importable without
 the SDK installed. Import errors surface only when you call these helpers.
@@ -27,12 +28,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from harness.core.verdicts import GateDecision
 from harness.integrations.base import shai_tool  # re-export for convenience
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
     from harness.core.harness import SHAI
-    from harness.core.verdicts import GateDecision, ScanVerdict
+    from harness.core.verdicts import ScanVerdict
     from harness.tools.tool import Tool
 
 log = logging.getLogger(__name__)
@@ -48,7 +50,7 @@ async def gated_dispatch(
     harness: SHAI,
     dispatch: Callable[[str, dict[str, Any]], Awaitable[Any]],
 ) -> Any:
-    """Gate one tool call then dispatch if allowed.
+    """Gate one tool call, dispatch it, then scan the result.
 
     Args:
         tool_name:  the tool name from the model's tool_use block
@@ -57,8 +59,16 @@ async def gated_dispatch(
         harness:    the SHAI instance
         dispatch:   async callable(tool_name, args) → tool result
 
-    Returns the tool result on allow, or the GateDecision on deny so the
-    caller can surface the reason to the model as a tool_result.
+    Returns one of three things:
+        GateDecision    — the gate denied the call; it was never dispatched.
+        ScanVerdict     — the call ran but its result was blocked by
+                          scan_tool_result as indirect injection.
+        the tool result — allowed and clean, carrying scan_tool_result's
+                          redacted text when it replaced content.
+
+    Both denial cases are verdict objects, not results. Pass either to
+    make_tool_result_from_denial() to surface the reason to the model —
+    never hand them to the model as tool output.
     """
     gate = await harness.check_tool_call(tool_name, tool_args, ctx)
     if not gate.allowed:
@@ -70,7 +80,18 @@ async def gated_dispatch(
         return gate
 
     effective_args = gate.redacted_args if gate.redacted_args is not None else tool_args
-    return await dispatch(tool_name, effective_args)
+    result = await dispatch(tool_name, effective_args)
+
+    # T6: a tool result is untrusted input. Scan before it re-enters context.
+    verdict = await harness.scan_tool_result(str(result), ctx)
+    if verdict.blocked:
+        log.warning("tool result blocked — indirect injection detected",
+                    extra={"tool": tool_name, **ctx.to_log_fields()})
+        return verdict
+    if verdict.warned:
+        log.warning("tool result flagged — potential injection (action=alert)",
+                    extra={"tool": tool_name, **ctx.to_log_fields()})
+    return verdict.redacted_text or result
 
 
 async def run_turn(
@@ -100,29 +121,44 @@ async def run_turn(
     if input_verdict.blocked:
         return input_verdict
 
-    # Tools are resolved at load_agent() time — read from the harness directly
-    agent_tools = list(harness._agent_tools.get(ctx.agent_id, {}).values())
+    # Tools are resolved at load_agent() time — read from the harness directly.
+    # Values are (source_name, Tool); llm_fn receives the Tools. source_name is
+    # the gate's business, not the caller's.
+    agent_tools = [
+        tool for _, tool in harness._agent_tools.get(ctx.agent_id, {}).values()
+    ]
     response = await llm_fn(user_text, agent_tools, ctx)
     output_verdict = await harness.scan_output(response, ctx)
     return output_verdict.redacted_text or response
 
 
-def make_tool_result_from_denial(gate: GateDecision, tool_use_id: str) -> dict:
-    """Build an Anthropic tool_result content block for a denied tool call.
+def make_tool_result_from_denial(
+    denial: GateDecision | ScanVerdict,
+    tool_use_id: str,
+) -> dict:
+    """Build an Anthropic tool_result content block for a blocked tool call.
 
-    Surfaces the deny reason to the model so it can respond appropriately.
+    Accepts either denial gated_dispatch can return:
+        GateDecision — the gate refused the call; deny_reason is surfaced.
+        ScanVerdict  — the result was blocked as indirect injection. The
+                       message is fixed: findings describe matched content,
+                       which must never be echoed back to the model.
 
     Usage in a hand-rolled loop::
 
         result = await gated_dispatch(name, args, ctx, harness=h, dispatch=dispatcher)
-        if isinstance(result, GateDecision):
-            # denied — tell the model
+        if isinstance(result, (GateDecision, ScanVerdict)):
+            # denied or blocked — tell the model
             tool_result = make_tool_result_from_denial(result, tool_use_id)
             messages.append({"role": "user", "content": [tool_result]})
     """
+    if isinstance(denial, GateDecision):
+        content = f"Tool call denied: {denial.deny_reason}"
+    else:
+        content = "Tool result blocked by SHAI (indirect injection detected)"
     return {
         "type": "tool_result",
         "tool_use_id": tool_use_id,
         "is_error": True,
-        "content": f"Tool call denied: {gate.deny_reason}",
+        "content": content,
     }

@@ -307,6 +307,9 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     tags:        list[str] = Field(default_factory=list)
     tool_names:  list[str] = Field(default_factory=list)  # local sources only: subset of tools to expose
     required:        bool       = True
+    # required=True (default): missing or failed source raises ConfigError at load_agent() time.
+    # required=False: missing or failed source is logged and skipped — use for
+    #                 optional enrichment sources where degraded operation is acceptable.
     allowed_urls:    list[str]  = Field(default_factory=list)
     # URL prefix patterns this source may reach. Default: [{url}/*] from the url field.
     # Used to populate DispatchToken.allowed_urls when connectivity.enabled.
@@ -317,13 +320,6 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     # Per-tool security metadata from the connector manifest.
     # Maps tool_name → {tags: [...], action: str}. Populated by from_yaml()
     # when connector: is set. Empty for manual sources.
-    scan_tool_result_on:  list[str]  = Field(default_factory=list)
-    # Tool names whose results must be scanned (T6 protection).
-    # Populated from ConnectorManifest.scan_tool_result_on.
-    # Empty = scan all tool results (default behaviour).
-    # required=True (default): missing or failed source raises ConfigError at load_agent() time.
-    # required=False: missing or failed source is logged and skipped — use for
-    #                 optional enrichment sources where degraded operation is acceptable.
 
     @model_validator(mode="after")
     def _transport_constraints(self) -> SourceConfig:

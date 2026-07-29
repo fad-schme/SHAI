@@ -402,7 +402,6 @@ class MCPSource:
         self._agent_ctx:            Any = None   # AgentContext — set at load() time
         # Connector manifest enforcement
         self._connector_tool_specs:       dict  = {}    # tool_name → {tags, action}
-        self._scan_tool_result_on:        set   = set() # tool names requiring scan_tool_result
         # MCP metadata scanner — stamped by harness at construction
         self._mcp_metadata_scanners:      list  = []    # MCPMetadataScanner instances
         self._scan_mcp_metadata_enabled:  bool  = True

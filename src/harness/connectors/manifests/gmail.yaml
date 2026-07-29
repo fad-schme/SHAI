@@ -57,12 +57,6 @@ tools:
     action: allow
     description: "Get full thread with all messages"
 
-scan_tool_result_on:
-  - list_messages
-  - get_message
-  - search_messages
-  - get_thread
-
 auth:
   type: oauth2
   credential_key: token

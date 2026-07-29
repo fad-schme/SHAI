@@ -33,20 +33,20 @@ sources:
       token: "secret://SLACK_BOT_TOKEN"
 ```
 
-The manifest supplies `url`, `allowed_urls`, `allowed_methods`, source-level tags, per-tool tags, and `scan_tool_result_on` declarations. Operator fields in your config always override manifest defaults, so you can tighten anything you disagree with.
+The manifest supplies `url`, `allowed_urls`, `allowed_methods`, source-level tags, and per-tool tags. Operator fields in your config always override manifest defaults, so you can tighten anything you disagree with.
 
 ### Available Tier A connectors
 
 | `connector:` | Service | Notable security defaults |
 |---|---|---|
-| `slack` | Slack | `send_message` blocked, read tools scanned |
-| `github` | GitHub | `push_files`, `merge_pull_request` blocked and sensitive, code scanned |
-| `notion` | Notion | All writes blocked, page content scanned |
-| `jira` | Jira | `delete_issue` sensitive, JQL results scanned |
-| `gmail` | Gmail | Every tool sensitive, send blocked, all reads scanned |
-| `postgresql` | PostgreSQL | `execute` blocked, every result sensitive and scanned |
-| `stripe` | Stripe | Every tool sensitive, payment/cancel blocked, customer data scanned |
-| `google_drive` | Google Drive | `share_file` blocked (exfiltration surface), read content scanned |
+| `slack` | Slack | `send_message` blocked |
+| `github` | GitHub | `push_files`, `merge_pull_request` blocked and sensitive |
+| `notion` | Notion | All writes blocked |
+| `jira` | Jira | `delete_issue` sensitive |
+| `gmail` | Gmail | Every tool sensitive, send blocked |
+| `postgresql` | PostgreSQL | `execute` blocked, every result sensitive |
+| `stripe` | Stripe | Every tool sensitive, payment/cancel blocked |
+| `google_drive` | Google Drive | `share_file` blocked (exfiltration surface) |
 
 ### Per-tool tags are enforced at registration
 
@@ -61,21 +61,9 @@ Connector manifests declare per-tool security metadata. Tools arrive in the regi
 
 catches `slack.send_message` automatically once the Slack connector is active, because the manifest tagged that tool `external_write`. You didn't have to know to tag it.
 
-### `scan_tool_result_on` — targeted scanning
+### Tool results are always scanned
 
-Some MCP tools return content that should be treated as untrusted (documents, messages, search results). Others return control-plane data that doesn't need scanning. Connectors declare which is which:
-
-```python
-# From the Slack manifest, effectively:
-scan_tool_result_on = {
-    "read_messages": True,
-    "search_messages": True,
-    "list_channels": False,     # control-plane, no user content
-    ...
-}
-```
-
-When you call `harness.scan_tool_result(result, ctx, tool_name="list_channels")`, SHAI skips the scan and emits a `disabled=True` audit event. This keeps your audit trail honest — you can see the boundary was invoked, just skipped by design — without paying the scan cost on data that doesn't warrant it.
+`harness.scan_tool_result(result, ctx)` scans every result. There is no per-tool opt-out, and connectors do not declare one — a tool whose output looks like control-plane data is exactly where an indirect-injection payload arrives unnoticed.
 
 ### Overriding connector defaults
 

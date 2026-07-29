@@ -79,14 +79,6 @@ tools:
     action: allow
     description: "List charges"
 
-scan_tool_result_on:
-  - list_customers
-  - get_customer
-  - list_invoices
-  - get_invoice
-  - list_charges
-  - list_subscriptions
-
 auth:
   type: token
   credential_key: token

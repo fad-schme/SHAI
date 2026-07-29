@@ -61,11 +61,6 @@ tools:
     action: block
     description: "Delete an issue"
 
-scan_tool_result_on:
-  - search_issues
-  - get_issue
-  - get_sprint
-
 auth:
   type: basic
   credential_keys: [email, token]

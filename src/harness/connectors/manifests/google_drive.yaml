@@ -72,11 +72,6 @@ tools:
     action: block
     description: "Write to Google Sheets"
 
-scan_tool_result_on:
-  - read_file
-  - read_spreadsheet
-  - search_files
-
 auth:
   type: oauth2
   credential_key: token

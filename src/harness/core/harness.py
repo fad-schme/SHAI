@@ -151,10 +151,6 @@ class SHAI:
         self._source_overrides: dict[str, dict[str, Tool]] = {}
         self._connectivity        = config.connectivity
         self._connectivity_secret = connectivity_secret
-        # Merged lookup: tool_name → True when manifest requires scan_tool_result.
-        # Built at from_yaml() time from all sources with scan_tool_result_on.
-        # Empty = scan all results (default). Non-empty = only listed tools scanned.
-        self._scan_tool_result_on: set[str] = set()
         # Per-instance scan state: circuit breakers, promoted-candidate cache.
         # Shares patterns_db.path — signed rules and heuristic candidates are two
         # tables in the one DB file the CLI writes.
@@ -303,7 +299,6 @@ class SHAI:
                 source._tenant_id    = config.tenant_id
                 # Wire connector manifest enforcement data
                 source._connector_tool_specs = dict(src_cfg.connector_tool_specs)
-                source._scan_tool_result_on  = set(src_cfg.scan_tool_result_on)
                 # Wire MCP metadata scanner config
                 source._mcp_metadata_scanners     = mcp_metadata_scanners
                 source._scan_mcp_metadata_enabled = config.scan_mcp_metadata.enabled
@@ -337,11 +332,6 @@ class SHAI:
             if rl_cfg.enabled else None
         )
 
-        # Collect scan_tool_result_on across all connector sources
-        scan_tool_result_on: set[str] = set()
-        for _src_cfg in config.sources:
-            scan_tool_result_on.update(_src_cfg.scan_tool_result_on)
-
         instance = cls(
             config=config,
             agent_registry=agent_registry,
@@ -374,7 +364,6 @@ class SHAI:
             scan_tool_result_action=config.scan_tool_result.action,
             connectivity_secret=connectivity_secret,
         )
-        instance._scan_tool_result_on        = scan_tool_result_on
         instance._mcp_metadata_scanners      = mcp_metadata_scanners
         instance._scan_mcp_metadata_enabled  = config.scan_mcp_metadata.enabled
         instance._mcp_metadata_block_at      = config.scan_mcp_metadata.block_at
@@ -830,41 +819,13 @@ class SHAI:
         self,
         result: str,
         ctx: AgentContext,
-        *,
-        tool_name: str | None = None,
     ) -> ScanVerdict:
         """Scan a tool return value before it re-enters the LLM context.
 
-        tool_name: when provided and a connector manifest has declared
-            scan_tool_result_on, only tools in that set are scanned.
-            Tools not listed emit a disabled=True audit event and return
-            ScanVerdict(allow). When tool_name is None or no manifest
-            declares scan_tool_result_on, all results are scanned (safe default).
+        Every tool result is scanned. There is no per-tool opt-out — a tool
+        whose output the operator believes is safe is exactly the one an
+        indirect-injection payload arrives through.
         """
-        if (
-            tool_name is not None
-            and self._scan_tool_result_on
-            and tool_name not in self._scan_tool_result_on
-        ):
-            log.debug(
-                "scan_tool_result skipped — tool not in scan_tool_result_on",
-                extra={"tool": tool_name, **ctx.to_log_fields()},
-            )
-            from harness.core.events import AuditEvent
-            from harness.core.verdicts import ScanStatus, ScanVerdict
-            event = AuditEvent.build(
-                boundary=BoundaryName.TOOL_RESULT_SCAN,
-                decision=Decision.ALLOW,
-                ctx=ctx,
-                tenant_id=self._tenant_id,
-                duration_ms=0,
-                disabled=True,
-                adapters=["scan_tool_result_on"],
-                audit_tags=self._audit_tags_for(ctx),
-            )
-            await self._emitter.emit(event)
-            return ScanVerdict(status=ScanStatus.ALLOW)
-
         verdict = await run_tool_result_scan(
             result, ctx,
             scanners=self._tool_result_scanners,

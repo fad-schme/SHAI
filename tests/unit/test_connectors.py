@@ -51,34 +51,6 @@ def test_manifest_loads_and_validates(connector_id):
     "slack", "github", "notion", "jira",
     "gmail", "postgresql", "stripe", "google_drive",
 ])
-def test_manifest_has_scan_tool_result_on(connector_id):
-    """Every manifest must declare which tools need scan_tool_result (T6)."""
-    m = load_manifest(connector_id)
-    assert m.scan_tool_result_on, (
-        f"{connector_id}: scan_tool_result_on is empty — "
-        "at least one read tool should have T6 protection declared"
-    )
-
-
-@pytest.mark.parametrize("connector_id", [
-    "slack", "github", "notion", "jira",
-    "gmail", "postgresql", "stripe", "google_drive",
-])
-def test_manifest_scan_tool_result_tools_exist(connector_id):
-    """scan_tool_result_on must only reference tools declared in the manifest."""
-    m = load_manifest(connector_id)
-    tool_names = {t.name for t in m.tools}
-    for name in m.scan_tool_result_on:
-        assert name in tool_names, (
-            f"{connector_id}: scan_tool_result_on references "
-            f"'{name}' which is not in tools"
-        )
-
-
-@pytest.mark.parametrize("connector_id", [
-    "slack", "github", "notion", "jira",
-    "gmail", "postgresql", "stripe", "google_drive",
-])
 def test_manifest_write_tools_are_blocked_by_default(connector_id):
     """Tools tagged external_write must default to block or alert, not allow."""
     m = load_manifest(connector_id)
@@ -166,7 +138,7 @@ def test_source_config_mcp_with_connector_no_url_passes():
 
 
 
-# ── Per-tool tags and scan_tool_result_on wiring ───────────────────────────
+# ── Per-tool tags wiring ───────────────────────────────────────────────────
 
 def test_manifest_to_source_config_includes_tool_specs():
     m = load_manifest("slack")
@@ -181,14 +153,6 @@ def test_manifest_to_source_config_includes_tool_specs():
     assert "read" in specs["read_messages"]["tags"]
 
 
-def test_manifest_to_source_config_includes_scan_tool_result_on():
-    m = load_manifest("github")
-    fields = manifest_to_source_config_fields(m, {})
-    assert "scan_tool_result_on" in fields
-    assert "search_code" in fields["scan_tool_result_on"]
-    assert "get_file_contents" in fields["scan_tool_result_on"]
-
-
 def test_source_config_accepts_connector_tool_specs():
     from harness.config.schema import SourceConfig
     cfg = SourceConfig(
@@ -199,10 +163,8 @@ def test_source_config_accepts_connector_tool_specs():
             "send_message": {"tags": ["external_write"], "action": "block"},
             "read_messages": {"tags": ["read"], "action": "allow"},
         },
-        scan_tool_result_on=["read_messages", "search_messages"],
     )
     assert "send_message" in cfg.connector_tool_specs
-    assert cfg.scan_tool_result_on == ["read_messages", "search_messages"]
 
 
 def test_all_tier_a_manifests_have_tool_specs_wired():
@@ -214,9 +176,6 @@ def test_all_tier_a_manifests_have_tool_specs_wired():
         fields = manifest_to_source_config_fields(m, {})
         assert fields["connector_tool_specs"], (
             f"{cid}: connector_tool_specs is empty"
-        )
-        assert fields["scan_tool_result_on"], (
-            f"{cid}: scan_tool_result_on is empty"
         )
 
 

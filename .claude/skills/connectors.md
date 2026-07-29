@@ -32,7 +32,7 @@ sources:
 ```
 
 The manifest supplies: `url`, `allowed_urls`, `allowed_methods`, `tags`,
-per-tool security specs, and `scan_tool_result_on` declarations.
+and per-tool security specs.
 
 ---
 
@@ -40,14 +40,14 @@ per-tool security specs, and `scan_tool_result_on` declarations.
 
 | `connector:` | Service | Key security notes |
 |---|---|---|
-| `slack` | Slack | `send_message` blocked; read tools scanned |
-| `github` | GitHub | `push_files`, `merge_pull_request` blocked+sensitive; code scanned |
-| `notion` | Notion | All writes blocked; page content scanned |
-| `jira` | Jira | `delete_issue` sensitive; JQL results scanned |
-| `gmail` | Gmail | ALL tools sensitive; send blocked; all reads scanned |
-| `postgresql` | PostgreSQL | `execute` blocked; ALL results sensitive+scanned |
-| `stripe` | Stripe | ALL tools sensitive; payment/cancel blocked; customer data scanned |
-| `google_drive` | Google Drive | `share_file` blocked (exfiltration); read content scanned |
+| `slack` | Slack | `send_message` blocked |
+| `github` | GitHub | `push_files`, `merge_pull_request` blocked+sensitive |
+| `notion` | Notion | All writes blocked |
+| `jira` | Jira | `delete_issue` sensitive |
+| `gmail` | Gmail | ALL tools sensitive; send blocked |
+| `postgresql` | PostgreSQL | `execute` blocked; ALL results sensitive |
+| `stripe` | Stripe | ALL tools sensitive; payment/cancel blocked |
+| `google_drive` | Google Drive | `share_file` blocked (exfiltration) |
 
 ---
 
@@ -56,10 +56,10 @@ per-tool security specs, and `scan_tool_result_on` declarations.
 `from_yaml()` detects `connector:` on a source, loads the manifest, and merges:
 
 ```
-manifest fields (url, allowed_urls, tags, tool_specs, scan_tool_result_on)
+manifest fields (url, allowed_urls, tags, tool_specs)
     + operator fields (name, credentials, any overrides)
     → SourceConfig
-    → MCPSource with per-tool tags and scan_tool_result_on wired in
+    → MCPSource with per-tool tags wired in
 ```
 
 **Operator fields always override manifest defaults.**
@@ -92,23 +92,15 @@ This means a policy rule like:
 
 ---
 
-## scan_tool_result_on (enforced)
+## Tool result scanning
 
-Manifests declare which tools have T6 risk (indirect injection in results).
-When you call `scan_tool_result` with `tool_name=`, only declared tools are scanned.
+Every tool result is scanned. Manifests do not declare a per-tool opt-out —
+a tool whose output looks like control-plane data is exactly where an
+indirect-injection payload arrives unnoticed.
 
 ```python
-# Slack manifest declares: scan_tool_result_on: [read_messages, search_messages, get_channel_info]
-
-# This tool IS in scan_tool_result_on — full scan runs
-tv = await harness.scan_tool_result(result, ctx, tool_name="read_messages")
-
-# This tool is NOT — emits disabled=True audit event, returns allow immediately
-tv = await harness.scan_tool_result(result, ctx, tool_name="list_channels")
+tv = await harness.scan_tool_result(result, ctx)
 ```
-
-**Always pass `tool_name=` when using connectors.** It's optional for backward
-compatibility but required for connector security to work as intended.
 
 ---
 
@@ -146,7 +138,6 @@ print(list_connectors())
 m = load_manifest("slack")
 print(m.url)                    # "https://mcp.slack.com/sse"
 print(m.allowed_urls)           # ["https://mcp.slack.com/*", ...]
-print(m.scan_tool_result_on)    # ["read_messages", "search_messages", "get_channel_info"]
 
 for tool in m.tools:
     print(tool.name, tool.tags, tool.action)

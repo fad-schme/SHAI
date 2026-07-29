@@ -37,10 +37,6 @@ tools:
     action: allow
     description: "Get query execution plan"
 
-scan_tool_result_on:
-  - query
-  - execute
-
 auth:
   type: connection_string
   credential_key: connection_string

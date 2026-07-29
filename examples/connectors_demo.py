@@ -137,7 +137,7 @@ async def s01_slack_read_allowed(h, ctx) -> bool:
 
     with h.collect_events() as evts:
         g  = await h.check_tool_call("read_messages", {"channel": "#engineering"}, ctx)
-        tv = await h.scan_tool_result(SLACK_MESSAGES, ctx, tool_name="read_messages")
+        tv = await h.scan_tool_result(SLACK_MESSAGES, ctx)
     print_audit_rows(evts)
 
     print_outcome(g.allowed and not tv.blocked,
@@ -169,7 +169,7 @@ async def s03_github_read_allowed(h, ctx) -> bool:
     with h.collect_events() as evts:
         g  = await h.check_tool_call("list_issues",
                                      {"repo": "shai", "state": "open"}, ctx)
-        tv = await h.scan_tool_result(GITHUB_ISSUES, ctx, tool_name="list_issues")
+        tv = await h.scan_tool_result(GITHUB_ISSUES, ctx)
     print_audit_rows(evts)
 
     print_outcome(g.allowed and not tv.blocked, "Issues read — gate and result scan passed")
@@ -186,13 +186,13 @@ async def s04_github_code_injection(h, ctx) -> bool:
 
     with h.collect_events() as evts:
         g  = await h.check_tool_call("search_code", {"query": "authentication"}, ctx)
-        tv = await h.scan_tool_result(GITHUB_INJECTED, ctx, tool_name="search_code")
+        tv = await h.scan_tool_result(GITHUB_INJECTED, ctx)
     print_audit_rows(evts)
 
     print_outcome(tv.blocked,
                   f"Injected result blocked before re-entering LLM — severity: {tv.max_severity}")
     print_note("Poisoned content from GitHub never reached the LLM context")
-    print_note("Manifest declares search_code in scan_tool_result_on — always scanned")
+    print_note("Every tool result is scanned — no per-tool opt-out")
     return tv.blocked
 
 
@@ -221,7 +221,7 @@ async def s06_notion_read_allowed(h, ctx) -> bool:
 
     with h.collect_events() as evts:
         g  = await h.check_tool_call("get_page", {"page_id": "q3-okrs-abc123"}, ctx)
-        tv = await h.scan_tool_result(NOTION_PAGE, ctx, tool_name="get_page")
+        tv = await h.scan_tool_result(NOTION_PAGE, ctx)
     print_audit_rows(evts)
 
     print_outcome(g.allowed and not tv.blocked, "Page read — clean content passes")
@@ -289,11 +289,11 @@ async def s10_multi_connector_turn(h, ctx) -> bool:
     with h.collect_events() as evts:
         # Slack search
         g1  = await h.check_tool_call("search_messages", {"query": "deploy"}, ctx)
-        tv1 = await h.scan_tool_result(SLACK_MESSAGES, ctx, tool_name="search_messages")
+        tv1 = await h.scan_tool_result(SLACK_MESSAGES, ctx)
         # GitHub issues
         g2  = await h.check_tool_call("list_issues",
                                       {"repo": "shai", "labels": "deploy"}, ctx)
-        tv2 = await h.scan_tool_result(GITHUB_ISSUES, ctx, tool_name="list_issues")
+        tv2 = await h.scan_tool_result(GITHUB_ISSUES, ctx)
     print_audit_rows(evts)
 
     success = g1.allowed and not tv1.blocked and g2.allowed and not tv2.blocked
