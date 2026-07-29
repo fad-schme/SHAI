@@ -42,10 +42,20 @@ class ToolRegistry:
                 return True
             if existing == item:
                 return False  # idempotent
+            diff = [
+                f for f in ("transport", "tags", "description",
+                            "argument_rules", "irreversibility")
+                if getattr(existing, f) != getattr(item, f)
+            ]
+            # Names only for description and argument_rules — a tool description is
+            # attacker-controlled MCP metadata and must not reach logs verbatim.
             raise ConfigError(
                 f"tool '{item.name}' already registered with a different definition "
-                f"(transport={existing.transport!r} tags={existing.tags}); "
-                f"attempted re-registration with transport={item.transport!r} tags={item.tags}",
+                f"(differs in: {', '.join(diff)}); "
+                f"existing transport={existing.transport!r} "
+                f"irreversibility={existing.irreversibility!r}, "
+                f"attempted transport={item.transport!r} "
+                f"irreversibility={item.irreversibility!r}",
                 op="register_tool",
             )
 

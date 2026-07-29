@@ -10,6 +10,83 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [0.5.0] — 2026-07-29
+
+### Changed
+- **BREAKING**: `gated_dispatch` returns one of three things instead of two. It
+  now scans the tool result after dispatch, so a result blocked as indirect
+  injection comes back as a `ScanVerdict`, alongside the existing `GateDecision`
+  on a gate deny and the tool result on allow. A caller testing only
+  `isinstance(result, GateDecision)` will hand a blocked `ScanVerdict` to the
+  model as though it were tool output — test for both, or pass either to
+  `make_tool_result_from_denial()`. On a redacted result the return is the
+  redacted string rather than the original object, since the unredacted value
+  must not be handed back.
+- **BREAKING**: `make_tool_result_from_denial()` accepts
+  `GateDecision | ScanVerdict`. For a blocked result the model-facing message is
+  fixed text rather than a reason string — findings describe matched content and
+  are never echoed back. Its first parameter is renamed `gate` → `denial`, which
+  affects keyword callers only.
+- **BREAKING**: `ToolRegistry.register()` raises `ConfigError` where it
+  previously returned `False`, when a tool of the same name differs in
+  `description`, `argument_rules`, or `irreversibility`.
+  `SHAI.register_tools()` propagates it. Re-registering a genuinely identical
+  tool is still idempotent. Through `load_agent()` the raise is caught and the
+  tool is kept as a per-agent override, so the agent resolves against the newer
+  definition instead of silently retaining the older one.
+- `Tool.tags` is sorted and de-duplicated at construction, so tag order no
+  longer round-trips. Every consumer already read tags as a set; normalising
+  keeps ordering from affecting tool equality now that equality is field-wise.
+
+### Fixed
+- **Tool results were never scanned in the Anthropic SDK integration.**
+  `gated_dispatch` gated the call and dispatched it, then returned the result
+  untouched — no `scan_tool_result`, so no T6 indirect-injection protection for
+  anyone using that helper or a `run_turn` loop built on it. The scan now runs
+  between dispatch and return, matching what the LangChain and LangGraph
+  integrations already did.
+- **Weaker tool security metadata silently overwrote stronger.** `Tool.__eq__`
+  compared only `name`, `transport`, and sorted `tags`, so `ToolRegistry`
+  treated a re-registration carrying different `argument_rules` or a different
+  `irreversibility` as idempotent and discarded the newer definition. Since the
+  gate reads both off the `Tool` at L2 and L3, a tool could keep enforcing rules
+  that had already been tightened elsewhere. Equality is now Pydantic's
+  field-wise comparison, so every field is significant — a hand-maintained field
+  list would only have drifted again.
+- **`run_turn` passed `llm_fn` the wrong type.** Agent tools were read straight
+  from the registry, whose values became `tuple[str, Tool]` in an earlier
+  refactor, while the `llm_fn` annotation promised `list[Tool]`. Callers written
+  against the documented signature received tuples.
+
+### Removed
+- **BREAKING**: `scan_tool_result_on` — gone from `ConnectorManifest`,
+  `SourceConfig`, and all eight bundled connector manifests. No integration ever
+  passed `tool_name`, so the field was inert on every shipped code path and no
+  deployment loses scanning; what it did do was tell operators they were scoping
+  T6 scanning when they were not. It also collapsed every source's list into one
+  global set, so a narrow list on one source would have suppressed scanning for
+  another source's tools. Because `SourceConfig` forbids unknown keys, a stale
+  `scan_tool_result_on:` in `harness.yaml` now fails validation at
+  `from_yaml()` — delete the key.
+- **BREAKING**: the `tool_name` parameter on `SHAI.scan_tool_result()`. The
+  removed filter was its only consumer. Calls passing it now raise `TypeError`
+  — drop the argument. The `disabled=True` audit event that a filtered tool
+  produced is gone with it.
+
+### Security
+- Tool results reaching the model through `gated_dispatch` are scanned for
+  indirect injection (T6). This closed a live gap, not a theoretical one:
+  the Anthropic SDK integration had no result scanning at all, and the shipped
+  reference documentation for it omitted the call entirely.
+- Every tool result is scanned, with no per-tool opt-out. A tool whose output
+  an operator classifies as control-plane data is exactly where an injection
+  payload arrives unnoticed.
+- Tool equality covers the metadata the gate enforces, so argument rules and
+  irreversibility classifications can no longer be downgraded by a same-name
+  re-registration. The conflict error names which fields differ but never
+  includes `description` or `argument_rules` values — a tool description is
+  attacker-controlled MCP metadata and must not reach logs verbatim.
+
 ## [0.4.1] — 2026-07-28
 
 ### Added

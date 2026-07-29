@@ -113,14 +113,25 @@ class Tool(BaseModel, frozen=True):
             raise ValueError("tool name must be non-empty")
         return v
 
+    @field_validator("tags")
+    @classmethod
+    def _canonical_tags(cls, v: list[str]) -> list[str]:
+        """Sort and dedupe so tag order never affects equality.
+
+        Every consumer reads tags as a set, so ordering carries no meaning —
+        but equality is field-wise, and without this ["read","write"] and
+        ["write","read"] would be two different tools to the registry.
+        """
+        return sorted(set(v))
+
+    # Equality is Pydantic's field-wise comparison — every field is significant,
+    # including argument_rules, irreversibility, and description. The registry
+    # relies on it to tell an idempotent re-registration from one that would
+    # swap security metadata (see ToolRegistry.register).
+    #
+    # __hash__ stays narrow and hand-written: argument_rules is a list, so a
+    # generated hash over all fields would raise TypeError. A coarser hash is
+    # contract-safe — stricter equality only ever yields fewer equal pairs, and
+    # tools that are equal still agree on these three fields.
     def __hash__(self) -> int:
         return hash((self.name, self.transport, tuple(sorted(self.tags))))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Tool):
-            return NotImplemented
-        return (
-            self.name == other.name
-            and self.transport == other.transport
-            and sorted(self.tags) == sorted(other.tags)
-        )
