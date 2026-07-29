@@ -25,7 +25,12 @@ class Scanner(Protocol):
 
     name: str
     method_family: str   # detection technique — used by TurnSignals for corroboration
-                         # (regex_catalog | structural_heuristic | regex_pii | ml_classifier | unknown)
+                         # (regex_catalog | structural_heuristic | structural_file |
+                         #  regex_pii | ml_classifier | unknown)
+                         # A composite scanner that forwards another scanner's
+                         # findings stamps each one with its producer's family and
+                         # declares "unknown" here — run_scan fills in only the
+                         # families a scanner left unset.
 
     async def scan(
         self,

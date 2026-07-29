@@ -392,10 +392,17 @@ async def run_scan(
         )
         redact_with      = configured.redact_with
         # Stamp the producing scanner's detection technique onto its findings.
-        # Scanners declare method_family; they do not set it per finding.
+        # Scanners declare method_family; they do not set it per finding — except
+        # a composite (FileContentScanner), which forwards findings from a chain
+        # of other scanners and stamps each with its real producer. Filling in
+        # only what is unset keeps those intact; flattening them onto the
+        # composite's own family collapsed a whole boundary to one family and
+        # made cross-method promotion impossible there.
         family = getattr(scanner, "method_family", "unknown")
         findings = [
-            f.model_copy(update={"method_family": family}) for f in result.findings
+            f if f.method_family != "unknown"
+            else f.model_copy(update={"method_family": family})
+            for f in result.findings
         ]
         per_scanner_data.append((findings, result, effective_action, redact_with))
         all_findings.extend(findings)

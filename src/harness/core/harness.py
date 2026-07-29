@@ -1090,8 +1090,10 @@ def _make_injection_doc_scanner() -> InjectionScanner:
 # Signed-DB catalog name per injection-family scanner. Explicit rather than
 # derived from the scanner name: the catalog names are an operator-facing
 # contract in the bundle format and must not shift if a scanner is renamed.
-# Only InjectionScanner subclasses appear here — they are the scanners whose
-# __init__ accepts extra_rules.
+# Only InjectionScanner and its subclasses appear here — they share one
+# __init__, so every name in this table accepts extra_rules. A subclass that
+# overrides __init__ without forwarding the kwarg breaks that and is rejected
+# by test_db_catalog_scanners_accept_extra_rules.
 _DB_CATALOG_FOR_SCANNER: dict[str, str] = {
     "injection_scan":      "injection",
     "jailbreak_scan":      "jailbreak",

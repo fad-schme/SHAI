@@ -12,6 +12,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.5.0] — 2026-07-29
 
+### Added
+- **`mcp_metadata_scan` boundary in the audit trail.** MCP tool metadata
+  scanning now emits one `AuditEvent` per tool inspected, so
+  `shai audit tail --boundary mcp_metadata_scan` returns rows instead of
+  nothing — the CLI already offered that filter, but no `BoundaryName` value
+  could produce it. Events carry `tool_name`, `transport`, `adapters`,
+  `finding_count`, `max_severity` and `extra.source`. Note that existing sinks
+  receive traffic they did not before: one event per tool in a source's
+  `tools/list`, once per source per process at connect time. A consumer that
+  validates `boundary` against a fixed set needs `mcp_metadata_scan` added to
+  it.
+
 ### Changed
 - **BREAKING**: `gated_dispatch` returns one of three things instead of two. It
   now scans the tool result after dispatch, so a result blocked as indirect
@@ -73,6 +85,41 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from the registry, whose values became `tuple[str, Tool]` in an earlier
   refactor, while the `llm_fn` annotation promised `list[Tool]`. Callers written
   against the documented signature received tuples.
+- **A `critical` finding in MCP tool metadata never blocked the tool.** The
+  block decision ran off a local `[low, medium, high]` list and tested
+  `if f.severity in severity_order` before comparing, so `critical` — the
+  highest severity SHAI can represent — fell out of the comparison entirely and
+  the tool registered cleanly at every configured `scan_mcp_metadata.block_at`.
+  A compromised MCP server whose metadata payload scored `critical` was strictly
+  safer scoring `high`. The decision now uses the same `Severity` comparison
+  every other boundary uses. `critical` is the only severity whose outcome
+  changes, and only from allow to block.
+- **Refusing an MCP tool left no audit record.** A tool blocked for metadata
+  injection was logged at WARNING and skipped, and nothing else. Because a
+  blocked tool is never registered it never reaches the gate either, so the
+  refusal appeared in no audit event anywhere — the one decision an operator
+  most needs to review after connecting an untrusted source was the one the
+  trail did not hold. Emission now happens on every path through the scan, so
+  a clean tool is recorded as `allow` alongside the refusals; "all N tools from
+  this source were scanned" is only provable from the trail if the clean ones
+  are in it. A refusal's `deny_reason` names the threshold that fired and
+  nothing else — the matched metadata is the payload being refused and is never
+  echoed into the trail.
+- **Signed pattern rules crashed startup for two of the three catalogs.**
+  `patterns_db` routes `injection`, `jailbreak` and `identity_spoof` rules to
+  their matching scanners, but `JailbreakScanner` and `IdentitySpoofScanner`
+  each overrode `__init__` without forwarding `extra_rules` — so
+  `SHAI.from_yaml()` raised `TypeError` the moment either catalog held a row
+  and its scanner was declared in `harness.yaml`. An operator shipping a
+  jailbreak bundle got a startup crash whose only workarounds were removing the
+  scanner or emptying the catalog, so the feature was unreachable for two of
+  the three families it exists to serve. Both overrides are gone: a subclass
+  now declares `name` and `default_patterns` as class attributes and inherits
+  one constructor, leaving no parameter to forget forwarding. Each subclass
+  keeps its own catalog and name, and `name=` still overrides. One consequence
+  for anyone subclassing `InjectionScanner` directly — an instance built with
+  no `name=` argument now takes the subclass's `name` class attribute instead
+  of defaulting to `"injection_scan"`.
 
 ### Removed
 - **BREAKING**: `scan_tool_result_on` — gone from `ConnectorManifest`,
@@ -88,6 +135,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removed filter was its only consumer. Calls passing it now raise `TypeError`
   — drop the argument. The `disabled=True` audit event that a filtered tool
   produced is gone with it.
+- **BREAKING**: `MCPMetadataScanner.should_block()` and its `block_at_severity`
+  constructor parameter. The scanner carried a second, independent threshold
+  that nothing supplied and no shipped code path consulted — the real decision
+  was made against `scan_mcp_metadata.block_at`, and the two implementations had
+  already diverged (see Fixed). The scanner now only produces findings and the
+  boundary applies the threshold, which is the split every other scanner
+  follows. Set the threshold in `harness.yaml` under `scan_mcp_metadata.block_at`;
+  a `config: {block_at_severity: ...}` on the scanner's `AdapterRef` now fails at
+  `from_yaml()`.
 
 ### Security
 - Tool results reaching the model through `gated_dispatch` are scanned for
@@ -105,6 +161,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   re-registration. The conflict error names which fields differ but never
   includes `description` or `argument_rules` values — a tool description is
   attacker-controlled MCP metadata and must not reach logs verbatim.
+- MCP tool metadata is gated across the full severity ladder. `critical`
+  findings were silently exempt from the block decision, so the strongest signal
+  the scanner could raise was the one that let a tool through — an inversion an
+  attacker benefits from by making a payload more obviously malicious, not less.
+- One threshold governs MCP metadata blocking. The scanner's own severity
+  setting is gone, so `scan_mcp_metadata.block_at` is the only thing that
+  decides, and there is no second copy left to drift from it.
+- Tools refused at connect time are recorded. A compromised MCP server whose
+  tool metadata carried an injection payload was turned away silently, leaving
+  an operator no way to tell from the audit trail that a source had tried it —
+  or to correlate the attempt with anything else. Registration refusals are now
+  first-class audit events.
+- A total audit-sink outage fails source connection rather than proceeding.
+  `AuditEmissionError` propagates out of the metadata scan, so `load_agent()`
+  raises instead of connecting a source whose refusals could not be written.
+- Signed jailbreak and identity-spoof rules reach their scanners. Operators who
+  applied a bundle to either catalog were running without those rules entirely:
+  the harness could not start with them loaded, so the working configuration
+  was always the one where they were absent. Only the `injection` catalog ever
+  took effect.
 
 ## [0.4.1] — 2026-07-28
 
