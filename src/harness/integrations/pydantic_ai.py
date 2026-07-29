@@ -24,13 +24,17 @@ PydanticAI is imported lazily.
 """
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from harness.integrations.base import ShaiTool, shai_tool  # re-export
+from harness.integrations.base import (  # shai_tool re-exported
+    ShaiTool,
+    execute_gated_tool_call,
+    invoke_tool,
+    shai_tool,
+)
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -53,16 +57,15 @@ def harness_tool(*, harness: SHAI, ctx: AgentContext) -> Callable:
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             tool_args = kwargs or ({"input": args[0]} if args else {})
-            gate = await harness.check_tool_call(tool_name, tool_args, ctx)
-            if not gate.allowed:
-                log.info("tool call denied",
-                         extra={"tool": tool_name, "reason": gate.deny_reason,
-                                **ctx.to_log_fields()})
-                return f"Tool call denied: {gate.deny_reason}"
-            effective = gate.redacted_args if gate.redacted_args is not None else kwargs
-            if asyncio.iscoroutinefunction(fn):
-                return await fn(*args, **effective)
-            return await asyncio.to_thread(fn, *args, **effective)
+            call = await execute_gated_tool_call(
+                harness=harness,
+                ctx=ctx,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                invoke=lambda a: invoke_tool(fn, a),
+            )
+            # PydanticAI has no denial artifact — the message is the output.
+            return call.message if not call.allowed else call.text
 
         return wrapper
     return decorator
@@ -90,15 +93,14 @@ async def create_tools(
         async def gated(*args: Any, _name: str = tool_name,
                         _orig: Any = original, **kwargs: Any) -> Any:
             tool_args = kwargs or ({"input": args[0]} if args else {})
-            gate = await harness_.check_tool_call(_name, tool_args, ctx_)
-            if not gate.allowed:
-                return f"Tool call denied: {gate.deny_reason}"
-            effective = gate.redacted_args if gate.redacted_args is not None else kwargs
-            if isinstance(_orig, ShaiTool):
-                return await _orig._async_call(**effective)
-            if asyncio.iscoroutinefunction(_orig):
-                return await _orig(*args, **effective)
-            return await asyncio.to_thread(_orig, *args, **effective)
+            call = await execute_gated_tool_call(
+                harness=harness_,
+                ctx=ctx_,
+                tool_name=_name,
+                tool_args=tool_args,
+                invoke=lambda a, _t=_orig: invoke_tool(_t, a),
+            )
+            return call.message if not call.allowed else call.text
 
         gated.__name__ = tool_name
         result.append(gated)
@@ -128,13 +130,14 @@ def _patch_tool(tool_obj: Any, *, harness: SHAI, ctx: AgentContext) -> None:
 
     @functools.wraps(original_fn)
     async def gated(*args: Any, **kwargs: Any) -> Any:
-        gate = await harness.check_tool_call(tool_name, kwargs or {}, ctx)
-        if not gate.allowed:
-            return f"Tool call denied: {gate.deny_reason}"
-        effective = gate.redacted_args if gate.redacted_args is not None else kwargs
-        if asyncio.iscoroutinefunction(original_fn):
-            return await original_fn(*args, **effective)
-        return await asyncio.to_thread(original_fn, *args, **effective)
+        call = await execute_gated_tool_call(
+            harness=harness,
+            ctx=ctx,
+            tool_name=tool_name,
+            tool_args=kwargs or {},
+            invoke=lambda a: invoke_tool(original_fn, a),
+        )
+        return call.message if not call.allowed else call.text
 
     for attr in ("function", "_function"):
         if hasattr(tool_obj, attr):

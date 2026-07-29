@@ -33,6 +33,27 @@ async def send_email(to: str, subject: str, body: str) -> str:
 | OpenAI Agents SDK | `make_before_tool_hook()` + `wrap_tool()` |
 | Anything with manual tool dispatch | Call `check_tool_call` + `scan_tool_result` directly |
 
+Every wrapper on this page runs the same contract: `check_tool_call` before
+dispatch, `scan_tool_result` on what comes back. You never call either
+yourself. The one exception is `make_before_tool_hook()` for the OpenAI Agents
+SDK — the SDK dispatches the tool itself, so that hook gates the call but
+never sees the result and cannot scan it. Use `wrap_tool()` there unless you
+need the hook shape.
+
+Result scanning only does something when the boundary is on:
+`scan_tool_result.enabled` defaults to `false`, and `config/harness.yaml`
+ships it as `true`.
+
+**MCP tools need no local callable.** When a gated tool resolves to an MCP
+source, the call is routed to that source with the gate's `dispatch_token`
+attached — which is what `ShaiTransport` validates on the outbound request.
+`HarnessToolNode` does this for any tool name not in its local list, and
+`gated_dispatch` does it when you omit `dispatch`. Dispatching an MCP tool
+yourself without threading `gate.dispatch_token` into `MCPSource.call()`
+leaves the request untokened: refused under `no_token_policy: strict`, and
+uncorrelatable in the audit trail under `permissive`.
+
+
 ## LangGraph
 
 ```python

@@ -26,7 +26,11 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from harness.integrations.base import ShaiTool, shai_tool  # re-export
+from harness.integrations.base import (  # shai_tool re-exported
+    execute_gated_tool_call,
+    invoke_tool,
+    shai_tool,
+)
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -47,18 +51,15 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
     tool_name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
 
     async def _gated_async(**kwargs: Any) -> Any:
-        gate = await harness_.check_tool_call(tool_name, kwargs, ctx_)
-        if not gate.allowed:
-            log.info("tool call denied",
-                     extra={"tool": tool_name, "reason": gate.deny_reason,
-                            **ctx_.to_log_fields()})
-            return f"Tool call denied: {gate.deny_reason}"
-        effective = gate.redacted_args if gate.redacted_args is not None else kwargs
-        if isinstance(tool, ShaiTool):
-            return await tool._async_call(**effective)
-        if asyncio.iscoroutinefunction(tool):
-            return await tool(**effective)
-        return await asyncio.to_thread(tool, **effective)
+        call = await execute_gated_tool_call(
+            harness=harness_,
+            ctx=ctx_,
+            tool_name=tool_name,
+            tool_args=kwargs,
+            invoke=lambda a: invoke_tool(tool, a),
+        )
+        # CrewAI has no denial artifact — the message is the tool output.
+        return call.message if not call.allowed else call.text
 
     def _gated_sync(**kwargs: Any) -> Any:
         return asyncio.run(_gated_async(**kwargs))

@@ -44,7 +44,11 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from harness.integrations.base import ShaiTool, shai_tool  # re-export
+from harness.integrations.base import (  # shai_tool re-exported
+    execute_gated_tool_call,
+    invoke_tool,
+    shai_tool,
+)
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -84,18 +88,16 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
         async def _arun(self, *args: Any, **kwargs: Any) -> Any:
             tool_args = kwargs or ({"input": args[0]} if args else {})
-            gate = await harness_.check_tool_call(self.name, tool_args, ctx_)
-            if not gate.allowed:
-                log.info("tool call denied",
-                         extra={"tool": self.name, "reason": gate.deny_reason,
-                                **ctx_.to_log_fields()})
-                raise ToolException(f"Tool call denied: {gate.deny_reason}")
-            effective = gate.redacted_args if gate.redacted_args is not None else tool_args
-            if isinstance(original, ShaiTool):
-                return await original._async_call(**effective)
-            if asyncio.iscoroutinefunction(getattr(original, "arun", None)):
-                return await original.arun(**effective)
-            return await asyncio.to_thread(original.run, **effective)
+            call = await execute_gated_tool_call(
+                harness=harness_,
+                ctx=ctx_,
+                tool_name=self.name,
+                tool_args=tool_args,
+                invoke=lambda a: invoke_tool(original, a),
+            )
+            if not call.allowed:
+                raise ToolException(call.message)
+            return call.text
 
     gated = _GatedTool()
     if hasattr(original, "args_schema") and original.args_schema is not None:
@@ -193,51 +195,43 @@ def _build_shai_middleware_class() -> type:
             tool_name = _tool_name_from_request(request)
             tool_args = _tool_args_from_request(request)
 
-            gate = await self._harness.check_tool_call(tool_name, tool_args, self._ctx)
-            if not gate.allowed:
-                log.info("tool call denied",
-                         extra={"tool": tool_name, "reason": gate.deny_reason,
-                                **self._ctx.to_log_fields()})
-                try:
-                    from langchain_core.messages import ToolMessage
-                    from langgraph.types import Command
-                    return Command(update={
-                        "messages": [ToolMessage(
-                            content=f"Tool call denied: {gate.deny_reason}",
-                            tool_call_id=_tool_call_id_from_request(request),
-                        )]
-                    })
-                except ImportError:
-                    return f"Tool call denied: {gate.deny_reason}"
+            async def _invoke(effective: dict[str, Any]) -> Any:
+                # The handler owns dispatch — substitute the gate's args into
+                # the request rather than calling the tool ourselves.
+                req = (_replace_args_in_request(request, effective)
+                       if effective is not tool_args else request)
+                return await _await_if_needed(handler(req))
 
-            if gate.redacted_args is not None:
-                request = _replace_args_in_request(request, gate.redacted_args)
+            call = await execute_gated_tool_call(
+                harness=self._harness,
+                ctx=self._ctx,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                invoke=_invoke,
+                extract_text=_extract_result_text,
+            )
 
-            result = await _await_if_needed(handler(request))
+            if not call.allowed:
+                return self._denial_artifact(request, call.message)
+            if call.verdict is not None and call.verdict.redacted_text:
+                return _replace_result_text(call.result, call.verdict.redacted_text)
+            return call.result
 
-            result_text = _extract_result_text(result)
-            if result_text:
-                tverdict = await self._harness.scan_tool_result(result_text, self._ctx)
-                if tverdict.blocked:
-                    log.warning("scan_tool_result blocked",
-                                extra={"tool": tool_name, **self._ctx.to_log_fields()})
-                    try:
-                        from langchain_core.messages import ToolMessage
-                        from langgraph.types import Command
-                        return Command(update={
-                            "messages": [ToolMessage(
-                                content="Tool result blocked by SHAI (indirect injection)",
-                                tool_call_id=_tool_call_id_from_request(request),
-                            )]
-                        })
-                    except ImportError:
-                        return "Tool result blocked by SHAI"
-                if tverdict.redacted_text:
-                    result = _replace_result_text(result, tverdict.redacted_text)
-                if tverdict.warned:
-                    log.warning("scan_tool_result flagged (action=alert)",
-                                extra={"tool": tool_name, **self._ctx.to_log_fields()})
-            return result
+        @staticmethod
+        def _denial_artifact(request: Any, message: str) -> Any:
+            """Render a denial as a graph update, or plain text when the
+            graph types are unavailable."""
+            try:
+                from langchain_core.messages import ToolMessage
+                from langgraph.types import Command
+                return Command(update={
+                    "messages": [ToolMessage(
+                        content=message,
+                        tool_call_id=_tool_call_id_from_request(request),
+                    )]
+                })
+            except ImportError:
+                return message
 
         async def aafter_agent(self, state: Any, runtime: Any = None) -> Any:
             """scan_output — once after the loop completes."""

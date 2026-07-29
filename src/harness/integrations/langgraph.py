@@ -45,7 +45,11 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from harness.integrations.base import ShaiTool, shai_tool  # re-export
+from harness.integrations.base import (  # shai_tool re-exported
+    execute_gated_tool_call,
+    invoke_tool,
+    shai_tool,
+)
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -123,34 +127,25 @@ class HarnessToolNode:
             args    = tool_call["args"]
             call_id = tool_call["id"]
 
-            gate = await self._harness.check_tool_call(name, args, self._ctx)
-            if not gate.allowed:
-                log.info("tool call denied",
-                         extra={"tool": name, "reason": gate.deny_reason,
-                                **self._ctx.to_log_fields()})
-                results.append(ToolMessage(
-                    content=f"Tool call denied: {gate.deny_reason}",
-                    tool_call_id=call_id,
-                    status="error",
-                ))
-                continue
-
-            effective_args = gate.redacted_args if gate.redacted_args is not None else args
+            # No local callable → let the helper dispatch through the MCP
+            # source the gate resolved, carrying the dispatch token. The
+            # lookup stays inside invoke so the gate runs, and records, first.
             tool_fn = self._tools.get(name)
-            if tool_fn is None:
-                results.append(ToolMessage(
-                    content=f"Tool '{name}' not found in node tools list",
-                    tool_call_id=call_id,
-                    status="error",
-                ))
-                continue
+            invoke = (
+                (lambda a, _t=tool_fn: invoke_tool(_t, a))
+                if tool_fn is not None else None
+            )
 
             try:
-                raw_result = await self._invoke_tool(
-                    tool_fn, effective_args,
-                    dispatch_token=gate.dispatch_token,
+                call = await execute_gated_tool_call(
+                    harness=self._harness,
+                    ctx=self._ctx,
+                    tool_name=name,
+                    tool_args=args,
+                    invoke=invoke,
                 )
             except Exception as exc:
+                # One failing tool must not abort the rest of the batch.
                 log.error("tool execution error",
                           extra={"tool": name, "error": str(exc),
                                  **self._ctx.to_log_fields()})
@@ -161,49 +156,20 @@ class HarnessToolNode:
                 ))
                 continue
 
-            result_text = str(raw_result)
-            tverdict    = await self._harness.scan_tool_result(result_text, self._ctx)
-
-            if tverdict.blocked:
-                log.warning("tool result blocked — indirect injection detected",
-                            extra={"tool": name, **self._ctx.to_log_fields()})
+            if not call.allowed:
                 results.append(ToolMessage(
-                    content=(f"Tool result from '{name}' was blocked by SHAI "
-                             f"(indirect injection detected)"),
+                    content=call.message,
                     tool_call_id=call_id,
                     status="error",
                 ))
                 continue
 
-            if tverdict.warned:
-                log.warning("tool result flagged — potential injection (action=alert)",
-                            extra={"tool": name, **self._ctx.to_log_fields()})
-
             results.append(ToolMessage(
-                content=tverdict.redacted_text or result_text,
+                content=call.text,
                 tool_call_id=call_id,
             ))
 
         return {"messages": results}
-
-    @staticmethod
-    async def _invoke_tool(tool: Any, args: dict[str, Any], *,
-                           dispatch_token: str | None = None) -> Any:
-        """Invoke a tool (ShaiTool, LangChain tool, or plain callable)."""
-        import asyncio
-        # ShaiTool — use internal async dispatch directly
-        if isinstance(tool, ShaiTool):
-            return await tool._async_call(**args)
-        # LangChain ainvoke
-        if asyncio.iscoroutinefunction(getattr(tool, "ainvoke", None)):
-            return await tool.ainvoke(args)
-        if asyncio.iscoroutinefunction(getattr(tool, "arun", None)):
-            return await tool.arun(**args)
-        if callable(getattr(tool, "invoke", None)):
-            return await asyncio.to_thread(tool.invoke, args)
-        if callable(tool):
-            return await asyncio.to_thread(tool, **args)
-        raise TypeError(f"Cannot invoke tool of type {type(tool)}")
 
     @staticmethod
     def _tool_name(tool: Any) -> str:

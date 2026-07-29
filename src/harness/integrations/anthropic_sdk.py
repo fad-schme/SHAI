@@ -29,7 +29,11 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from harness.core.verdicts import GateDecision
-from harness.integrations.base import shai_tool  # re-export for convenience
+from harness.integrations.base import (  # shai_tool re-exported
+    BLOCKED_RESULT_MESSAGE,
+    execute_gated_tool_call,
+    shai_tool,
+)
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -48,7 +52,7 @@ async def gated_dispatch(
     ctx: AgentContext,
     *,
     harness: SHAI,
-    dispatch: Callable[[str, dict[str, Any]], Awaitable[Any]],
+    dispatch: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
 ) -> Any:
     """Gate one tool call, dispatch it, then scan the result.
 
@@ -57,7 +61,10 @@ async def gated_dispatch(
         tool_args:  the tool input dict from the model's tool_use block
         ctx:        the AgentContext for this turn
         harness:    the SHAI instance
-        dispatch:   async callable(tool_name, args) → tool result
+        dispatch:   async callable(tool_name, args) → tool result. Omit for
+                    MCP tools: the call is then routed to the source that owns
+                    the tool, carrying the gate's dispatch token — which is
+                    what ShaiTransport validates on the outbound request.
 
     Returns one of three things:
         GateDecision    — the gate denied the call; it was never dispatched.
@@ -70,28 +77,20 @@ async def gated_dispatch(
     make_tool_result_from_denial() to surface the reason to the model —
     never hand them to the model as tool output.
     """
-    gate = await harness.check_tool_call(tool_name, tool_args, ctx)
-    if not gate.allowed:
-        log.info(
-            "tool call denied",
-            extra={"tool": tool_name, "reason": gate.deny_reason,
-                   **ctx.to_log_fields()},
-        )
-        return gate
-
-    effective_args = gate.redacted_args if gate.redacted_args is not None else tool_args
-    result = await dispatch(tool_name, effective_args)
-
-    # T6: a tool result is untrusted input. Scan before it re-enters context.
-    verdict = await harness.scan_tool_result(str(result), ctx)
-    if verdict.blocked:
-        log.warning("tool result blocked — indirect injection detected",
-                    extra={"tool": tool_name, **ctx.to_log_fields()})
-        return verdict
-    if verdict.warned:
-        log.warning("tool result flagged — potential injection (action=alert)",
-                    extra={"tool": tool_name, **ctx.to_log_fields()})
-    return verdict.redacted_text or result
+    call = await execute_gated_tool_call(
+        harness=harness,
+        ctx=ctx,
+        tool_name=tool_name,
+        tool_args=tool_args,
+        invoke=(lambda a: dispatch(tool_name, a)) if dispatch is not None else None,
+    )
+    if call.status == "denied":
+        return call.gate
+    if call.status == "blocked":
+        return call.verdict
+    # Allowed: the redacted text when the scan replaced content, else the raw
+    # result — an SDK caller may need the object, not its str().
+    return call.text if (call.verdict and call.verdict.redacted_text) else call.result
 
 
 async def run_turn(
@@ -155,7 +154,7 @@ def make_tool_result_from_denial(
     if isinstance(denial, GateDecision):
         content = f"Tool call denied: {denial.deny_reason}"
     else:
-        content = "Tool result blocked by SHAI (indirect injection detected)"
+        content = BLOCKED_RESULT_MESSAGE
     return {
         "type": "tool_result",
         "tool_use_id": tool_use_id,

@@ -60,6 +60,13 @@ if gate.allowed:
     )
 ```
 
+Hand-rolled dispatch is the only place you thread the token yourself. The
+framework integrations route MCP tools to their source and attach the token
+for you — `HarnessToolNode` for any tool without a local callable,
+`gated_dispatch` when called without a `dispatch` argument. A call dispatched
+without the token is refused under `no_token_policy: strict` and produces no
+`NetworkAuditEvent` to correlate under `permissive`.
+
 ---
 
 ## ShaiTransport enforcement

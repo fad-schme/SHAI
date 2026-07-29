@@ -25,13 +25,17 @@ OpenAI Agents SDK is imported lazily.
 """
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-from harness.integrations.base import ShaiTool, shai_tool  # re-export
+from harness.integrations.base import (  # shai_tool re-exported
+    ShaiTool,
+    execute_gated_tool_call,
+    invoke_tool,
+    shai_tool,
+)
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -46,6 +50,11 @@ def make_before_tool_hook(*, harness: SHAI, ctx: AgentContext) -> Callable:
     """Return an async before_tool_call hook for AgentHooks.
 
     Gates each tool call. Returns deny reason (SDK uses as tool result) on deny.
+
+    Gate only: the SDK dispatches the tool itself, so this hook never sees the
+    result and cannot run scan_tool_result. Tool output reaches the model
+    unscanned — no T6 indirect-injection protection. Use wrap_tools() instead
+    unless you need the hook shape.
     """
     harness_ = harness
     ctx_     = ctx
@@ -83,15 +92,15 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
     @functools.wraps(base_fn)
     async def gated(**kwargs: Any) -> Any:
-        gate = await harness_.check_tool_call(tool_name, kwargs, ctx_)
-        if not gate.allowed:
-            return f"Tool call denied: {gate.deny_reason}"
-        effective = gate.redacted_args if gate.redacted_args is not None else kwargs
-        if isinstance(original_fn, ShaiTool):
-            return await original_fn._async_call(**effective)
-        if asyncio.iscoroutinefunction(original_fn):
-            return await original_fn(**effective)
-        return await asyncio.to_thread(original_fn, **effective)
+        call = await execute_gated_tool_call(
+            harness=harness_,
+            ctx=ctx_,
+            tool_name=tool_name,
+            tool_args=kwargs,
+            invoke=lambda a: invoke_tool(original_fn, a),
+        )
+        # The SDK has no denial artifact — the message is the tool output.
+        return call.message if not call.allowed else call.text
 
     try:
         from agents import function_tool
