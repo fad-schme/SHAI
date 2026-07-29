@@ -391,8 +391,14 @@ async def run_scan(
             configured.action if configured.action is not None else boundary_action
         )
         redact_with      = configured.redact_with
-        per_scanner_data.append((result.findings, result, effective_action, redact_with))
-        all_findings.extend(result.findings)
+        # Stamp the producing scanner's detection technique onto its findings.
+        # Scanners declare method_family; they do not set it per finding.
+        family = getattr(scanner, "method_family", "unknown")
+        findings = [
+            f.model_copy(update={"method_family": family}) for f in result.findings
+        ]
+        per_scanner_data.append((findings, result, effective_action, redact_with))
+        all_findings.extend(findings)
         # Apply redaction unconditionally when the scanner returned redacted_text.
         # Redaction is a content transform — it is independent of block_at threshold.
         # (Block/alert actions still respect block_at; redaction does not.)
@@ -511,6 +517,9 @@ def _check_promoted_candidates(
                 category="heuristic_anomaly",
                 severity=Severity.MEDIUM,
                 detail=f"promoted candidate id={candidate['id']} hits={candidate['hit_count']}",
+                # An LSH match over heuristic fingerprints — the same detection
+                # technique as heuristic_scan, so the two do not corroborate.
+                method_family="structural_heuristic",
             ))
             break  # one match is enough
     return injected

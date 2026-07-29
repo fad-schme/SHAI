@@ -79,46 +79,68 @@ class TestHeuristicScanner:
 
 # ── Item 6: Ensemble ─────────────────────────────────────────────────────
 
-class TestEnsemble:
+def _f(scanner: str, category: str, severity: Severity, family: str) -> Finding:
+    return Finding(scanner=scanner, category=category, severity=severity,
+                   method_family=family)
 
-    def test_no_promotion_single_scanner(self):
-        findings = [
-            Finding(scanner="a", category="cat1", severity=Severity.MEDIUM),
-        ]
+
+class TestEnsemble:
+    """Promotion counts distinct method families, not distinct scanner names."""
+
+    def test_no_promotion_single_finding(self):
+        findings = [_f("injection_scan", "cat1", Severity.MEDIUM, "regex_catalog")]
         result = promote_findings(findings)
         assert result[0].severity == Severity.MEDIUM
 
-    def test_two_scanners_same_category_promoted(self):
+    def test_two_families_same_category_promoted(self):
         findings = [
-            Finding(scanner="injection_scan", category="cat1", severity=Severity.MEDIUM),
-            Finding(scanner="heuristic_scan", category="cat1", severity=Severity.MEDIUM),
+            _f("injection_scan", "cat1", Severity.MEDIUM, "regex_catalog"),
+            _f("heuristic_scan", "cat1", Severity.MEDIUM, "structural_heuristic"),
         ]
         result = promote_findings(findings)
         assert all(f.severity == Severity.HIGH for f in result)
 
+    def test_two_scanners_one_family_not_promoted(self):
+        """Two catalogs agreeing are one technique agreeing with itself."""
+        findings = [
+            _f("injection_scan", "cat1", Severity.MEDIUM, "regex_catalog"),
+            _f("jailbreak_scan", "cat1", Severity.MEDIUM, "regex_catalog"),
+        ]
+        result = promote_findings(findings)
+        assert all(f.severity == Severity.MEDIUM for f in result)
+
     def test_below_threshold_not_promoted(self):
         findings = [
-            Finding(scanner="a", category="cat1", severity=Severity.LOW),
-            Finding(scanner="b", category="cat1", severity=Severity.LOW),
+            _f("injection_scan", "cat1", Severity.LOW, "regex_catalog"),
+            _f("heuristic_scan", "cat1", Severity.LOW, "structural_heuristic"),
         ]
         result = promote_findings(findings)
         assert all(f.severity == Severity.LOW for f in result)
 
     def test_already_high_unchanged(self):
         findings = [
-            Finding(scanner="a", category="cat1", severity=Severity.HIGH),
-            Finding(scanner="b", category="cat1", severity=Severity.MEDIUM),
+            _f("injection_scan", "cat1", Severity.HIGH, "regex_catalog"),
+            _f("heuristic_scan", "cat1", Severity.MEDIUM, "structural_heuristic"),
         ]
         result = promote_findings(findings)
         assert result[0].severity == Severity.HIGH
 
     def test_different_categories_not_cross_promoted(self):
         findings = [
-            Finding(scanner="a", category="cat1", severity=Severity.MEDIUM),
-            Finding(scanner="b", category="cat2", severity=Severity.MEDIUM),
+            _f("injection_scan", "cat1", Severity.MEDIUM, "regex_catalog"),
+            _f("heuristic_scan", "cat2", Severity.MEDIUM, "structural_heuristic"),
         ]
         result = promote_findings(findings)
         assert all(f.severity == Severity.MEDIUM for f in result)
+
+    def test_promotion_preserves_method_family(self):
+        """A promoted finding keeps its family — the next reader still dedups."""
+        findings = [
+            _f("injection_scan", "cat1", Severity.MEDIUM, "regex_catalog"),
+            _f("heuristic_scan", "cat1", Severity.MEDIUM, "structural_heuristic"),
+        ]
+        result = promote_findings(findings)
+        assert {f.method_family for f in result} == {"regex_catalog", "structural_heuristic"}
 
     def test_empty_findings(self):
         assert promote_findings([]) == []

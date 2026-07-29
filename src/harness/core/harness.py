@@ -480,9 +480,7 @@ class SHAI:
         )
 
         # Record signals from the input scan
-        ctx.turn_signals.record_input(
-            verdict, [c.scanner for c in self._input_scanners]
-        )
+        ctx.turn_signals.record_input(verdict)
 
         # Accumulator record moved to scan_output — needs full turn context
         # for consolidated turn_risk. scan_input BLOCK short-circuits still

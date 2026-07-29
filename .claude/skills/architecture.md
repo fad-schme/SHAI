@@ -35,7 +35,7 @@ src/harness/
 │   ├── argument_policy.py             deterministic argument-level checks (L2)
 │   ├── session_budget.py              DoS budget enforcer (R2): step, fan-out, loop
 │   ├── session_accumulator.py         cross-turn threat accumulator — crescendo attacks
-│   ├── ensemble.py                    cross-scanner severity promotion, always on
+│   ├── ensemble.py                    cross-method severity promotion, always on
 │   └── _scan.py                       scan_input, scan_output, scan_tool_result, scan_file
 ├── adapters/
 │   ├── scanners/

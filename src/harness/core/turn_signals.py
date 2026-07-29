@@ -86,12 +86,12 @@ class TurnSignals:
 
     # ── Writers ──────────────────────────────────────────────────────────
 
-    def record_input(self, verdict: ScanVerdict, scanner_instances: list) -> None:
+    def record_input(self, verdict: ScanVerdict) -> None:
         """Record scan_input verdict. Called by SHAI.scan_input after run_scan.
 
-        scanner_instances is the list of scanner objects that ran this scan.
-        We dedup by method_family — two catalog scanners agreeing counts as
-        one method, not two.
+        Families are read off the findings, which run_scan stamped with the
+        producing scanner's technique. Only scanners that fired contribute,
+        and two catalog scanners agreeing count as one method, not two.
         """
         self.input_verdict = verdict.status
         self.input_categories = {f.category for f in verdict.findings}
@@ -100,12 +100,7 @@ class TurnSignals:
                 (f.severity for f in verdict.findings),
                 key=lambda s: s._index(),
             )
-        triggered_names = {f.scanner for f in verdict.findings}
-        for scanner in scanner_instances:
-            if scanner.name in triggered_names:
-                self.input_method_families.add(
-                    getattr(scanner, "method_family", "unknown")
-                )
+        self.input_method_families.update(f.method_family for f in verdict.findings)
 
     def record_gate(self, allowed: bool, tool_name: str,
                     tool_tags: frozenset[str] = frozenset()) -> None:

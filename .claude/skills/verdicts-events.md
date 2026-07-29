@@ -45,10 +45,11 @@ Always use `or original` pattern.
 ```python
 @dataclass
 class Finding:
-    scanner:   str             # "regex_pii", "injection_scan"
-    category:  str             # "pii.ssn", "prompt_injection", etc.
-    severity:  Severity        # LOW | MEDIUM | HIGH
-    detail:    str | None      # category name only — never the matched text
+    scanner:       str         # "regex_pii", "injection_scan"
+    category:      str         # "pii.ssn", "prompt_injection", etc.
+    severity:      Severity    # LOW | MEDIUM | HIGH
+    detail:        str | None  # category name only — never the matched text
+    method_family: str         # producing scanner's technique, stamped by run_scan
 ```
 
 **`detail` never contains matched text.** This is intentional — matched PII

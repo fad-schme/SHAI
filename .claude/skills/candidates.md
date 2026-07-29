@@ -61,12 +61,16 @@ Finding(
     scanner="learned_candidate",
     category="heuristic_anomaly",
     severity=Severity.MEDIUM,
+    method_family="structural_heuristic",
 )
 ```
 
-This finding is always MEDIUM. It never blocks on its own at `block_at: high`.
-But it participates in the ensemble — if `injection_scan` also flags the same
-category, the ensemble promotes both to HIGH.
+This finding is always MEDIUM, and it is injected after the per-scanner action
+loop — it never blocks. It participates in the ensemble: if a scanner from a
+different method family flags the same category, both are promoted to HIGH in
+the verdict and the audit event. It carries `structural_heuristic`, the same
+family as `heuristic_scan`, so the scanner whose output produced the candidate
+does not corroborate it — a catalog scanner agreeing does.
 
 Promoted candidates are cached in memory. Because the CLI runs in a separate
 process, a status change cannot invalidate a running harness's cache. Restart
@@ -192,8 +196,10 @@ candidate is no longer needed — the regex rule is the permanent fix.
 - **No raw text storage.** Fingerprints contain bucketed scores and LSH hashes.
   Skeletons contain only structural markers and control tokens.
 - **No blocking on their own.** Promoted candidate findings are MEDIUM. They
-  only cause a block when the ensemble combines them with another scanner's
-  finding for the same category.
+  never trigger a boundary block directly — they are injected after the
+  per-scanner action loop has run, so no action ever reads them. Ensemble
+  promotion raises their recorded severity in the verdict and the audit
+  event's `max_severity`; it does not feed the block decision.
 - **No replacement for regex rules.** Candidates are similarity-based discovery.
   Regex rules are precise permanent fixes. Candidates find the attack shape.
   Rules lock it down.

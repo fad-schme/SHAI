@@ -45,12 +45,15 @@ class FakeScanner:
         return ScanResult(findings=list(self._findings))
 
 
-def _finding(scanner: str, category: str, severity: Severity = Severity.MEDIUM) -> Finding:
+def _finding(scanner: str, category: str, severity: Severity = Severity.MEDIUM,
+             method_family: str = "unknown") -> Finding:
+    """A finding as run_scan hands it on — method_family already stamped."""
     return Finding(
         scanner=scanner,
         category=category,
         severity=severity,
         detail="",
+        method_family=method_family,
     )
 
 
@@ -71,85 +74,72 @@ def make_agent(allowed_tools=None, allowed_tags=None):
 # ── Method family dedup ───────────────────────────────────────────────────
 
 class TestMethodFamilyDedup:
-    """Corroboration bonus requires distinct method families, not distinct scanner names."""
+    """Corroboration bonus requires distinct method families, not distinct scanner names.
+
+    run_scan stamps each finding with its producing scanner's method_family,
+    so record_input reads families straight off the verdict.
+    """
 
     def test_single_scanner_no_bonus(self):
         ts = TurnSignals()
-        scanners = [FakeScanner("injection_scan", "regex_catalog")]
         verdict = ScanVerdict(
             status=ScanStatus.WARN,
-            findings=[_finding("injection_scan", "tool_injection", Severity.MEDIUM)],
+            findings=[_finding("injection_scan", "tool_injection",
+                               method_family="regex_catalog")],
         )
-        ts.record_input(verdict, scanners)
+        ts.record_input(verdict)
         assert ts.input_method_families == {"regex_catalog"}
-        assert len(ts.input_method_families) == 1
 
     def test_two_catalog_scanners_same_family_no_bonus(self):
         """Injection + jailbreak both fire — same family, still 1."""
         ts = TurnSignals()
-        scanners = [
-            FakeScanner("injection_scan", "regex_catalog"),
-            FakeScanner("jailbreak_scan", "regex_catalog"),
-        ]
         verdict = ScanVerdict(
             status=ScanStatus.WARN,
             findings=[
-                _finding("injection_scan", "tool_injection", Severity.MEDIUM),
-                _finding("jailbreak_scan", "jailbreak_attempt", Severity.MEDIUM),
+                _finding("injection_scan", "tool_injection",
+                         method_family="regex_catalog"),
+                _finding("jailbreak_scan", "jailbreak_attempt",
+                         method_family="regex_catalog"),
             ],
         )
-        ts.record_input(verdict, scanners)
+        ts.record_input(verdict)
         assert ts.input_method_families == {"regex_catalog"}
 
     def test_two_different_families_earns_bonus(self):
         """Injection (catalog) + heuristic (structural) → 2 families."""
         ts = TurnSignals()
-        scanners = [
-            FakeScanner("injection_scan", "regex_catalog"),
-            FakeScanner("heuristic_scan", "structural_heuristic"),
-        ]
         verdict = ScanVerdict(
             status=ScanStatus.WARN,
             findings=[
-                _finding("injection_scan", "tool_injection", Severity.MEDIUM),
-                _finding("heuristic_scan", "heuristic_anomaly", Severity.MEDIUM),
+                _finding("injection_scan", "tool_injection",
+                         method_family="regex_catalog"),
+                _finding("heuristic_scan", "heuristic_anomaly",
+                         method_family="structural_heuristic"),
             ],
         )
-        ts.record_input(verdict, scanners)
+        ts.record_input(verdict)
         assert ts.input_method_families == {"regex_catalog", "structural_heuristic"}
-        assert len(ts.input_method_families) == 2
 
     def test_scanner_without_method_family_uses_unknown(self):
-        """Custom scanner without method_family attribute falls back to 'unknown'."""
-        class LegacyScanner:
-            name = "legacy_scan"
-            # No method_family attribute
-            async def scan(self, text, ctx):
-                from harness.adapters.scanners.base import ScanResult
-                return ScanResult(findings=[])
-
+        """A custom scanner declaring no method_family lands as 'unknown'."""
         ts = TurnSignals()
-        scanners = [LegacyScanner()]
         verdict = ScanVerdict(
             status=ScanStatus.WARN,
-            findings=[_finding("legacy_scan", "custom_cat", Severity.MEDIUM)],
+            findings=[Finding(scanner="legacy_scan", category="custom_cat",
+                              severity=Severity.MEDIUM)],
         )
-        ts.record_input(verdict, scanners)
+        ts.record_input(verdict)
         assert ts.input_method_families == {"unknown"}
 
     def test_scanners_that_did_not_fire_not_counted(self):
-        """Only scanners with findings contribute to the family set."""
+        """Only scanners with findings contribute — a clean scanner leaves no finding."""
         ts = TurnSignals()
-        scanners = [
-            FakeScanner("injection_scan", "regex_catalog"),
-            FakeScanner("heuristic_scan", "structural_heuristic"),
-            FakeScanner("regex_pii", "regex_pii"),
-        ]
         verdict = ScanVerdict(
             status=ScanStatus.WARN,
-            findings=[_finding("injection_scan", "tool_injection", Severity.MEDIUM)],
+            findings=[_finding("injection_scan", "tool_injection",
+                               method_family="regex_catalog")],
         )
-        ts.record_input(verdict, scanners)
+        ts.record_input(verdict)
         assert ts.input_method_families == {"regex_catalog"}
 
 

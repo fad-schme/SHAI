@@ -271,10 +271,12 @@ boundary list both adapters, `file_scanner` and `file_content_scan`.
 
 **Method-family attribution.** Every scanner declares `method_family` — one of
 `regex_catalog`, `structural_heuristic`, `regex_pii`, `ml_classifier`,
-`unknown`. `TurnSignals` uses this for corroboration bonuses in the risk
-score: two `regex_catalog` scanners agreeing count as **one** family (no
-bonus), while injection + heuristic count as two (bonus applied). This
-prevents catalog scanners from double-counting themselves into HIGH.
+`unknown`. `run_scan` stamps it onto every finding the scanner produces, and
+both corroboration consumers count distinct families: `TurnSignals` for the
+risk-score bonus, and `ensemble.py` for severity promotion. Two `regex_catalog`
+scanners agreeing count as **one** family (no bonus, no promotion), while
+injection + heuristic count as two (both apply). This prevents catalog scanners
+from double-counting themselves into HIGH.
 
 **Catalog files** (built-in, under `src/harness/adapters/scanners/l10n/`):
 - `injection_patterns.yaml` — 17+ rules, tuned for user text input.

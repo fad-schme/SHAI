@@ -124,24 +124,40 @@ class TestCandidateGateIsReachable:
 
 
 class TestEnsembleEscalation:
-    """Documented consequence of C1: once the heuristic fires, a co-occurring
-    promoted candidate crosses the ensemble threshold and both findings are
-    escalated to HIGH. Pinned deliberately — see the ensemble double-counting
-    follow-up."""
+    """The ensemble double-counting follow-up, resolved.
 
-    def test_heuristic_plus_learned_candidate_promotes_to_high(self):
+    A promoted candidate is an LSH match over heuristic fingerprints, so it
+    carries the same method_family as heuristic_scan. It no longer corroborates
+    the scanner whose output produced it — two scanner names, one technique."""
+
+    def test_heuristic_plus_learned_candidate_is_not_promoted(self):
         findings = [
             Finding(scanner="heuristic_scan", category="heuristic_anomaly",
-                    severity=Severity.MEDIUM, detail="total=3.2"),
+                    severity=Severity.MEDIUM, detail="total=3.2",
+                    method_family="structural_heuristic"),
             Finding(scanner="learned_candidate", category="heuristic_anomaly",
-                    severity=Severity.MEDIUM, detail="promoted candidate id=1 hits=4"),
+                    severity=Severity.MEDIUM, detail="promoted candidate id=1 hits=4",
+                    method_family="structural_heuristic"),
         ]
         promoted = promote_findings(findings)
-        assert all(f.severity == Severity.HIGH for f in promoted)
+        assert all(f.severity == Severity.MEDIUM for f in promoted)
+
+    def test_heuristic_plus_catalog_still_promotes(self):
+        """Independent techniques agreeing is what promotion is for."""
+        findings = [
+            Finding(scanner="heuristic_scan", category="heuristic_anomaly",
+                    severity=Severity.MEDIUM, detail="total=3.2",
+                    method_family="structural_heuristic"),
+            Finding(scanner="injection_scan", category="heuristic_anomaly",
+                    severity=Severity.MEDIUM, detail="rule match",
+                    method_family="regex_catalog"),
+        ]
+        assert all(f.severity == Severity.HIGH for f in promote_findings(findings))
 
     def test_heuristic_alone_is_not_promoted(self):
         findings = [
             Finding(scanner="heuristic_scan", category="heuristic_anomaly",
-                    severity=Severity.MEDIUM, detail="total=3.2"),
+                    severity=Severity.MEDIUM, detail="total=3.2",
+                    method_family="structural_heuristic"),
         ]
         assert promote_findings(findings)[0].severity == Severity.MEDIUM

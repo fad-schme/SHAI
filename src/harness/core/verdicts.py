@@ -14,6 +14,11 @@ class Finding(BaseModel, frozen=True):
     category: str
     severity: Severity
     detail:   str | None = None   # short note — never the raw matched text
+    # Detection technique of the scanner that produced this finding. Stamped by
+    # run_scan, not by the scanner. Corroboration counts distinct families, so
+    # two catalog scanners agreeing are one method, not two — see ensemble.py
+    # and TurnSignals.compute_risk.
+    method_family: str = "unknown"
 
 
 class ScanVerdict(BaseModel, frozen=True):
