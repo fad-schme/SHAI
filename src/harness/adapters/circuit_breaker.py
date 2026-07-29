@@ -134,4 +134,4 @@ class CircuitBreaker:
         self._state            = CircuitState.CLOSED
         self._failure_count    = 0
         self._current_recovery = self._base_recovery
-        self._opened_open      = False
+        self._logged_open      = False

@@ -45,13 +45,4 @@ class IdentitySpoofScanner(InjectionScanner):
 
     name = "identity_spoof_scan"
     method_family = "regex_catalog"
-
-    def __init__(
-        self,
-        patterns_file: str | Path | None = None,
-        name: str = "identity_spoof_scan",
-    ) -> None:
-        super().__init__(
-            patterns_file=patterns_file or _DEFAULT_PATTERNS,
-            name=name,
-        )
+    default_patterns = _DEFAULT_PATTERNS

@@ -858,6 +858,10 @@ class FileScanner:
     """
 
     name = "file_scanner"
+    # Deterministic structural inspection of the container — a distinct
+    # technique from the content chain, so the two corroborate rather than
+    # counting as one method when they flag the same category.
+    method_family = "structural_file"
 
     def __init__(self, max_size_mb: float = 100.0) -> None:
         """max_size_mb: files larger than this are flagged."""
@@ -927,6 +931,10 @@ class FileContentScanner:
     """
 
     name = "file_content_scan"
+    # Composite: every finding is produced by a scanner in the chain, and is
+    # stamped below with that scanner's own family. This value is the Protocol
+    # fallback and should never reach a finding.
+    method_family = "unknown"
 
     def __init__(
         self,
@@ -971,6 +979,11 @@ class FileContentScanner:
                 # a failure here no longer costs the structural findings —
                 # those come from a different scanner.
                 text_result = await scanner.scan(payload, ctx)
+                # Carry the producing scanner's technique, not this composite's.
+                # run_scan only fills in families a scanner left unset, so a
+                # regex-catalog hit inside a document stays distinguishable from
+                # the structural pass and the two can corroborate each other.
+                family = getattr(scanner, "method_family", "unknown")
                 for f in text_result.findings:
                     # Prefix with the surface so the audit trail distinguishes
                     # document-body hits from EXIF/XMP hits without losing the
@@ -981,8 +994,9 @@ class FileContentScanner:
                             category=f"file.image_metadata.{f.category}",
                             severity=f.severity,
                             detail=f.detail,
+                            method_family=family,
                         ))
                     else:
-                        findings.append(f)
+                        findings.append(f.model_copy(update={"method_family": family}))
 
         return ScanResult(findings=findings)

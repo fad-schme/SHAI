@@ -105,6 +105,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are in it. A refusal's `deny_reason` names the threshold that fired and
   nothing else — the matched metadata is the payload being refused and is never
   echoed into the trail.
+- **Signed pattern rules crashed startup for two of the three catalogs.**
+  `patterns_db` routes `injection`, `jailbreak` and `identity_spoof` rules to
+  their matching scanners, but `JailbreakScanner` and `IdentitySpoofScanner`
+  each overrode `__init__` without forwarding `extra_rules` — so
+  `SHAI.from_yaml()` raised `TypeError` the moment either catalog held a row
+  and its scanner was declared in `harness.yaml`. An operator shipping a
+  jailbreak bundle got a startup crash whose only workarounds were removing the
+  scanner or emptying the catalog, so the feature was unreachable for two of
+  the three families it exists to serve. Both overrides are gone: a subclass
+  now declares `name` and `default_patterns` as class attributes and inherits
+  one constructor, leaving no parameter to forget forwarding. Each subclass
+  keeps its own catalog and name, and `name=` still overrides. One consequence
+  for anyone subclassing `InjectionScanner` directly — an instance built with
+  no `name=` argument now takes the subclass's `name` class attribute instead
+  of defaulting to `"injection_scan"`.
 
 ### Removed
 - **BREAKING**: `scan_tool_result_on` — gone from `ConnectorManifest`,
@@ -161,6 +176,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A total audit-sink outage fails source connection rather than proceeding.
   `AuditEmissionError` propagates out of the metadata scan, so `load_agent()`
   raises instead of connecting a source whose refusals could not be written.
+- Signed jailbreak and identity-spoof rules reach their scanners. Operators who
+  applied a bundle to either catalog were running without those rules entirely:
+  the harness could not start with them loaded, so the working configuration
+  was always the one where they were absent. Only the `injection` catalog ever
+  took effect.
 
 ## [0.4.1] — 2026-07-28
 

@@ -8,7 +8,9 @@ import pytest
 
 from harness.adapters.scanners.base import ScanResult
 from harness.adapters.scanners.heuristic_scan import HeuristicScanner
+from harness.adapters.scanners.identity_spoof_scan import IdentitySpoofScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner, compile_rules_from_dicts
+from harness.adapters.scanners.jailbreak_scan import JailbreakScanner
 from harness.boundaries.ensemble import promote_findings
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
@@ -331,16 +333,22 @@ def _write_db(tmp_path, *entries) -> str:
     return str(db)
 
 
-def _write_config(tmp_path, db_path: str | None, *, secret: str = "PATTERNS_TEST_KEY") -> Path:
-    """harness.yaml with scan_input on so the injection scanner is built."""
+def _write_config(
+    tmp_path,
+    db_path: str | None,
+    *,
+    secret: str = "PATTERNS_TEST_KEY",
+    scanners: tuple[str, ...] = ("injection_scan",),
+) -> Path:
+    """harness.yaml with scan_input on so the declared scanners are built."""
     cfg = tmp_path / "harness.yaml"
     body = (
         "version: 1\n"
         "scan_input:\n"
         "  enabled: true\n"
         "  scanners:\n"
-        "    - name: injection_scan\n"
-        "scan_output:\n  enabled: false\n"
+        + "".join(f"    - name: {s}\n" for s in scanners)
+        + "scan_output:\n  enabled: false\n"
         "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
@@ -445,3 +453,89 @@ class TestPatternsDBWiring:
         harness = await SHAI.from_yaml(_write_config(tmp_path, db))
         names = {r.name for r in _injection_catalog(harness)}
         assert "jb_rule" not in names
+
+
+# ── Signed pattern DB → the non-injection catalogs ───────────────────────
+#
+# _DB_CATALOG_FOR_SCANNER routes three catalogs, not one. The two beyond
+# `injection` land on InjectionScanner subclasses, and both subclasses used to
+# override __init__ without forwarding extra_rules — so _build_text_scanners
+# raised TypeError straight out of from_yaml the moment either catalog held a
+# row and its scanner was declared. The feature was unreachable for two of its
+# three families, and the comment above the routing table asserted the
+# opposite.
+
+_JB_TRIGGER    = "dbjailbreaktrigger"
+_SPOOF_TRIGGER = "dbspooftrigger"
+
+_ALL_THREE = ("injection_scan", "jailbreak_scan", "identity_spoof_scan")
+
+
+class TestPatternsDBSubclassScanners:
+
+    def test_db_catalog_scanners_accept_extra_rules(self):
+        """Structural guard: every name in the routing table takes the kwarg.
+
+        Referenced by the comment above _DB_CATALOG_FOR_SCANNER. Fails if a
+        future subclass reintroduces an __init__ that drops the parameter.
+        """
+        from harness.core.harness import _DB_CATALOG_FOR_SCANNER, _SCANNER_FACTORIES
+
+        for scanner_name in _DB_CATALOG_FOR_SCANNER:
+            scanner = _SCANNER_FACTORIES[scanner_name]({"extra_rules": []})
+            assert scanner.name == scanner_name
+
+    def test_subclasses_keep_their_own_catalogs(self):
+        """Removing the __init__ overrides must not collapse the catalogs.
+
+        default_patterns is now the only thing pointing a subclass at its own
+        YAML; losing it would silently fall back to injection_patterns.yaml and
+        the scanner would keep working while detecting the wrong family.
+        """
+        assert InjectionScanner()._path.name     == "injection_patterns.yaml"
+        assert JailbreakScanner()._path.name     == "jailbreak_patterns.yaml"
+        assert IdentitySpoofScanner()._path.name == "identity_spoof_patterns.yaml"
+
+    def test_subclass_names_default_and_override(self):
+        assert JailbreakScanner().name           == "jailbreak_scan"
+        assert IdentitySpoofScanner().name       == "identity_spoof_scan"
+        assert JailbreakScanner(name="custom_jb").name == "custom_jb"
+
+    async def test_from_yaml_survives_rules_in_every_catalog(self, tmp_path, monkeypatch):
+        """The crash itself: from_yaml raised TypeError before this fix."""
+        monkeypatch.setenv("PATTERNS_TEST_KEY", _SECRET.decode())
+        db = _write_db(
+            tmp_path,
+            _make_signed_entry("inj_rule",   f"(?i){_DB_TRIGGER}",    catalog="injection"),
+            _make_signed_entry("jb_rule",    f"(?i){_JB_TRIGGER}",    catalog="jailbreak"),
+            _make_signed_entry("spoof_rule", f"(?i){_SPOOF_TRIGGER}", catalog="identity_spoof"),
+        )
+        harness = await SHAI.from_yaml(
+            _write_config(tmp_path, db, scanners=_ALL_THREE)
+        )
+        assert set(_ALL_THREE) <= set(harness.scanners)
+
+    async def test_every_catalog_reaches_its_own_scanner(self, tmp_path, monkeypatch):
+        """Each signed rule must fire through the scanner its catalog routes to."""
+        monkeypatch.setenv("PATTERNS_TEST_KEY", _SECRET.decode())
+        db = _write_db(
+            tmp_path,
+            _make_signed_entry("inj_rule",   f"(?i){_DB_TRIGGER}",    catalog="injection"),
+            _make_signed_entry("jb_rule",    f"(?i){_JB_TRIGGER}",    catalog="jailbreak"),
+            _make_signed_entry("spoof_rule", f"(?i){_SPOOF_TRIGGER}", catalog="identity_spoof"),
+        )
+        harness = await SHAI.from_yaml(
+            _write_config(tmp_path, db, scanners=_ALL_THREE)
+        )
+
+        for trigger, scanner_name in (
+            (_DB_TRIGGER,    "injection_scan"),
+            (_JB_TRIGGER,    "jailbreak_scan"),
+            (_SPOOF_TRIGGER, "identity_spoof_scan"),
+        ):
+            verdict = await harness.scan_input(f"please {trigger} now", CTX)
+            scanners = {f.scanner for f in verdict.findings}
+            assert scanner_name in scanners, (
+                f"{trigger!r} did not reach {scanner_name} — "
+                f"fired on {sorted(scanners)} instead"
+            )

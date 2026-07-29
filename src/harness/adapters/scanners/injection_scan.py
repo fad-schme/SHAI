@@ -241,19 +241,28 @@ class InjectionScanner:
     Satisfies the Scanner Protocol structurally.
     Catalog compiled once at construction — never per call.
     Scoring functions only called when at least one regex matched.
+
+    Subclassing: a scanner that differs only in catalog and name sets the
+    `name` and `default_patterns` class attributes and inherits this
+    `__init__`. Do not override it to swap the catalog — an override has to
+    forward every constructor parameter by hand, and forgetting one is how
+    `extra_rules` from the signed pattern DB came to raise `TypeError` on the
+    two subclasses that had one.
     """
 
     name = "injection_scan"
     method_family = "regex_catalog"
+    default_patterns: Path = _DEFAULT_PATTERNS
 
     def __init__(
         self,
         patterns_file: str | Path | None = None,
         extra_rules: list[_CompiledRule] | None = None,
-        name: str = "injection_scan",
+        name: str | None = None,
     ) -> None:
-        self.name        = name
-        self._path       = Path(patterns_file) if patterns_file else _DEFAULT_PATTERNS
+        self.name        = name or type(self).name
+        self._path       = (Path(patterns_file) if patterns_file
+                            else type(self).default_patterns)
         self._catalog    = _compile_catalog_with_l10n(self._path)
         if extra_rules:
             self._catalog = self._catalog + extra_rules
