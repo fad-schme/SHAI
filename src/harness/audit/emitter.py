@@ -15,7 +15,7 @@ import contextlib
 import hashlib
 import hmac
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
 from harness.core.errors import AuditEmissionError
@@ -67,7 +67,7 @@ class AuditEmitter:
         self._sinks          = sinks
         self._signing_secret = signing_secret
         # Subscribers added by collect_events() — notified after all sinks
-        self._subscribers: list[list] = []
+        self._subscribers: list[list[AnyAuditEvent]] = []
 
     async def emit(self, event: AnyAuditEvent) -> None:
         """Truncate oversized fields, optionally sign, then fan-out concurrently."""
@@ -124,7 +124,7 @@ class AuditEmitter:
 
 
     @contextlib.contextmanager
-    def collect_events(self) -> AsyncIterator[list]:
+    def collect_events(self) -> Iterator[list[AnyAuditEvent]]:
         """Context manager that collects AuditEvents emitted during the block.
 
         Returns a list that is populated in-place as events are emitted.
@@ -132,7 +132,7 @@ class AuditEmitter:
 
         Usage::
 
-            async with harness.collect_events() as events:
+            with harness.collect_events() as events:
                 result = await app.ainvoke(...)
             # events is now a list[AuditEvent]
             for ev in events:
@@ -141,7 +141,7 @@ class AuditEmitter:
         Multiple concurrent collect_events() calls are safe — each gets its
         own independent list. Does not affect configured sinks (file, stdout).
         """
-        bucket: list = []
+        bucket: list[AnyAuditEvent] = []
         self._subscribers.append(bucket)
         try:
             yield bucket

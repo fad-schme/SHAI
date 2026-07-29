@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from harness.adapters.audit_sinks.stdout import StdoutSink
 from harness.adapters.scanners.rate_limiter import RateLimiter
@@ -35,6 +35,11 @@ from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import Tool
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from harness.core.events import AnyAuditEvent
 
 log = logging.getLogger(__name__)
 
@@ -989,7 +994,7 @@ class SHAI:
             result["rate_limiter"] = self._rate_limiter
         return result
 
-    def collect_events(self):
+    def collect_events(self) -> AbstractContextManager[list[AnyAuditEvent]]:
         """Context manager that collects AuditEvents emitted during the block.
 
         Events are appended to the returned list in-place. Complete when the
