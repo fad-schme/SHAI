@@ -91,8 +91,8 @@ def test_expired_token_raises():
     import hashlib
     import hmac as _hmac
 
-    from harness.connectivity.token import _payload
-    sig = _hmac.new(SECRET, _payload(expired), hashlib.sha256).hexdigest()
+    from harness.connectivity.token import _canonical, _claims
+    sig = _hmac.new(SECRET, _canonical(_claims(expired)), hashlib.sha256).hexdigest()
     expired = dataclasses.replace(expired, signature=sig)
     with pytest.raises(TokenError, match="expired"):
         verify_token(encode_token(expired), SECRET)

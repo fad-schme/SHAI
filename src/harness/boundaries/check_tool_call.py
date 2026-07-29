@@ -78,14 +78,14 @@ async def run(
         try:
             effective: AgentConfig | SubAgentConfig = agent_config.get_sub_agent(ctx.sub_agent_id)
         except Exception as e:
-            return await _deny(str(e), name, None, ctx, emitter, start, tenant_id,
+            return await emit_deny(str(e), name, None, ctx, emitter, start, tenant_id,
                                audit_tags=agent_config.audit_tags)
     else:
         effective = agent_config
 
     # ── Layer 1: allowed_tool_names hard gate ─────────────────────────────
     if name not in effective.allowed_tool_names:
-        return await _deny(
+        return await emit_deny(
             f"tool '{name}' not in agent allowed_tool_names",
             name, None, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -94,7 +94,7 @@ async def run(
     # ── Tool lookup (from pre-resolved dict — no registry call) ──────────
     tool = tools.get(name)
     if tool is None:
-        return await _deny(
+        return await emit_deny(
             f"tool '{name}' not registered",
             name, None, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -104,21 +104,21 @@ async def run(
     try:
         check_argument_rules(tool, args, ctx)
     except ArgumentViolationError as e:
-        return await _deny(str(e), name, tool, ctx, emitter, start, tenant_id,
+        return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
                            audit_tags=agent_config.audit_tags)
 
     # ── Layer 3: irreversibility gate ─────────────────────────────────────
     try:
         check_irreversibility(tool, ctx)
     except IrreversibleActionError as e:
-        return await _deny(str(e), name, tool, ctx, emitter, start, tenant_id,
+        return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
                            audit_tags=agent_config.audit_tags)
 
     # ── Layer 4: allowed_tags subagent capability gate ────────────────────
     if ctx.allowed_tags is not None:
         extra_tags = set(tool.tags) - set(ctx.allowed_tags)
         if extra_tags:
-            return await _deny(
+            return await emit_deny(
                 f"tool '{name}' requires tags {sorted(extra_tags)} "
                 f"not in subagent capability set",
                 name, tool, ctx, emitter, start, tenant_id,
@@ -138,14 +138,14 @@ async def run(
     except PolicyEvaluationError as e:
         log.error("policy evaluation error",
                   extra={"tool": name, "error": str(e), **ctx.to_log_fields()})
-        return await _deny(
+        return await emit_deny(
             f"policy evaluation failed: {e}",
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
 
     if policy_decision.action == "deny":
-        return await _deny(
+        return await emit_deny(
             policy_decision.reason or f"denied by rule '{policy_decision.rule_id}'",
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -164,7 +164,7 @@ async def run(
     correlation = _check_signal_correlation(tool, turn_signals)
     if isinstance(correlation, GateDecision):
         # Pattern A denial — emit and return
-        return await _deny(
+        return await emit_deny(
             correlation.deny_reason or "signal correlation denial",
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -190,7 +190,7 @@ async def run(
                 continue
             blocking = [f for f in result.findings if f.severity >= Severity.HIGH]
             if blocking:
-                return await _deny(
+                return await emit_deny(
                     f"arg scan blocked: {blocking[0].category}",
                     name, tool, ctx, emitter, start, tenant_id,
                     audit_tags=agent_config.audit_tags,
@@ -215,7 +215,7 @@ async def run(
     )
 
 
-async def _deny(
+async def emit_deny(
     reason: str,
     tool_name: str,
     tool: Tool | None,
@@ -226,6 +226,12 @@ async def _deny(
     *,
     audit_tags: dict[str, str] | None = None,
 ) -> GateDecision:
+    """Emit the gate's deny event and return the decision.
+
+    The one place a tool_call_gate deny is written. The facade's pre-gate
+    refusals (rate limit, session budget, unregistered agent) call it too, so
+    every deny at this boundary produces the same event shape.
+    """
     event = AuditEvent.build(
         boundary=BoundaryName.TOOL_CALL_GATE,
         decision=Decision.DENY,

@@ -83,6 +83,15 @@ def _fingerprint(tool_name: str, args: dict[str, Any]) -> frozenset:
 
 
 def _jaccard(a: frozenset, b: frozenset) -> float:
+    """Similarity of two call fingerprints.
+
+    Two empty sets score 1.0 here, unlike the identically-named helper in
+    session_accumulator, which scores 0.0. Deliberate: a fingerprint always
+    carries at least `__tool__=<name>`, so empty-vs-empty means two
+    argument-less calls to the same tool — a loop. In the accumulator the sets
+    are text bigrams, where empty-vs-empty means nothing was said and no
+    similarity should be claimed.
+    """
     if not a and not b:
         return 1.0
     intersection = len(a & b)

@@ -134,7 +134,6 @@ _PATTERNS: list[tuple[str, Severity, re.Pattern]] = [
 
 # Categories that need a post-regex validator to fire. The regex is a cheap
 # candidate filter; the validator is the precision gate.
-_CC_RE  = re.compile(r"\d")
 _SSN_KEYWORD_RE = re.compile(r"(?i)\b(ssn|social\s+security)\b")
 
 

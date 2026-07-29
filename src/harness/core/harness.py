@@ -20,7 +20,8 @@ from harness.adapters.secrets.env import EnvVarProvider
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.audit.emitter import AuditEmitter
-from harness.boundaries._scan import ScanState, run_file_scan, run_scan, run_tool_result_scan
+from harness.boundaries._scan import ScanState, run_scan, run_tool_result_scan
+from harness.boundaries.check_tool_call import emit_deny as emit_gate_deny
 from harness.boundaries.check_tool_call import run as run_gate
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
@@ -28,6 +29,7 @@ from harness.config.loader import load_yaml
 from harness.config.schema import HarnessConfig
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
+from harness.core.events import now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.types import BoundaryName, Decision, ScanStatus
 from harness.core.verdicts import GateDecision, ScanVerdict
@@ -134,16 +136,15 @@ class SHAI:
           Resolves ${ENV_VAR} then secret:// URIs using EnvVarProvider.
           All secret:// references must be present as environment variables.
         """
-        # First pass: resolve ${ENV_VAR} only (no provider yet)
-        config_pre = load_yaml(path)
-
         # Always use EnvVarProvider for secret:// resolution.
         # Enterprise providers can be swapped by subclassing or patching before
         # calling from_yaml() — no config field needed since there is only one
         # implementation in core.
         provider = EnvVarProvider()
 
-        # Second pass: resolve secret:// URIs with the provider
+        # The loader resolves ${ENV_VAR} and every secret:// URI in one pass —
+        # it recurses the whole parsed tree, so no field reaches the config
+        # models still holding a URI.
         config = load_yaml(path, provider=provider)
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
@@ -155,12 +156,7 @@ class SHAI:
             from harness.adapters.scanners.injection_scan import compile_rules_from_dicts
             from harness.patterns.store import load_verified_rules
 
-            raw_db_secret = config.patterns_db.secret
-            if raw_db_secret.startswith("secret://"):
-                raw_db_secret = provider.resolve(
-                    raw_db_secret[len("secret://"):]
-                ).value
-            db_secret = raw_db_secret.encode()
+            db_secret = config.patterns_db.secret.encode()
 
             for scanner_name, catalog in _DB_CATALOG_FOR_SCANNER.items():
                 raw_rules = load_verified_rules(
@@ -200,21 +196,13 @@ class SHAI:
         # Connectivity: resolve token secret if configured
         connectivity_secret: bytes | None = None
         if config.connectivity.enabled:
-            raw = config.connectivity.token_secret
-            if raw.startswith("secret://"):
-                raw = provider.resolve(raw[len("secret://"):]).value
-            connectivity_secret = raw.encode()
+            connectivity_secret = config.connectivity.token_secret.encode()
             log.info("connectivity layer enabled — dispatch tokens will be issued")
 
         # R3: resolve signing key if configured
         signing_secret: bytes | None = None
         if config.audit_signing.enabled:
-            raw_secret = config.audit_signing.secret
-            if raw_secret.startswith("secret://"):
-                raw_secret = provider.resolve(
-                    raw_secret[len("secret://"):]
-                ).value
-            signing_secret = raw_secret.encode()
+            signing_secret = config.audit_signing.secret.encode()
             log.info("audit event signing enabled")
 
         emitter = AuditEmitter(sinks, signing_secret=signing_secret)
@@ -563,22 +551,7 @@ class SHAI:
         if self._rate_limiter is not None:
             allowed, reason = self._rate_limiter.check(ctx.agent_id, name)
             if not allowed:
-                from harness.core.events import AuditEvent
-
-                event = AuditEvent.build(
-                    boundary=BoundaryName.TOOL_CALL_GATE,
-                    decision=Decision.DENY,
-                    ctx=ctx,
-                    tenant_id=self._tenant_id,
-                    duration_ms=0,
-                    tool_name=name,
-                    deny_reason=reason,
-                    audit_tags=self._audit_tags_for(ctx),
-                )
-                await self._emitter.emit(event)
-                if ctx.turn_signals is not None:
-                    ctx.turn_signals.record_gate(False, name)
-                return GateDecision(allowed=False, deny_reason=reason)
+                return await self._deny_pre_gate(reason, name, ctx)
 
         # R2: session execution budget check
         limits = self._agent_limits.get(ctx.agent_id)
@@ -596,43 +569,18 @@ class SHAI:
                 prompt_id=prompt_id,
             )
             if not allowed:
-                from harness.core.events import AuditEvent
-
-                event = AuditEvent.build(
-                    boundary=BoundaryName.TOOL_CALL_GATE,
-                    decision=Decision.DENY,
-                    ctx=ctx,
-                    tenant_id=self._tenant_id,
-                    duration_ms=0,
-                    tool_name=name,
-                    deny_reason=reason,
-                    audit_tags=self._audit_tags_for(ctx),
-                )
-                await self._emitter.emit(event)
-                if ctx.turn_signals is not None:
-                    ctx.turn_signals.record_gate(False, name)
-                return GateDecision(allowed=False, deny_reason=reason)
+                return await self._deny_pre_gate(reason, name, ctx)
 
         # Pre-gate: agent must be registered — deny with audit event on miss
         try:
             agent_config = self._agent_registry.get(ctx.agent_id)
-        except Exception as e:
-            from harness.core.events import AuditEvent
-            reason = f"agent '{ctx.agent_id}' is not registered in this harness"
-            event = AuditEvent.build(
-                boundary=BoundaryName.TOOL_CALL_GATE,
-                decision=Decision.DENY,
-                ctx=ctx,
-                tenant_id=self._tenant_id,
-                duration_ms=0,
-                tool_name=name,
-                deny_reason=reason,
-                audit_tags={},
+        except Exception:
+            # audit_tags come off the agent config, which is exactly what is
+            # missing here — the event carries none rather than guessing.
+            return await self._deny_pre_gate(
+                f"agent '{ctx.agent_id}' is not registered in this harness",
+                name, ctx, audit_tags={},
             )
-            await self._emitter.emit(event)
-            if ctx.turn_signals is not None:
-                ctx.turn_signals.record_gate(False, name)
-            return GateDecision(allowed=False, deny_reason=reason)
 
         # Composite tool identity: (source_name, Tool) tuple
         agent_tool_map = self._agent_tools.get(ctx.agent_id, {})
@@ -726,8 +674,9 @@ class SHAI:
 
         Returns ScanVerdict identical in shape to scan_input/scan_output.
         """
-        return await run_file_scan(
+        return await run_scan(
             str(path), ctx,
+            boundary=BoundaryName.FILE_SCAN,
             # scan_file has no per-scanner overrides — FileScanConfig rejects
             # them, so the boundary action applies to the whole content chain.
             scanners=self._file_scanners,
@@ -938,6 +887,32 @@ class SHAI:
         return await self._source_registry.get(name)
 
     # ── Internal helpers ──────────────────────────────────────────────────
+
+    async def _deny_pre_gate(
+        self,
+        reason: str,
+        tool_name: str,
+        ctx: AgentContext,
+        *,
+        audit_tags: dict[str, str] | None = None,
+    ) -> GateDecision:
+        """Refuse a tool call before the gate runs — rate limit, session budget,
+        unregistered agent.
+
+        Routes through the gate's own deny path so a pre-gate refusal is
+        indistinguishable in the audit trail from one the seven layers produced:
+        same boundary, same decision, same fields. The turn-signal write happens
+        here because these refusals never reach the layer that records it.
+        """
+        gate = await emit_gate_deny(
+            reason, tool_name, None, ctx, self._emitter,
+            now_ms(), self._tenant_id,
+            audit_tags=self._audit_tags_for(ctx) if audit_tags is None else audit_tags,
+        )
+        if ctx.turn_signals is not None:
+            ctx.turn_signals.record_gate(False, tool_name)
+        return gate
+
     def _source_name_for_tool(self, tool_name: str, tool: Tool) -> str:
         """Return the source name for a Tool object.
 
@@ -1063,16 +1038,6 @@ def _extract_density(verdict) -> float:
     return 0.0
 
 
-def _make_pii_scanner(cfg: dict) -> RegexPIIScanner:
-    """Build a RegexPIIScanner from an AdapterRef config dict."""
-    return RegexPIIScanner(**cfg)
-
-
-def _make_injection_scanner(cfg: dict) -> InjectionScanner:
-    """Build an InjectionScanner from an AdapterRef config dict."""
-    return InjectionScanner(**cfg)
-
-
 def _make_injection_doc_scanner() -> InjectionScanner:
     """Build an InjectionScanner using patterns_for_doc.yaml.
 
@@ -1103,8 +1068,8 @@ _DB_CATALOG_FOR_SCANNER: dict[str, str] = {
 
 # Named registry — explicit, no magic strings
 _SCANNER_FACTORIES: dict[str, Any] = {
-    "regex_pii":           _make_pii_scanner,
-    "injection_scan":      _make_injection_scanner,
+    "regex_pii":           lambda cfg: RegexPIIScanner(**cfg),
+    "injection_scan":      lambda cfg: InjectionScanner(**cfg),
     "heuristic_scan":      lambda cfg: HeuristicScanner(**cfg),
     "mcp_metadata_scan":   lambda cfg: MCPMetadataScanner(**cfg),
     "jailbreak_scan":      lambda cfg: __import__(

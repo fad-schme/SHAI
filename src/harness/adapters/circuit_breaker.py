@@ -38,19 +38,11 @@ class CircuitState(StrEnum):
 class CircuitBreaker:
     """Per-adapter circuit breaker.
 
-    Usage in _scan.py::
-
-        breaker = CircuitBreaker(name="injection_scan")
-
-        if breaker.is_open:
-            # skip this scanner entirely
-            ...
-        else:
-            try:
-                result = await scanner.scan(text, ctx)
-                breaker.record_success()
-            except Exception:
-                breaker.record_failure()
+    Used by run_scan, which runs scanners concurrently under asyncio.gather:
+    `is_open` is checked before a scanner is scheduled, `record_success()` runs
+    inside the guarded call, and `record_failure()` runs in the result loop
+    where the exception surfaces. One breaker per scanner instance, held on
+    ScanState.
     """
 
     def __init__(
@@ -83,11 +75,6 @@ class CircuitBreaker:
     def is_open(self) -> bool:
         """True when the adapter should be skipped (OPEN state only)."""
         return self.state == CircuitState.OPEN
-
-    @property
-    def is_half_open(self) -> bool:
-        """True when exactly one probe call is allowed."""
-        return self.state == CircuitState.HALF_OPEN
 
     def record_success(self) -> None:
         """Called after a successful adapter call."""

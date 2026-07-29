@@ -111,6 +111,13 @@ def _bigrams(text: str) -> frozenset:
 
 
 def _jaccard(a: frozenset, b: frozenset) -> float:
+    """Similarity of two turns' bigram sets.
+
+    Two empty sets score 0.0, unlike the identically-named helper in
+    session_budget, which scores 1.0. Deliberate: empty here means a turn
+    produced no bigrams, and claiming two such turns are a reframe of each
+    other would manufacture escalation evidence out of silence.
+    """
     u = len(a | b)
     return len(a & b) / u if u else 0.0
 
