@@ -5,16 +5,11 @@ Every field maps to a consumer in the codebase.
 """
 from __future__ import annotations
 
-from harness.connectivity.config import ConnectivityConfig
-
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from harness.agents.agent_config import RuleConfig
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from harness.core.errors import ConfigError
+from harness.connectivity.config import ConnectivityConfig
 from harness.core.types import OnError, ScanAction, Severity, Transport
 
 
@@ -111,7 +106,7 @@ class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
     scanners: list[AdapterRef] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _enabled_needs_scanners(self) -> "BoundaryConfig":
+    def _enabled_needs_scanners(self) -> BoundaryConfig:
         if self.enabled and not self.scanners:
             raise ValueError("scanners must be non-empty when boundary is enabled")
         return self
@@ -240,7 +235,7 @@ class AuditSigningConfig(BaseModel, frozen=True, extra="forbid"):
     secret:  str  = ""    # secret://ENV_VAR resolved at startup
 
     @model_validator(mode="after")
-    def _enabled_needs_secret(self) -> "AuditSigningConfig":
+    def _enabled_needs_secret(self) -> AuditSigningConfig:
         if self.enabled and not self.secret:
             raise ValueError("audit.signing.secret is required when signing is enabled")
         return self
@@ -264,7 +259,7 @@ class PatternsDBConfig(BaseModel, frozen=True, extra="forbid"):
     secret:  str  = ""    # secret://ENV_VAR resolved at startup
 
     @model_validator(mode="after")
-    def _enabled_needs_secret(self) -> "PatternsDBConfig":
+    def _enabled_needs_secret(self) -> PatternsDBConfig:
         if self.enabled and not self.secret:
             raise ValueError("patterns_db.secret is required when patterns_db is enabled")
         return self
@@ -331,7 +326,7 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     #                 optional enrichment sources where degraded operation is acceptable.
 
     @model_validator(mode="after")
-    def _transport_constraints(self) -> "SourceConfig":
+    def _transport_constraints(self) -> SourceConfig:
         # url is not required when a connector manifest provides it
         if self.transport == Transport.MCP and not self.url and not self.connector:
             raise ValueError(

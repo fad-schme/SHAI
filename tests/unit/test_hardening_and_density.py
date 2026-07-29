@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import pytest
 
-from harness.core.context import AgentContext
+from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.core.types import Severity
-from harness.core.verdicts import Finding
 from harness.patterns.fingerprint import extract_fingerprint, fingerprint_to_json
 from harness.patterns.store import (
-    init_db, list_candidates, upsert_candidate, set_candidate_status,
+    list_candidates,
+    set_candidate_status,
+    upsert_candidate,
 )
-from harness.boundaries.session_accumulator import ThreatAccumulator
-
 
 # ── Item 3: Candidates table hardening ────────────────────────────────────
 
@@ -164,8 +163,8 @@ class TestExtractDensity:
 
     def test_extracts_from_heuristic_detail(self):
         from harness.core.harness import _extract_density
-        from harness.core.verdicts import ScanVerdict, Finding
         from harness.core.types import ScanStatus
+        from harness.core.verdicts import Finding, ScanVerdict
 
         verdict = ScanVerdict(
             status=ScanStatus.ALLOW,
@@ -180,16 +179,16 @@ class TestExtractDensity:
 
     def test_returns_zero_when_no_heuristic(self):
         from harness.core.harness import _extract_density
-        from harness.core.verdicts import ScanVerdict
         from harness.core.types import ScanStatus
+        from harness.core.verdicts import ScanVerdict
 
         verdict = ScanVerdict(status=ScanStatus.ALLOW)
         assert _extract_density(verdict) == 0.0
 
     def test_returns_zero_when_no_density_in_detail(self):
         from harness.core.harness import _extract_density
-        from harness.core.verdicts import ScanVerdict, Finding
         from harness.core.types import ScanStatus
+        from harness.core.verdicts import Finding, ScanVerdict
 
         verdict = ScanVerdict(
             status=ScanStatus.ALLOW,

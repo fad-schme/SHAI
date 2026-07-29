@@ -36,7 +36,7 @@ class AgentContext(BaseModel, frozen=True):
     # Per-turn signal bus. Mutable — stored as PrivateAttr because Pydantic
     # frozen models block public-field writes. Attached by SHAI.scan_input
     # at turn start, cleared by SHAI.scan_output at turn end.
-    _turn_signals: "TurnSignals | None" = PrivateAttr(default=None)
+    _turn_signals: TurnSignals | None = PrivateAttr(default=None)
 
     @field_validator("agent_id")
     @classmethod
@@ -81,11 +81,11 @@ class AgentContext(BaseModel, frozen=True):
     # ── TurnSignals accessors ──────────────────────────────────────────
 
     @property
-    def turn_signals(self) -> "TurnSignals | None":
+    def turn_signals(self) -> TurnSignals | None:
         """Current turn's signal bus, or None if not in a turn."""
         return self._turn_signals
 
-    def _attach_signals(self, signals: "TurnSignals") -> None:
+    def _attach_signals(self, signals: TurnSignals) -> None:
         """Attach a fresh TurnSignals. Called by SHAI.scan_input at turn start."""
         self._turn_signals = signals
 

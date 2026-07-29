@@ -202,9 +202,7 @@ def _is_typoglycemia_variant(word: str, target: str) -> bool:
         return False
     # Prefix-relationship rejection: one is the other + trailing chars →
     # morphological form, not typoglycemia.
-    if word.startswith(target) or target.startswith(word):
-        return False
-    return True
+    return not (word.startswith(target) or target.startswith(word))
 
 
 _ALPHA_TOKEN_RE = re.compile(r"[A-Za-z]{4,}")
