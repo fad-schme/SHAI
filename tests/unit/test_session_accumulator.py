@@ -307,3 +307,50 @@ async def test_audit_event_carries_escalation_signals(tmp_path: Path):
 
     event = rec.events[0]
     assert "session_escalation" in event.extra.get("signals", [])
+
+
+# ── Shutdown ──────────────────────────────────────────────────────────────
+
+async def test_harness_close_releases_the_session_db(tmp_path: Path):
+    """SHAI.close() must close the accumulator's connection, not leak it."""
+    h, ctx = await _setup_harness(tmp_path)
+    acc = h._threat_accumulator
+
+    await _feed(acc, "conv-close", [("something", "warn")])
+    assert acc._db is not None, "connection should be open after a record()"
+
+    await h.close()
+    assert acc._db is None, "SHAI.close() left the session DB connection open"
+
+
+async def test_harness_close_is_idempotent(tmp_path: Path):
+    h, _ = await _setup_harness(tmp_path)
+    await h._threat_accumulator.check("conv-idem")   # force the connection open
+
+    await h.close()
+    await h.close()   # must not raise
+
+
+async def test_accumulator_reconnects_after_close(tmp_path: Path):
+    """close() clears the handle, so later use reopens rather than erroring."""
+    h, _ = await _setup_harness(tmp_path)
+    acc = h._threat_accumulator
+
+    await _feed(acc, "conv-reopen", [("bad", "block")] * 4)
+    await h.close()
+
+    escalated, _ = await acc.check("conv-reopen")
+    assert escalated, "state should survive a close/reopen cycle"
+    assert acc._db is not None
+    await acc.close()
+
+
+async def test_close_survives_a_failing_accumulator(tmp_path: Path):
+    """Shutdown continues when the session DB misbehaves on the way out."""
+    h, _ = await _setup_harness(tmp_path)
+
+    class _Boom:
+        async def close(self): raise RuntimeError("db is on fire")
+
+    h._threat_accumulator = _Boom()
+    await h.close()   # must not raise

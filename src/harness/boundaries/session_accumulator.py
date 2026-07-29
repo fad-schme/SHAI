@@ -167,6 +167,12 @@ class ThreatAccumulator:
         return self._db
 
     async def close(self) -> None:
+        """Close the shared connection. Idempotent — called from SHAI.close().
+
+        Clearing the handle means a later check()/record() reopens rather than
+        using a closed connection, so close-then-reuse degrades to a reconnect
+        instead of an error.
+        """
         if self._db is not None:
             await self._db.close()
             self._db = None

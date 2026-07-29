@@ -906,9 +906,23 @@ class SHAI:
         return self._emitter.collect_events()
 
     async def close(self) -> None:
-        """Flush and close all audit sinks and sources. Call at process shutdown."""
+        """Release every resource the harness holds. Call at process shutdown.
+
+        Best-effort and idempotent: one component failing to close must not
+        strand the others. Sources first, then the audit trail, then the
+        session store — an event emitted during source teardown still has
+        somewhere to land.
+        """
         await self._source_registry.close()
         await self._emitter.close()
+        if self._threat_accumulator is not None:
+            try:
+                await self._threat_accumulator.close()
+            except Exception as e:
+                # Broad catch is deliberate: shutdown continues regardless of
+                # what the session DB does on the way out.
+                log.warning("threat accumulator close failed",
+                            extra={"error": str(e), "op": "close"})
 
     async def get_source(self, name: str) -> ToolSource:
         """Return a registered source by name.
