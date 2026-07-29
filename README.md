@@ -73,7 +73,7 @@ The quickstart exercises every boundary with real scanners and real policy — n
 Wire it into your agent:
 
 ```python
-from shai import SHAI, Tool
+from harness import SHAI, Tool
 
 harness = await SHAI.from_yaml("config/harness.yaml")
 await harness.register_tools([Tool("search_docs", tags=["read"])])

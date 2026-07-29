@@ -1,4 +1,4 @@
-"""Scanner Protocol and ScanResult.
+"""Scanner Protocol, ScanResult, and ConfiguredScanner.
 
 ScanResult is internal — boundaries aggregate Scanner results into ScanVerdict.
 """
@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
+    from harness.core.types import ScanAction
     from harness.core.verdicts import Finding
 
 
@@ -41,3 +42,16 @@ class Scanner(Protocol):
         is what audit consumers act on.
         """
         ...
+
+
+@dataclass(frozen=True)
+class ConfiguredScanner:
+    """A scanner bound to the per-scanner overrides declared alongside it.
+
+    Pairing happens where the AdapterRef is still in hand, so a scanner that
+    fails to resolve or an appended backstop can never shift another scanner's
+    action onto it. action=None means "use the boundary action".
+    """
+    scanner:     Scanner
+    action:      ScanAction | None = None
+    redact_with: str | None = None

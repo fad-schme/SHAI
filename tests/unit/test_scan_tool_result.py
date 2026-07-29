@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.adapters.scanners.base import ConfiguredScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_tool_result_scan
@@ -41,7 +42,7 @@ def scanner():
 async def test_disabled_returns_allow(emitter, sink, state):
     verdict = await run_tool_result_scan(
         "clean tool result", CTX,
-        scanners=[], scanner_actions=[], scanner_redact_withs=[], boundary_action=ScanAction.BLOCK,
+        scanners=[], boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="test", enabled=False, block_at=Severity.HIGH,
         state=state,
@@ -57,7 +58,7 @@ async def test_disabled_returns_allow(emitter, sink, state):
 async def test_clean_result_allowed(emitter, sink, scanner, state):
     verdict = await run_tool_result_scan(
         "Here are the search results for your query about onboarding.", CTX,
-        scanners=[scanner], scanner_actions=[], scanner_redact_withs=[], boundary_action=ScanAction.BLOCK,
+        scanners=[ConfiguredScanner(scanner)], boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="test", enabled=True, block_at=Severity.HIGH,
         state=state,
@@ -77,7 +78,7 @@ async def test_injection_in_result_blocked(emitter, sink, scanner, state):
     )
     verdict = await run_tool_result_scan(
         injected, CTX,
-        scanners=[scanner], scanner_actions=[], scanner_redact_withs=[], boundary_action=ScanAction.BLOCK,
+        scanners=[ConfiguredScanner(scanner)], boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="test", enabled=True, block_at=Severity.HIGH,
         state=state,
@@ -92,7 +93,7 @@ async def test_injection_in_result_blocked(emitter, sink, scanner, state):
 async def test_exactly_one_event(emitter, sink, scanner, state):
     await run_tool_result_scan(
         "clean result", CTX,
-        scanners=[scanner], scanner_actions=[], scanner_redact_withs=[], boundary_action=ScanAction.BLOCK,
+        scanners=[ConfiguredScanner(scanner)], boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="test", enabled=True, block_at=Severity.HIGH,
         state=state,

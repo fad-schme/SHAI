@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from harness.adapters.audit_sinks.stdout import StdoutSink
+from harness.adapters.scanners.base import ConfiguredScanner
 from harness.adapters.scanners.heuristic_scan import HeuristicScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
@@ -28,7 +29,7 @@ from harness.config.schema import HarnessConfig
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
-from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
+from harness.core.types import BoundaryName, Decision, ScanStatus
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
@@ -59,38 +60,24 @@ class SHAI:
 
     def __init__(
         self,
+        *,
         config: HarnessConfig,
         agent_registry: AgentRegistry,
         tool_registry: ToolRegistry,
         emitter: AuditEmitter,
-        input_scanners: list,
-        output_scanners: list,
+        input_scanners: list[ConfiguredScanner],
+        output_scanners: list[ConfiguredScanner],
         arg_scanners: list,
+        file_scanners: list[ConfiguredScanner],
+        tool_result_scanners: list[ConfiguredScanner],
         policy: RuleBasedPolicy,
-        scan_input_enabled: bool,
-        scan_output_enabled: bool,
-        scan_file_enabled: bool,
-        block_at: Severity,
-        file_block_at: Severity,
-        file_scanners: list,
-        file_max_size_mb: float,
-        scan_args_for_tags: frozenset[str],
         rate_limiter: RateLimiter | None,
-        # scan action configs
-        scan_input_action: ScanAction,
-        scan_input_scanner_actions: list[ScanAction | None],
-        scan_input_redact_withs: list[str | None],
-        scan_output_action: ScanAction,
-        scan_output_scanner_actions: list[ScanAction | None],
-        scan_output_redact_withs: list[str | None],
-        scan_file_action: ScanAction,
-        scan_tool_result_action: ScanAction,
-        tool_result_scanners: list,
-        scan_tool_result_enabled: bool,
-        tool_result_block_at: Severity,
         source_registry: SourceRegistry,
         connectivity_secret: bytes | None = None,
     ) -> None:
+        # Only built objects are passed in. Everything a boundary reads from
+        # harness.yaml is read off self._config at the call site — config is
+        # the single source of truth for enabled / block_at / action.
         self._config              = config
         self._tenant_id           = config.tenant_id
         self._agent_registry      = agent_registry
@@ -99,23 +86,9 @@ class SHAI:
         self._input_scanners      = input_scanners
         self._output_scanners     = output_scanners
         self._arg_scanners        = arg_scanners
-        self._policy              = policy
-        self._scan_input_enabled  = scan_input_enabled
-        self._scan_output_enabled = scan_output_enabled
-        self._scan_file_enabled   = scan_file_enabled
-        self._block_at            = block_at
-        self._file_block_at       = file_block_at
         self._file_scanners       = file_scanners
-        self._file_max_size_mb    = file_max_size_mb
-        self._scan_args_for_tags            = scan_args_for_tags
-        self._scan_input_action             = scan_input_action
-        self._scan_input_scanner_actions    = scan_input_scanner_actions
-        self._scan_input_redact_withs       = scan_input_redact_withs
-        self._scan_output_action            = scan_output_action
-        self._scan_output_scanner_actions   = scan_output_scanner_actions
-        self._scan_output_redact_withs      = scan_output_redact_withs
-        self._scan_file_action              = scan_file_action
-        self._scan_tool_result_action       = scan_tool_result_action
+        self._policy              = policy
+        self._scan_args_for_tags        = frozenset(config.check_tool_call.scan_args_for_tags)
         self._rate_limiter              = rate_limiter
         self._session_budget            = SessionBudget()
         self._threat_accumulator: ThreatAccumulator | None = (
@@ -133,11 +106,6 @@ class SHAI:
         # Per-agent ExecutionLimits — populated at load_agent() time
         self._agent_limits: dict[str, ExecutionLimits] = {}
         self._tool_result_scanners      = tool_result_scanners
-        self._scan_tool_result_enabled  = scan_tool_result_enabled
-        self._tool_result_block_at      = tool_result_block_at
-        self._mcp_metadata_scanners:    list = []
-        self._scan_mcp_metadata_enabled = True
-        self._mcp_metadata_block_at     = Severity.MEDIUM
         self._source_registry           = source_registry
         # Per-agent resolved tool sets — populated at load_agent() time
         # key: agent_id, value: {tool_name: Tool} for that agent
@@ -212,7 +180,12 @@ class SHAI:
 
         input_scanners  = _build_text_scanners(config.scan_input.scanners, extra_rules=db_extra_rules)
         output_scanners = _build_text_scanners(config.scan_output.scanners, extra_rules=db_extra_rules)
-        arg_scanners    = _build_text_scanners(config.check_tool_call.arg_scanners, extra_rules=db_extra_rules)
+        # The gate runs arg scanners directly — no boundary action model, so it
+        # takes the scanner instances rather than the configured pairs.
+        arg_scanners    = [
+            c.scanner for c in
+            _build_text_scanners(config.check_tool_call.arg_scanners, extra_rules=db_extra_rules)
+        ]
         file_scanners   = _build_file_scanners(
             config.scan_file.scanners,
             max_size_mb=config.scan_file.max_size_mb,
@@ -246,13 +219,19 @@ class SHAI:
 
         emitter = AuditEmitter(sinks, signing_secret=signing_secret)
 
-        # R2: tool result scanner — uses bundled patterns_for_doc.yaml
+        # R2: tool result scanner — uses bundled patterns_for_doc.yaml.
+        # Not operator-declared, so it carries no per-scanner override and the
+        # boundary action governs it.
         tool_result_scanners = (
-            [_make_injection_doc_scanner()]
+            [ConfiguredScanner(_make_injection_doc_scanner())]
             if config.scan_tool_result.enabled else []
         )
 
-        mcp_metadata_scanners = _build_text_scanners(config.scan_mcp_metadata.scanners)
+        # MCP metadata scanners run inside MCPSource via scan_tool(), not
+        # through run_scan — instances only.
+        mcp_metadata_scanners = [
+            c.scanner for c in _build_text_scanners(config.scan_mcp_metadata.scanners)
+        ]
 
         # Build shared registries first — source_registry needs tool_registry
         tool_registry   = ToolRegistry()
@@ -313,15 +292,6 @@ class SHAI:
                 )
             await source_registry.register(source)
 
-        def _scanner_meta(refs) -> tuple[list[ScanAction | None], list[str | None]]:
-            """Extract per-scanner action and redact_with from AdapterRef list."""
-            actions = [r.action for r in refs]
-            redact_withs = [r.redact_with for r in refs]
-            return actions, redact_withs
-
-        inp_actions, inp_redacts     = _scanner_meta(config.scan_input.scanners)
-        out_actions, out_redacts     = _scanner_meta(config.scan_output.scanners)
-
         rl_cfg = config.check_tool_call.rate_limit
         rate_limiter = (
             RateLimiter(
@@ -332,7 +302,7 @@ class SHAI:
             if rl_cfg.enabled else None
         )
 
-        instance = cls(
+        return cls(
             config=config,
             agent_registry=agent_registry,
             tool_registry=tool_registry,
@@ -340,34 +310,13 @@ class SHAI:
             input_scanners=input_scanners,
             output_scanners=output_scanners,
             arg_scanners=arg_scanners,
-            policy=policy,
-            scan_input_enabled=config.scan_input.enabled,
-            scan_output_enabled=config.scan_output.enabled,
-            scan_file_enabled=config.scan_file.enabled,
-            block_at=config.scan_input.block_at,
-            file_block_at=config.scan_file.block_at,
             file_scanners=file_scanners,
-            file_max_size_mb=config.scan_file.max_size_mb,
-            scan_args_for_tags=frozenset(config.check_tool_call.scan_args_for_tags),
-            rate_limiter=rate_limiter,
             tool_result_scanners=tool_result_scanners,
-            scan_tool_result_enabled=config.scan_tool_result.enabled,
-            tool_result_block_at=config.scan_tool_result.block_at,
+            policy=policy,
+            rate_limiter=rate_limiter,
             source_registry=source_registry,
-            scan_input_action=config.scan_input.action,
-            scan_input_scanner_actions=inp_actions,
-            scan_input_redact_withs=inp_redacts,
-            scan_output_action=config.scan_output.action,
-            scan_output_scanner_actions=out_actions,
-            scan_output_redact_withs=out_redacts,
-            scan_file_action=config.scan_file.action,
-            scan_tool_result_action=config.scan_tool_result.action,
             connectivity_secret=connectivity_secret,
         )
-        instance._mcp_metadata_scanners      = mcp_metadata_scanners
-        instance._scan_mcp_metadata_enabled  = config.scan_mcp_metadata.enabled
-        instance._mcp_metadata_block_at      = config.scan_mcp_metadata.block_at
-        return instance
 
     # ── Startup ───────────────────────────────────────────────────────────
 
@@ -533,13 +482,11 @@ class SHAI:
             text, ctx,
             boundary=BoundaryName.INPUT_SCAN,
             scanners=self._input_scanners,
-            scanner_actions=self._scan_input_scanner_actions,
-            scanner_redact_withs=self._scan_input_redact_withs,
-            boundary_action=self._scan_input_action,
+            boundary_action=self._config.scan_input.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._scan_input_enabled,
-            block_at=self._block_at,
+            enabled=self._config.scan_input.enabled,
+            block_at=self._config.scan_input.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
@@ -547,7 +494,9 @@ class SHAI:
         )
 
         # Record signals from the input scan
-        ctx.turn_signals.record_input(verdict, self._input_scanners)
+        ctx.turn_signals.record_input(
+            verdict, [c.scanner for c in self._input_scanners]
+        )
 
         # Accumulator record moved to scan_output — needs full turn context
         # for consolidated turn_risk. scan_input BLOCK short-circuits still
@@ -575,8 +524,8 @@ class SHAI:
         need injection scanning (e.g. a structured API response).
         """
         pii_scanners = [
-            s for s in self._input_scanners
-            if getattr(s, "name", "") == "regex_pii"
+            c for c in self._input_scanners
+            if getattr(c.scanner, "name", "") == "regex_pii"
         ]
         if not pii_scanners:
             pii_scanners = self._input_scanners   # fallback: run all
@@ -584,13 +533,11 @@ class SHAI:
             text, ctx,
             boundary=BoundaryName.INPUT_SCAN,
             scanners=pii_scanners,
-            scanner_actions=self._scan_input_scanner_actions[:len(pii_scanners)],
-            scanner_redact_withs=self._scan_input_redact_withs[:len(pii_scanners)],
-            boundary_action=self._scan_input_action,
+            boundary_action=self._config.scan_input.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._scan_input_enabled,
-            block_at=self._block_at,
+            enabled=self._config.scan_input.enabled,
+            block_at=self._config.scan_input.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
@@ -605,8 +552,8 @@ class SHAI:
         (e.g. a URL parameter, a tool name, a structured field).
         """
         inj_scanners = [
-            s for s in self._input_scanners
-            if getattr(s, "name", "").startswith("injection_scan")
+            c for c in self._input_scanners
+            if getattr(c.scanner, "name", "").startswith("injection_scan")
         ]
         if not inj_scanners:
             inj_scanners = self._input_scanners   # fallback: run all
@@ -614,13 +561,11 @@ class SHAI:
             text, ctx,
             boundary=BoundaryName.INPUT_SCAN,
             scanners=inj_scanners,
-            scanner_actions=[None] * len(inj_scanners),
-            scanner_redact_withs=[None] * len(inj_scanners),
-            boundary_action=self._scan_input_action,
+            boundary_action=self._config.scan_input.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._scan_input_enabled,
-            block_at=self._block_at,
+            enabled=self._config.scan_input.enabled,
+            block_at=self._config.scan_input.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
@@ -799,16 +744,14 @@ class SHAI:
         """
         return await run_file_scan(
             str(path), ctx,
-            scanners=self._file_scanners,
             # scan_file has no per-scanner overrides — FileScanConfig rejects
             # them, so the boundary action applies to the whole content chain.
-            scanner_actions=[],
-            scanner_redact_withs=[],
-            boundary_action=self._scan_file_action,
+            scanners=self._file_scanners,
+            boundary_action=self._config.scan_file.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._scan_file_enabled,
-            block_at=self._file_block_at,
+            enabled=self._config.scan_file.enabled,
+            block_at=self._config.scan_file.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
@@ -829,13 +772,11 @@ class SHAI:
         verdict = await run_tool_result_scan(
             result, ctx,
             scanners=self._tool_result_scanners,
-            scanner_actions=[],   # tool_result uses boundary_action only
-            scanner_redact_withs=[],
-            boundary_action=self._scan_tool_result_action,
+            boundary_action=self._config.scan_tool_result.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._scan_tool_result_enabled,
-            block_at=self._tool_result_block_at,
+            enabled=self._config.scan_tool_result.enabled,
+            block_at=self._config.scan_tool_result.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
@@ -855,13 +796,11 @@ class SHAI:
             text, ctx,
             boundary=BoundaryName.OUTPUT_SCAN,
             scanners=self._output_scanners,
-            scanner_actions=self._scan_output_scanner_actions,
-            scanner_redact_withs=self._scan_output_redact_withs,
-            boundary_action=self._scan_output_action,
+            boundary_action=self._config.scan_output.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._scan_output_enabled,
-            block_at=self._block_at,
+            enabled=self._config.scan_output.enabled,
+            block_at=self._config.scan_output.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
@@ -929,27 +868,31 @@ class SHAI:
         Provides visibility into which scanners are running and their
         configuration. Useful for inspection, testing, and debugging.
 
-        Returns a flat dict across all boundaries — scanners used in
-        multiple boundaries appear once (the input_scanner instance).
+        Covers the boundaries the facade runs: scan_input, scan_output,
+        scan_tool_result, scan_file, and the gate's argument scanners. A
+        scanner used at more than one boundary appears once (the first
+        instance seen, scanning input first). MCP metadata scanners are not
+        here — they live on the MCPSource that runs them at connect time.
 
             harness.scanners
             # {
             #   'regex_pii':          RegexPIIScanner(...),
             #   'injection_scan':     InjectionScanner(...),
             #   'injection_scan_doc': InjectionScanner(patterns_for_doc),
+            #   'heuristic_scan':     HeuristicScanner(...),   # always-on backstop
             #   'file_scanner':       FileScanner(...),
-            #   'mcp_metadata_scan':  MCPMetadataScanner(...),
+            #   'file_content_scan':  FileContentScanner(...),
             #   'rate_limiter':       RateLimiter(...),
             # }
         """
         result: dict[str, object] = {}
-        for scanner in (
+        configured = (
             self._input_scanners
             + self._output_scanners
             + self._tool_result_scanners
             + self._file_scanners
-            + self._arg_scanners
-        ):
+        )
+        for scanner in [c.scanner for c in configured] + self._arg_scanners:
             name = getattr(scanner, "name", type(scanner).__name__)
             result[name] = scanner
         if self._rate_limiter is not None:
@@ -1173,21 +1116,28 @@ _SCANNER_FACTORIES: dict[str, Any] = {
 }
 
 
-def _build_text_scanners(adapter_refs: list, *, extra_rules: dict[str, list] | None = None) -> list:
+def _build_text_scanners(
+    adapter_refs: list, *, extra_rules: dict[str, list] | None = None
+) -> list[ConfiguredScanner]:
     """Build text scanners from AdapterRef declarations in harness.yaml.
 
     Built-in scanners (regex_pii, injection_scan) are resolved via the
     named factory table above. Custom scanners are resolved via entry points.
 
+    Each scanner is paired with the action / redact_with of the ref that
+    produced it, so a ref that fails to resolve drops out with its own
+    overrides and cannot shift another scanner's action onto it.
+
     extra_rules maps scanner name → compiled rules from the signed pattern DB
     (see _DB_CATALOG_FOR_SCANNER). Only injection-family names appear in it, so
     scanners that do not accept extra_rules never receive the kwarg.
 
-    HeuristicScanner is the always-on structural backstop: appended here
-    unless an explicit `heuristic_scan` ref already placed it. Declaring it
-    in harness.yaml only controls its position and per-scanner action.
+    HeuristicScanner is the always-on structural backstop: appended here with
+    no override (the boundary action governs it) unless an explicit
+    `heuristic_scan` ref already placed it. Declaring it in harness.yaml only
+    controls its position and per-scanner action.
     """
-    scanners = []
+    scanners: list[ConfiguredScanner] = []
     for ref in adapter_refs:
         factory = _SCANNER_FACTORIES.get(ref.name)
         if factory:
@@ -1195,30 +1145,25 @@ def _build_text_scanners(adapter_refs: list, *, extra_rules: dict[str, list] | N
             if extra_rules and ref.name in extra_rules:
                 # Copy: ref.config is shared across every boundary's build call.
                 cfg = {**cfg, "extra_rules": extra_rules[ref.name]}
-            scanners.append(factory(cfg))
+            scanner = factory(cfg)
         else:
             try:
                 from harness.adapters.discovery import resolve
                 cls = resolve("harness.scanners", ref.name)
-                scanners.append(cls(**ref.config))
+                scanner = cls(**ref.config)
             except Exception as e:
                 log.warning("scanner adapter not found — skipped",
                             extra={"adapter_name": ref.name, "error": str(e)})
-    # Appended, never prepended: scanner_actions and redact_withs are
-    # positional lists derived from adapter_refs, so inserting ahead of them
-    # would shift every per-scanner override by one. A trailing index has no
-    # entry in those lists and run_scan falls back to the boundary action.
-    if not any(getattr(s, "name", "") == HeuristicScanner.name for s in scanners):
-        scanners.append(HeuristicScanner())
+                continue
+        scanners.append(ConfiguredScanner(scanner, ref.action, ref.redact_with))
+    if not any(getattr(c.scanner, "name", "") == HeuristicScanner.name for c in scanners):
+        scanners.append(ConfiguredScanner(HeuristicScanner()))
     return scanners
 
 
-# Keep _build_scanners as an alias for backward compatibility
-# (used in test fixtures and any external code that calls it directly)
-_build_scanners = _build_text_scanners
-
-
-def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
+def _build_file_scanners(
+    adapter_refs: list, *, max_size_mb: float
+) -> list[ConfiguredScanner]:
     """Build the scan_file scanner list.
 
     Two independent scanners, so a failing content scanner cannot discard the
@@ -1240,12 +1185,18 @@ def _build_file_scanners(adapter_refs: list, *, max_size_mb: float) -> list:
     )
 
     refs = [r for r in adapter_refs if r.name != "file_scanner"]
+    # The content chain runs inside FileContentScanner, which calls the
+    # scanners directly — FileScanConfig rejects per-scanner overrides, so
+    # only the instances travel down.
     text_scanners = (
-        _build_text_scanners(refs) if refs else [_make_injection_doc_scanner()]
+        [c.scanner for c in _build_text_scanners(refs)] if refs
+        else [_make_injection_doc_scanner()]
     )
     return [
-        FileScanner(max_size_mb=max_size_mb),
-        FileContentScanner(text_scanners=text_scanners, max_size_mb=max_size_mb),
+        ConfiguredScanner(FileScanner(max_size_mb=max_size_mb)),
+        ConfiguredScanner(
+            FileContentScanner(text_scanners=text_scanners, max_size_mb=max_size_mb)
+        ),
     ]
 
 

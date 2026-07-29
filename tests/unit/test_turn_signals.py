@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from harness.adapters.scanners.base import ConfiguredScanner
 from harness.agents.agent_config import AgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
@@ -448,9 +449,7 @@ class TestToolResultBlockAtAdjustment:
         from harness.boundaries._scan import ScanAction
         verdict = await run_tool_result_scan(
             "attacker embedded content", ctx,
-            scanners=[scanner],
-            scanner_actions=[None],
-            scanner_redact_withs=[None],
+            scanners=[ConfiguredScanner(scanner)],
             boundary_action=ScanAction.BLOCK,
             emitter=emitter,
             tenant_id="test",
@@ -477,9 +476,7 @@ class TestToolResultBlockAtAdjustment:
         # No signals attached — no adjustment
         verdict = await run_tool_result_scan(
             "some result", ctx,
-            scanners=[scanner],
-            scanner_actions=[None],
-            scanner_redact_withs=[None],
+            scanners=[ConfiguredScanner(scanner)],
             boundary_action=ScanAction.BLOCK,
             emitter=emitter,
             tenant_id="test",

@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from harness.adapters.circuit_breaker import CircuitBreaker, CircuitState
+from harness.adapters.scanners.base import ConfiguredScanner
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
@@ -59,8 +60,7 @@ async def test_fail_closed_scanner_failure_blocks(emitter, sink, state):
     verdict = await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad, RegexPIIScanner()],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
@@ -77,8 +77,7 @@ async def test_fail_closed_emits_blocked_event(emitter, sink, state):
     await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad)],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
@@ -103,8 +102,7 @@ async def test_fail_open_scanner_failure_allows(emitter, sink, state):
     verdict = await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad, RegexPIIScanner()],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
@@ -121,8 +119,7 @@ async def test_fail_open_remaining_scanners_still_run(emitter, sink, state):
     verdict = await run_scan(
         "My SSN is 123-45-6789.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad, RegexPIIScanner()],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
@@ -141,8 +138,7 @@ async def test_degrade_scanner_failure_warns(emitter, sink, state):
     verdict = await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad, RegexPIIScanner()],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
@@ -159,8 +155,7 @@ async def test_degrade_audit_event_carries_degraded_flag(emitter, sink, state):
     await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad)],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,
@@ -235,8 +230,7 @@ async def test_circuit_breaker_trips_after_repeated_failures(emitter, sink, stat
         await run_scan(
             "text", CTX,
             boundary=BoundaryName.INPUT_SCAN,
-            scanners=[bad],
-            scanner_actions=[], scanner_redact_withs=[],
+            scanners=[ConfiguredScanner(bad)],
             boundary_action=ScanAction.BLOCK,
             emitter=emitter, tenant_id="test",
             enabled=True, block_at=Severity.HIGH,
@@ -255,8 +249,7 @@ async def test_default_on_error_is_fail_closed(emitter, sink, state):
     verdict = await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[bad],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(bad)],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="test",
         enabled=True, block_at=Severity.HIGH,

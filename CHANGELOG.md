@@ -34,9 +34,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tool is still idempotent. Through `load_agent()` the raise is caught and the
   tool is kept as a per-agent override, so the agent resolves against the newer
   definition instead of silently retaining the older one.
+- **BREAKING**: `SHAI.scan_injection()` honours a per-scanner `action:` declared
+  on the scanner it selects, instead of forcing the boundary action onto it.
+  Only configs that set `action:` on a scanner whose name starts with
+  `injection_scan` are affected — for them this helper now agrees with
+  `scan_input`, which already honoured the same declaration, so an
+  `action: alert` that previously blocked here now warns.
 - `Tool.tags` is sorted and de-duplicated at construction, so tag order no
   longer round-trips. Every consumer already read tags as a set; normalising
   keeps ordering from affecting tool equality now that equality is field-wise.
+- `SHAI.__init__` takes keyword arguments only, and takes only the collaborators
+  it cannot derive: the registries, emitter, scanner lists, policy, rate limiter
+  and source registry. The per-boundary `enabled`, `block_at` and `action`
+  values it used to mirror are read from the `HarnessConfig` it already holds.
+  `SHAI.from_yaml()` is unchanged and remains the supported constructor.
 
 ### Fixed
 - **Tool results were never scanned in the Anthropic SDK integration.**
@@ -53,6 +64,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that had already been tightened elsewhere. Equality is now Pydantic's
   field-wise comparison, so every field is significant — a hand-maintained field
   list would only have drifted again.
+- **`scan_output` ignored its own `block_at`.** The facade handed both text
+  boundaries `scan_input.block_at`, so a `harness.yaml` that set
+  `scan_output.block_at` got the input threshold instead — an output configured
+  to block at `medium` only blocked at `high` when input was left at the
+  default. Each boundary now reads its own threshold.
 - **`run_turn` passed `llm_fn` the wrong type.** Agent tools were read straight
   from the registry, whose values became `tuple[str, Tool]` in an earlier
   refactor, while the `llm_fn` annotation promised `list[Tool]`. Callers written
@@ -81,6 +97,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every tool result is scanned, with no per-tool opt-out. A tool whose output
   an operator classifies as control-plane data is exactly where an injection
   payload arrives unnoticed.
+- `scan_output` enforces the threshold it was configured with. Deployments that
+  set the output boundary stricter than the input one were scanning outputs at
+  the looser input threshold.
 - Tool equality covers the metadata the gate enforces, so argument rules and
   irreversibility classifications can no longer be downgraded by a same-name
   re-registration. The conflict error names which fields differ but never

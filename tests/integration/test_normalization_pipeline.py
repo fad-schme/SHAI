@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("pydantic")
 
-from harness.adapters.scanners.base import ScanResult
+from harness.adapters.scanners.base import ConfiguredScanner, ScanResult
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
 from harness.config.schema import NormalizationConfig
@@ -71,8 +71,7 @@ async def _scan(text, *, normalization):
     verdict = await run_scan(
         text, AgentContext(agent_id="a"),
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[_MarkerScanner()],
-        scanner_actions=[], scanner_redact_withs=[],
+        scanners=[ConfiguredScanner(_MarkerScanner())],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter, tenant_id="t", enabled=True,
         block_at=Severity.HIGH, normalization=normalization,

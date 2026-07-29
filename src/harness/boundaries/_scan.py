@@ -71,7 +71,7 @@ from harness.core.types import (
 from harness.core.verdicts import Finding, ScanVerdict
 
 if TYPE_CHECKING:
-    from harness.adapters.scanners.base import Scanner
+    from harness.adapters.scanners.base import ConfiguredScanner, Scanner
     from harness.audit.emitter import AuditEmitter
     from harness.config.schema import NormalizationConfig
     from harness.core.context import AgentContext
@@ -230,9 +230,7 @@ async def run_scan(
     ctx: AgentContext,
     *,
     boundary: BoundaryName,
-    scanners: list[Scanner],
-    scanner_actions: list[ScanAction | None],   # parallel to scanners list
-    scanner_redact_withs: list[str | None],      # parallel to scanners list
+    scanners: list[ConfiguredScanner],
     boundary_action: ScanAction,
     emitter: AuditEmitter,
     tenant_id: str,
@@ -298,7 +296,7 @@ async def run_scan(
         return result
 
     raw_results = await asyncio.gather(
-        *[_guarded_scan(scanner, views) for scanner in scanners],
+        *[_guarded_scan(c.scanner, views) for c in scanners],
         return_exceptions=True,
     )
 
@@ -310,7 +308,8 @@ async def run_scan(
     # Track which findings came from each scanner for per-scanner action
     per_scanner_data: list[tuple[list[Finding], ScanResult | None, ScanAction, str | None]] = []
 
-    for i, (scanner, result) in enumerate(zip(scanners, raw_results)):
+    for configured, result in zip(scanners, raw_results):
+        scanner = configured.scanner
         adapter_names.append(scanner.name)
         breaker = state.get_breaker(scanner)
 
@@ -387,12 +386,11 @@ async def run_scan(
         # ── Scanner succeeded — record success on breaker ─────────────────
         # (already called in _guarded_scan, but harmless to note here)
 
-        # Fall back to boundary_action when the per-scanner lists are shorter
-        # than the scanners list (e.g. when tests pass scanner_actions=[])
-        per_action   = scanner_actions[i]      if i < len(scanner_actions)      else None
-        per_redact   = scanner_redact_withs[i] if i < len(scanner_redact_withs) else None
-        effective_action = per_action if per_action is not None else boundary_action
-        redact_with      = per_redact
+        # No declared override → the boundary action governs this scanner.
+        effective_action = (
+            configured.action if configured.action is not None else boundary_action
+        )
+        redact_with      = configured.redact_with
         per_scanner_data.append((result.findings, result, effective_action, redact_with))
         all_findings.extend(result.findings)
         # Apply redaction unconditionally when the scanner returned redacted_text.
@@ -583,9 +581,7 @@ async def run_file_scan(
     path: str,
     ctx: AgentContext,
     *,
-    scanners: list[Scanner],
-    scanner_actions: list[ScanAction | None],
-    scanner_redact_withs: list[str | None],
+    scanners: list[ConfiguredScanner],
     boundary_action: ScanAction,
     emitter: AuditEmitter,
     tenant_id: str,
@@ -602,8 +598,6 @@ async def run_file_scan(
         ctx,
         boundary=BoundaryName.FILE_SCAN,
         scanners=scanners,
-        scanner_actions=scanner_actions,
-        scanner_redact_withs=scanner_redact_withs,
         boundary_action=boundary_action,
         emitter=emitter,
         tenant_id=tenant_id,
@@ -620,9 +614,7 @@ async def run_tool_result_scan(
     result: str,
     ctx: AgentContext,
     *,
-    scanners: list[Scanner],
-    scanner_actions: list[ScanAction | None],
-    scanner_redact_withs: list[str | None],
+    scanners: list[ConfiguredScanner],
     boundary_action: ScanAction,
     emitter: AuditEmitter,
     tenant_id: str,
@@ -652,8 +644,6 @@ async def run_tool_result_scan(
         ctx,
         boundary=BoundaryName.TOOL_RESULT_SCAN,
         scanners=scanners,
-        scanner_actions=scanner_actions,
-        scanner_redact_withs=scanner_redact_withs,
         boundary_action=boundary_action,
         emitter=emitter,
         tenant_id=tenant_id,

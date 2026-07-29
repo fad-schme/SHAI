@@ -38,7 +38,10 @@ async def _harness(tmp_path: Path, scan_file_block: str) -> SHAI:
 
 def _content_scanner(h: SHAI):
     """The FileContentScanner from the boundary's scanner list."""
-    return next(s for s in h._file_scanners if s.name == "file_content_scan")
+    return next(
+        c.scanner for c in h._file_scanners
+        if c.scanner.name == "file_content_scan"
+    )
 
 
 def _chain(h: SHAI) -> list[str]:
