@@ -34,7 +34,10 @@ from harness.core.verdicts import ScanVerdict
 
 # ── Public thresholds ────────────────────────────────────────────────────
 
-RISK_ELEVATED = 0.30   # tightens PII redaction in scan_output
+# Reference point for "elevated but not blocking" — no boundary acts on it.
+# Kept as the named midpoint of the scale RISK_HIGH sits on, so a caller
+# reading compute_risk() has something to compare against.
+RISK_ELEVATED = 0.30
 RISK_HIGH     = 0.60   # scan_output blocks the turn on consolidated risk alone
 
 # ── Internal constants ───────────────────────────────────────────────────
@@ -123,9 +126,6 @@ class TurnSignals:
     @property
     def tool_result_has_injection(self) -> bool:
         return bool(self.tool_result_categories & _INJECTION_CATEGORIES)
-
-    def tool_has_high_risk_tags(self) -> bool:
-        return bool(self.gate_tool_tags & _HIGH_RISK_TAGS)
 
     # ── Consolidated risk ────────────────────────────────────────────────
 

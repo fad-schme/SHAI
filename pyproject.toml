@@ -82,11 +82,6 @@ rules = "harness.policy.rules:RuleBasedPolicy"
 stdout = "harness.adapters.audit_sinks.stdout:StdoutSink"
 file   = "harness.adapters.audit_sinks.file:FileSink"
 
-[project.entry-points."harness.sources"]
-local = "harness.tools.source:LocalSource"
-skill = "harness.tools.source:SkillSource"
-mcp   = "harness.tools.source:MCPSource"
-
 [project.entry-points."harness.secrets"]
 env = "harness.adapters.secrets.env:EnvVarProvider"
 

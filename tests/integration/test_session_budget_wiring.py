@@ -152,7 +152,7 @@ async def test_invalid_agent_limits_raise_rather_than_falling_back(tmp_path: Pat
     agent.write_text(
         f"id: {AGENT}\n"
         f"allowed_tool_names:\n  - search_docs\n"
-        f"allowed_tags:\n  - read\n"
+        f"allowed_tags:\n  - read\n  - internal\n"
         f"policy_rules: []\n"
         f"limits:\n  max_steps: 2\n  no_such_limit: 1000\n"
     )
@@ -172,7 +172,7 @@ async def test_failed_load_leaves_no_half_registered_agent(tmp_path: Path):
     agent.write_text(
         f"id: {AGENT}\n"
         f"allowed_tool_names:\n  - search_docs\n"
-        f"allowed_tags:\n  - read\n"
+        f"allowed_tags:\n  - read\n  - internal\n"
         f"policy_rules: []\n"
         f"limits:\n  max_steps: 2\n  no_such_limit: 1000\n"
     )
@@ -200,7 +200,7 @@ async def test_failed_reload_keeps_the_previous_definition(tmp_path: Path):
     agent.write_text(
         f"id: {AGENT}\n"
         f"allowed_tool_names:\n  - search_docs\n"
-        f"allowed_tags:\n  - read\n"
+        f"allowed_tags:\n  - read\n  - internal\n"
         f"policy_rules: []\n"
         f"limits:\n  max_steps: 1\n"
     )
@@ -213,7 +213,7 @@ async def test_failed_reload_keeps_the_previous_definition(tmp_path: Path):
     agent.write_text(
         f"id: {AGENT}\n"
         f"allowed_tool_names:\n  - search_docs\n"
-        f"allowed_tags:\n  - read\n"
+        f"allowed_tags:\n  - read\n  - internal\n"
         f"policy_rules: []\n"
         f"limits:\n  max_steps: 99\n  no_such_limit: 1000\n"
     )

@@ -36,7 +36,7 @@ on_error controls what happens when a scanner raises an exception:
 
   fail_closed — treat the failure as BLOCK (default, safe posture).
                 The scan pipeline short-circuits and returns ScanVerdict(BLOCK).
-  fail_open   — treat the failure as empty findings (pre-0.2 behavior).
+  fail_open   — treat the failure as empty findings.
                 The pipeline continues with remaining scanners.
   degrade     — treat the failure as WARN. Content passes through but
                 the audit event is flagged with decision=DEGRADED.
@@ -383,9 +383,7 @@ async def run_scan(
             per_scanner_data.append(([], None, ScanAction.BLOCK, None))
             continue
 
-        # ── Scanner succeeded — record success on breaker ─────────────────
-        # (already called in _guarded_scan, but harmless to note here)
-
+        # ── Scanner succeeded ─────────────────────────────────────────────
         # No declared override → the boundary action governs this scanner.
         effective_action = (
             configured.action if configured.action is not None else boundary_action
@@ -591,39 +589,6 @@ def _record_candidate_if_needed(
         # Best-effort: candidate DB is a learning surface, never a hard dependency.
         # A write failure must not abort the scan.
         log.debug("candidate recording failed: %s", e)
-
-
-async def run_file_scan(
-    path: str,
-    ctx: AgentContext,
-    *,
-    scanners: list[ConfiguredScanner],
-    boundary_action: ScanAction,
-    emitter: AuditEmitter,
-    tenant_id: str,
-    enabled: bool,
-    block_at: Severity,
-    state: ScanState,
-    normalization: NormalizationConfig | None = None,
-    audit_tags: dict[str, str] | None = None,
-    on_error: OnError = OnError.FAIL_CLOSED,
-) -> ScanVerdict:
-    """Run file scanners. Delegates to run_scan with FILE_SCAN boundary name."""
-    return await run_scan(
-        path,
-        ctx,
-        boundary=BoundaryName.FILE_SCAN,
-        scanners=scanners,
-        boundary_action=boundary_action,
-        emitter=emitter,
-        tenant_id=tenant_id,
-        enabled=enabled,
-        block_at=block_at,
-        state=state,
-        normalization=normalization,
-        audit_tags=audit_tags,
-        on_error=on_error,
-    )
 
 
 async def run_tool_result_scan(

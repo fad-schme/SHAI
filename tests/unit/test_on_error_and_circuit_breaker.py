@@ -10,6 +10,8 @@ Covers:
 """
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from harness.adapters.circuit_breaker import CircuitBreaker, CircuitState
@@ -218,6 +220,37 @@ class TestCircuitBreaker:
         cb.record_failure()  # → back to OPEN with doubled timeout
         assert cb._state == CircuitState.OPEN
         assert cb._current_recovery == 2.0  # doubled from 1.0
+
+    def test_reset_returns_to_closed(self):
+        cb = CircuitBreaker(name="test", failure_threshold=1)
+        cb.record_failure()
+        assert cb.is_open
+        cb.reset()
+        assert cb.state == CircuitState.CLOSED
+        assert not cb.is_open
+        assert cb._failure_count == 0
+        assert cb._current_recovery == cb._base_recovery
+
+    def test_reset_restores_the_open_warning(self, caplog):
+        """Regression (SHAI-005): reset() cleared the wrong attribute.
+
+        It assigned `_opened_open`, creating a stray attribute and leaving
+        `_logged_open` True — so the next time the breaker opened, the
+        log-once guard suppressed the warning and the adapter went dark
+        silently.
+        """
+        cb = CircuitBreaker(name="test", failure_threshold=1)
+        cb.record_failure()          # → OPEN, logs once
+        cb.reset()
+        assert not hasattr(cb, "_opened_open"), "reset() set a stray attribute"
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="harness.adapters.circuit_breaker"):
+            cb.record_failure()      # → OPEN again, must log again
+        assert any("circuit breaker open" in r.message for r in caplog.records), (
+            "reopening after reset logged nothing — the operator gets no signal "
+            "that the adapter is being skipped"
+        )
 
 
 # ── Circuit breaker integration with run_scan ────────────────────────────

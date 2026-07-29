@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
@@ -57,7 +57,7 @@ class ToolSource(Protocol):
     """Interface every source adapter must satisfy."""
 
     name:      str
-    transport: str
+    transport: Transport
     tags:      list[str]
 
     async def load(self, ctx: AgentContext) -> list[Tool]:
@@ -76,9 +76,8 @@ class ToolSource(Protocol):
 # ── SourceRegistry ────────────────────────────────────────────────────────
 
 class SourceRegistry:
-    """Concrete registry for ToolSource objects.
+    """In-memory registry for ToolSource objects.
 
-    Satisfies SHAIRegistry[ToolSource] structurally.
     activate() is the main entry point — called by SHAI.load_agent() to
     build the merged tool set for an agent from its declared sources.
     """
@@ -110,10 +109,6 @@ class SourceRegistry:
             log.debug("source deregistered", extra={"source": item.name})
             return True
         return False
-
-    async def register_many(self, items: Iterable[ToolSource]) -> None:
-        for item in items:
-            await self.register(item)
 
     async def get(self, name: str) -> ToolSource:
         """Raises ConfigError on miss."""

@@ -289,7 +289,15 @@ def _compile_catalog(path: Path) -> list[_CompiledRule]:
 # ── Text normalisation ────────────────────────────────────────────────────
 
 def _normalize(text: str) -> str:
-    """NFKC-normalise, lowercase, collapse whitespace. Called once per scan."""
+    """NFKC-normalise, lowercase, collapse whitespace. Called once per scan.
+
+    Not redundant with core.normalize.canonicalize, despite the overlap. That
+    runs inside run_scan, and two callers reach this scanner without it:
+    MCPMetadataScanner (tool metadata at connect time) and FileContentScanner
+    (text extracted from a document). On those paths this is the only folding
+    the catalog gets, so removing it would reopen the homoglyph and
+    whitespace-padding bypass exactly where the content is least trusted.
+    """
     text = unicodedata.normalize("NFKC", text)
     text = text.lower()
     return " ".join(text.split())

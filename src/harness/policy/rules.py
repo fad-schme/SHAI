@@ -14,14 +14,11 @@ Rules are validated at construction. Not reloaded at runtime — restart to chan
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
-
-import yaml
 
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
 from harness.core.context import AgentContext
-from harness.core.errors import ConfigError, PolicyEvaluationError
+from harness.core.errors import PolicyEvaluationError
 from harness.policy.engine import PolicyDecision, SourceDecision
 from harness.tools.tool import Tool
 
@@ -198,33 +195,3 @@ class RuleBasedPolicy:
             f"invalid inline match expression: {data!r}",
             op="parse_rule",
         )
-
-    @staticmethod
-    def _load(path: Path) -> list[RuleConfig]:
-        """Load and validate rules from a YAML file."""
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError as e:
-            raise ConfigError(f"cannot read rules file {path}: {e}", op="load_rules") from e
-
-        try:
-            data = yaml.safe_load(raw)
-        except yaml.YAMLError as e:
-            raise ConfigError(f"invalid YAML in {path}: {e}", op="load_rules") from e
-
-        if not isinstance(data, list):
-            raise ConfigError(
-                f"rules file {path} must be a YAML list, got {type(data).__name__}",
-                op="load_rules",
-            )
-
-        rules = []
-        for i, item in enumerate(data):
-            try:
-                rules.append(RuleConfig.model_validate(item))
-            except Exception as e:
-                raise ConfigError(
-                    f"invalid rule at index {i} in {path}: {e}",
-                    op="load_rules",
-                ) from e
-        return rules

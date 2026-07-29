@@ -43,7 +43,8 @@ class RuleMatchConfig(BaseModel, frozen=True, extra="forbid"):
 
 
 class RuleConfig(BaseModel, frozen=True, extra="forbid"):
-    """One policy rule — same schema in agent-xx.yaml and global rules.yaml."""
+    """One policy rule — same schema for an agent's `policy_rules:` and the
+    global `policy.rules:` block in harness.yaml."""
     id:     str
     match:  RuleMatchConfig
     action: str

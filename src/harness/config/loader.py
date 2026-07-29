@@ -53,8 +53,9 @@ def _resolve_string(s: str, *, provider: SecretsProvider | None) -> str:
     # secret:// resolution
     if s.startswith("secret://"):
         if provider is None:
-            # Provider not yet available — leave the URI in place.
-            # harness.py will call _resolve again after building the provider.
+            # No provider — leave the URI in place for a caller that resolves
+            # it itself. SHAI.from_yaml always passes one, so a config it built
+            # never holds an unresolved reference.
             return s
         from harness.adapters.secrets.env import resolve_secret_uri
         return resolve_secret_uri(s, provider)

@@ -163,3 +163,62 @@ def test_clear_cache_allows_fresh_resolution():
         assert cls1 is cls2
     except AdapterDiscoveryError:
         pytest.skip("package not installed")
+
+
+# ── Declared entry-point groups must be resolvable ───────────────────────
+
+def test_declared_groups_are_all_resolvable():
+    """Regression (SHAI-010): pyproject declared a group nothing could resolve.
+
+    `harness.sources` was registered with three entries, sat outside
+    discovery.GROUPS so `resolve()` rejected it outright, and one of its
+    targets (`SkillSource`) did not exist as a class at all. Nothing imported
+    it, so nothing failed — the group was pure decoration that read as a
+    supported extension point.
+    """
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject.exists():
+        pytest.skip("pyproject.toml not found (installed package, not a checkout)")
+
+    declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    groups = {
+        name for name in declared.get("project", {}).get("entry-points", {})
+    }
+    unresolvable = groups - GROUPS
+    assert not unresolvable, (
+        f"entry-point group(s) {sorted(unresolvable)} declared in pyproject.toml "
+        f"but absent from discovery.GROUPS — resolve() rejects them, so every "
+        f"entry under them is unreachable"
+    )
+
+
+def test_declared_entry_point_targets_import():
+    """Every registered adapter target must actually exist.
+
+    `harness.tools.source:SkillSource` pointed at a class that was never
+    written. Entry points are resolved lazily, so a broken target stays
+    invisible until someone names it in harness.yaml.
+    """
+    import importlib
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject.exists():
+        pytest.skip("pyproject.toml not found (installed package, not a checkout)")
+
+    entry_points = (
+        tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        .get("project", {})
+        .get("entry-points", {})
+    )
+    for group, entries in entry_points.items():
+        for name, target in entries.items():
+            module_path, _, attr = target.partition(":")
+            module = importlib.import_module(module_path)
+            assert hasattr(module, attr), (
+                f"{group}.{name} points at {target}, which does not exist"
+            )

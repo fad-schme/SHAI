@@ -25,6 +25,41 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it.
 
 ### Changed
+- **BREAKING**: an agent's `allowed_tags:` now gates the agent's own tool calls.
+  It never did. Layer 4 read only the capability set on the context, which is
+  populated for subagents and left empty on a parent turn — so a top-level
+  agent declaring `allowed_tags: [read]` got no enforcement from it at all, and
+  the field's only effect was constraining that agent's subagents at load time.
+  An operator reading their own config had every reason to believe otherwise.
+  The declared set now binds the agent too, intersected with any narrower set
+  the context carries: a hand-built `AgentContext` cannot widen what the config
+  allows, and a deliberately narrowed one is still honoured. Semantics are
+  unchanged and match what subagents always had — a tool's tags must be a
+  *subset* of the allowed set, not merely overlap it.
+  **Migration**: `allowed_tags` must list every tag carried by every tool the
+  agent may call, or those calls are denied with `requires tags [...] not in
+  agent capability set`. An agent allowing `[read]` and calling a tool tagged
+  `[read, internal]` now fails until `internal` is added. Agents consuming MCP
+  sources are most affected — those tools carry an `mcp` tag plus any
+  source-level tags. Read the deny reasons in the audit trail to enumerate what
+  each agent actually needs.
+- **BREAKING**: `scan_file` can now block a document two techniques agree on.
+  Neither of the boundary's scanners declared a detection technique, so every
+  finding was labelled `unknown`, the whole boundary reported one technique,
+  and the cross-method severity promotion that requires two could never fire
+  there — the structural pass corroborating the content chain being exactly
+  what it exists for. `FileScanner` now reports `structural_file` and the
+  content chain's findings keep the technique of whichever scanner produced
+  them. Consequence on an unchanged config: a document flagged `medium` in the
+  same category by two different techniques in the chain — a catalog scanner
+  and the always-on heuristic backstop, say — is promoted to `high` and blocks
+  at the default `block_at: high`, where before it passed. Files that used to
+  get through can now be rejected. Set `scan_file.block_at: critical` to keep
+  the previous effective threshold while the new promotions are assessed.
+- `verify_token()` names `sub_agent_id` when it is missing instead of failing
+  with `signature mismatch`. The field was always part of the signed payload,
+  so a token without it already failed — the error just did not say why. No
+  valid token is affected.
 - **BREAKING**: `gated_dispatch` returns one of three things instead of two. It
   now scans the tool result after dispatch, so a result blocked as indirect
   injection comes back as a `ScanVerdict`, alongside the existing `GateDecision`
@@ -120,6 +155,30 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for anyone subclassing `InjectionScanner` directly — an instance built with
   no `name=` argument now takes the subclass's `name` class attribute instead
   of defaulting to `"injection_scan"`.
+- **A circuit breaker that reopened after `reset()` did so silently.**
+  `reset()` assigned a misspelled attribute, so the log-once guard stayed set
+  and the "circuit breaker open — adapter skipped" warning was suppressed on
+  every subsequent trip. The breaker still worked; the operator just got no
+  signal that a scanner had been taken out of the pipeline.
+- **`scan_file` findings report the technique that produced them.** Both of
+  the boundary's scanners omitted `method_family`, which the `Scanner` protocol
+  requires, so every finding was stamped `unknown`. Audit events at this
+  boundary now carry the real technique, and `structural_file` joins the
+  vocabulary. See the `Changed` entry above for the verdict consequence.
+- **`AuditEvent.token_id` was always null, so the documented SIEM join had only
+  one side.** The field exists to correlate a gate decision with the
+  `NetworkAuditEvent` its dispatch produced, and the schema documentation shows
+  the join — but the gate emitted its allow event first and the dispatch token
+  was minted afterwards, so nothing ever filled it in. The token is now issued
+  before the event is built, on the allow path only, and its id is stamped on
+  the event. A denied call still mints no token. Correlating gate decisions
+  against outbound requests works for the first time.
+- **A secret whose value began with `secret://` resolved twice.** After the
+  config loader resolved a reference, `from_yaml()` tested the *result* for the
+  same prefix and resolved again — so an operator whose signing key, dispatch
+  token secret, or pattern-DB secret happened to start with `secret://` got a
+  second lookup and a different key than the one they set. The second pass is
+  gone; the loader's resolved value is used as-is.
 
 ### Removed
 - **BREAKING**: `scan_tool_result_on` — gone from `ConnectorManifest`,
@@ -144,6 +203,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   follows. Set the threshold in `harness.yaml` under `scan_mcp_metadata.block_at`;
   a `config: {block_at_severity: ...}` on the scanner's `AdapterRef` now fails at
   `from_yaml()`.
+- **BREAKING**: the `MCPMetadataScanner` re-export from
+  `harness.adapters.scanners`. It was the only one of seven bundled scanners
+  the package exported, making it a partial second public surface alongside the
+  entry-point group, and which one got exported was arbitrary. Import it from
+  `harness.adapters.scanners.mcp_metadata_scanner`, or resolve it by name
+  through `harness.scanners` like every other scanner.
+- The `harness.sources` entry-point group. It advertised `local`, `skill` and
+  `mcp` as pluggable source adapters, but the group was never in the set
+  `resolve()` accepts, and the `skill` entry pointed at a class that was never
+  written — so nothing could load any of it. Sources are selected by the
+  `transport:` field on a source in `harness.yaml`, which is unchanged. A
+  package registering under this group was never being consulted, so there is
+  nothing to migrate. Contract tests now assert that every declared group is
+  resolvable and every entry-point target imports, so a decorative group cannot
+  be added back unnoticed.
 
 ### Security
 - Tool results reaching the model through `gated_dispatch` are scanned for
@@ -176,6 +250,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A total audit-sink outage fails source connection rather than proceeding.
   `AuditEmissionError` propagates out of the metadata scan, so `load_agent()`
   raises instead of connecting a source whose refusals could not be written.
+- Least privilege applies to the agent that declared it, not only to its
+  children. A deployment that scoped a top-level agent to `[read]` was running
+  it unscoped; the capability set is now enforced where an operator would
+  expect it, and cannot be widened by the calling code.
+- Gate decisions correlate with the network requests they authorised. Without
+  `token_id` on the gate event, an outbound request could be traced back to a
+  token but not to the decision that issued it — the half of the audit trail
+  that answers "what authorised this egress" was missing.
+- Corroborating techniques raise severity at `scan_file` as they already do at
+  every other scan boundary. Two independent techniques agreeing on a category
+  is the strongest signal the ensemble has, and it was structurally unreachable
+  for uploaded files — the one surface where a payload arrives inside a
+  container the content scanners have to be told how to read.
+- A scanner taken out of the pipeline by its circuit breaker is visible again.
+  After any `reset()`, later trips logged nothing, so a deployment could run
+  with a scanner permanently skipped and no warning in the log to say so.
 - Signed jailbreak and identity-spoof rules reach their scanners. Operators who
   applied a bundle to either catalog were running without those rules entirely:
   the harness could not start with them loaded, so the working configuration

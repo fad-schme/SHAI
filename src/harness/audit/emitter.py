@@ -89,7 +89,7 @@ class AuditEmitter:
             object.__setattr__(event, "signature", sig)
 
         results = await asyncio.gather(
-            *[self._emit_one(sink, event) for sink in self._sinks],
+            *[sink.emit(event) for sink in self._sinks],
             return_exceptions=True,
         )
 
@@ -153,10 +153,6 @@ class AuditEmitter:
             *[self._close_one(sink) for sink in self._sinks],
             return_exceptions=True,
         )
-
-    @staticmethod
-    async def _emit_one(sink: AuditSink, event: AnyAuditEvent) -> None:
-        await sink.emit(event)
 
     @staticmethod
     async def _close_one(sink: AuditSink) -> None:

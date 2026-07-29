@@ -1,7 +1,7 @@
-"""AgentRegistry — concrete registry for AgentConfig objects.
+"""AgentRegistry — in-memory registry for AgentConfig objects.
 
-Satisfies SHAIRegistry[AgentConfig] structurally. Adds load(path) and
-reload(path) for file-based agent registration.
+register / deregister / get / list, plus load(path) and reload(path) for
+file-based agent registration.
 
 get() is intentionally sync — required so scope_context_for_subagent
 stays a pure sync function on the hot path.
@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +30,8 @@ log = logging.getLogger(__name__)
 
 
 class AgentRegistry:
-    """Concrete registry for AgentConfig objects.
+    """In-memory registry for AgentConfig objects.
 
-    Satisfies SHAIRegistry[AgentConfig] structurally.
     Adds load(path) and reload(path) — file-based operations.
     get() is sync — hot path requirement for scope_context_for_subagent.
     """
@@ -41,8 +39,6 @@ class AgentRegistry:
     def __init__(self) -> None:
         self._agents: dict[str, AgentConfig] = {}
         self._lock = threading.Lock()
-
-    # ── SHAIRegistry[AgentConfig] interface ──────────────────────────────
 
     async def register(self, item: AgentConfig) -> bool:
         """True = newly registered. False = identical already existed.
@@ -71,10 +67,6 @@ class AgentRegistry:
                 log.info("agent deregistered", extra={"agent_id": item.id})
                 return True
             return False
-
-    async def register_many(self, items: Iterable[AgentConfig]) -> None:
-        for item in items:
-            await self.register(item)
 
     def get(self, agent_id: str) -> AgentConfig:
         """HOT PATH — sync, lock-free.

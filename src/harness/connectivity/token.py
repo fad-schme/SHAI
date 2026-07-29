@@ -15,7 +15,7 @@ destination directly. It is a signed, time-limited assertion that:
   - before {expires_at}
 
 token_id is a UUID that acts as both identifier and nonce. The ShaiTransport
-nonce store (Phase 2+) keys on token_id to prevent replay within the TTL window.
+nonce store keys on token_id to prevent replay within the TTL window.
 """
 from __future__ import annotations
 
@@ -86,22 +86,29 @@ def default_allowed_urls(source_url: str) -> list[str]:
 
 # ── Signing ────────────────────────────────────────────────────────────────
 
-def _payload(token: DispatchToken) -> bytes:
-    """Deterministic JSON of all fields except signature."""
-    data: dict[str, Any] = {
-        "version":         token.version,
-        "token_id":        token.token_id,
-        "agent_id":        token.agent_id,
-        "sub_agent_id":    token.sub_agent_id,
-        "tenant_id":       token.tenant_id,
-        "tool_name":       token.tool_name,
-        "source_name":     token.source_name,
-        "allowed_urls":    token.allowed_urls,
-        "allowed_methods": token.allowed_methods,
-        "issued_at":       token.issued_at.isoformat(),
-        "expires_at":      token.expires_at.isoformat(),
-    }
-    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+# The signed field set, declared once. Signing, encoding, and verification all
+# derive from this — three hand-maintained copies had to agree exactly or
+# signatures silently stopped verifying, which is the failure `canonical_json`
+# was introduced to end for audit events.
+_SIGNED_FIELDS: tuple[str, ...] = (
+    "version", "token_id", "agent_id", "sub_agent_id", "tenant_id",
+    "tool_name", "source_name", "allowed_urls", "allowed_methods",
+    "issued_at", "expires_at",
+)
+
+
+def _claims(token: DispatchToken) -> dict[str, Any]:
+    """The signed fields of a token, datetimes rendered ISO 8601."""
+    claims: dict[str, Any] = {f: getattr(token, f) for f in _SIGNED_FIELDS}
+    claims["issued_at"]  = token.issued_at.isoformat()
+    claims["expires_at"] = token.expires_at.isoformat()
+    return claims
+
+
+def _canonical(claims: dict[str, Any]) -> bytes:
+    """The one encoding the HMAC covers. Signing and verification share it, so
+    a token re-encodes byte-for-byte to what was signed."""
+    return json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
 
 
 def sign_token(
@@ -142,7 +149,7 @@ def sign_token(
         signature="",   # placeholder — replaced below
     )
 
-    sig = hmac.new(secret, _payload(token), hashlib.sha256).hexdigest()
+    sig = hmac.new(secret, _canonical(_claims(token)), hashlib.sha256).hexdigest()
 
     # Return token with real signature (dataclass is frozen — use replace pattern)
     import dataclasses
@@ -151,21 +158,7 @@ def sign_token(
 
 def encode_token(token: DispatchToken) -> str:
     """Encode a DispatchToken to a base64url string for the X-Shai-Token header."""
-    data: dict[str, Any] = {
-        "version":         token.version,
-        "token_id":        token.token_id,
-        "agent_id":        token.agent_id,
-        "sub_agent_id":    token.sub_agent_id,
-        "tenant_id":       token.tenant_id,
-        "tool_name":       token.tool_name,
-        "source_name":     token.source_name,
-        "allowed_urls":    token.allowed_urls,
-        "allowed_methods": token.allowed_methods,
-        "issued_at":       token.issued_at.isoformat(),
-        "expires_at":      token.expires_at.isoformat(),
-        "signature":       token.signature,
-    }
-    raw = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    raw = _canonical({**_claims(token), "signature": token.signature})
     return base64.urlsafe_b64encode(raw).decode()
 
 
@@ -190,20 +183,15 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
     except Exception as e:
         raise TokenError(f"malformed token: {e}") from e
 
-    required = {
-        "version", "token_id", "agent_id", "tenant_id",
-        "tool_name", "source_name", "allowed_urls", "allowed_methods",
-        "issued_at", "expires_at", "signature",
-    }
-    missing = required - data.keys()
+    missing = (set(_SIGNED_FIELDS) | {"signature"}) - data.keys()
     if missing:
-        raise TokenError(f"token missing fields: {missing}")
+        raise TokenError(f"token missing fields: {sorted(missing)}")
 
     claimed_sig = data.pop("signature")
 
-    # Verify signature over payload without the signature field
-    payload_bytes = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
-    expected_sig  = hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
+    # Re-encode whatever remains, not just the fields we expect: an extra field
+    # smuggled into the token changes the bytes and must fail the comparison.
+    expected_sig = hmac.new(secret, _canonical(data), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected_sig, claimed_sig):
         raise TokenError("signature mismatch")
 

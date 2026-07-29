@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from harness.boundaries.argument_policy import check_argument_rules, check_irreversibility
@@ -63,6 +64,8 @@ async def run(
     tenant_id: str,
     scan_args_for_tags: frozenset[str] = frozenset({"sensitive"}),
     turn_signals: TurnSignals | None = None,
+    source_name: str = "local",
+    issue_token: Callable[[], tuple[str, str]] | None = None,
 ) -> GateDecision:
     """Gate one tool call.
 
@@ -70,6 +73,11 @@ async def run(
     tools:        pre-resolved {name: Tool} for this agent (not looked up here).
     turn_signals: cross-boundary signal bus. When present, layer 6 correlates
                   earlier boundary findings against the proposed tool call.
+    source_name:  which source owns the tool; stamped on the returned decision.
+    issue_token:  mints a dispatch token, returning (encoded, token_id). Called
+                  only when the gate allows, and before the audit event is built
+                  so token_id joins the event to the NetworkAuditEvent the
+                  dispatch produces. None when connectivity is disabled.
     """
     start = now_ms()
 
@@ -78,14 +86,14 @@ async def run(
         try:
             effective: AgentConfig | SubAgentConfig = agent_config.get_sub_agent(ctx.sub_agent_id)
         except Exception as e:
-            return await _deny(str(e), name, None, ctx, emitter, start, tenant_id,
+            return await emit_deny(str(e), name, None, ctx, emitter, start, tenant_id,
                                audit_tags=agent_config.audit_tags)
     else:
         effective = agent_config
 
     # ── Layer 1: allowed_tool_names hard gate ─────────────────────────────
     if name not in effective.allowed_tool_names:
-        return await _deny(
+        return await emit_deny(
             f"tool '{name}' not in agent allowed_tool_names",
             name, None, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -94,7 +102,7 @@ async def run(
     # ── Tool lookup (from pre-resolved dict — no registry call) ──────────
     tool = tools.get(name)
     if tool is None:
-        return await _deny(
+        return await emit_deny(
             f"tool '{name}' not registered",
             name, None, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -104,26 +112,38 @@ async def run(
     try:
         check_argument_rules(tool, args, ctx)
     except ArgumentViolationError as e:
-        return await _deny(str(e), name, tool, ctx, emitter, start, tenant_id,
+        return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
                            audit_tags=agent_config.audit_tags)
 
     # ── Layer 3: irreversibility gate ─────────────────────────────────────
     try:
         check_irreversibility(tool, ctx)
     except IrreversibleActionError as e:
-        return await _deny(str(e), name, tool, ctx, emitter, start, tenant_id,
+        return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
                            audit_tags=agent_config.audit_tags)
 
-    # ── Layer 4: allowed_tags subagent capability gate ────────────────────
+    # ── Layer 4: allowed_tags capability gate ─────────────────────────────
+    # Applies to parents and subagents alike. The effective profile's declared
+    # allowed_tags always binds — a parent that declares `allowed_tags: [read]`
+    # is gated by it, not just its children. ctx.allowed_tags narrows further
+    # when a subagent context carries one.
+    #
+    # Intersected rather than "ctx wins": AgentContext is caller-constructible,
+    # so preferring it would let a hand-built context widen its own capability
+    # set, while preferring the config alone would ignore a deliberately
+    # narrowed one. Neither side can widen the other.
+    capability_tags = set(effective.allowed_tags)
     if ctx.allowed_tags is not None:
-        extra_tags = set(tool.tags) - set(ctx.allowed_tags)
-        if extra_tags:
-            return await _deny(
-                f"tool '{name}' requires tags {sorted(extra_tags)} "
-                f"not in subagent capability set",
-                name, tool, ctx, emitter, start, tenant_id,
-                audit_tags=agent_config.audit_tags,
-            )
+        capability_tags &= set(ctx.allowed_tags)
+    extra_tags = set(tool.tags) - capability_tags
+    if extra_tags:
+        scope = "subagent" if ctx.sub_agent_id is not None else "agent"
+        return await emit_deny(
+            f"tool '{name}' requires tags {sorted(extra_tags)} "
+            f"not in {scope} capability set",
+            name, tool, ctx, emitter, start, tenant_id,
+            audit_tags=agent_config.audit_tags,
+        )
 
     # ── Layer 5: intersection policy ──────────────────────────────────────
     combined_rules = list(effective.policy_rules)
@@ -138,14 +158,14 @@ async def run(
     except PolicyEvaluationError as e:
         log.error("policy evaluation error",
                   extra={"tool": name, "error": str(e), **ctx.to_log_fields()})
-        return await _deny(
+        return await emit_deny(
             f"policy evaluation failed: {e}",
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
 
     if policy_decision.action == "deny":
-        return await _deny(
+        return await emit_deny(
             policy_decision.reason or f"denied by rule '{policy_decision.rule_id}'",
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -164,7 +184,7 @@ async def run(
     correlation = _check_signal_correlation(tool, turn_signals)
     if isinstance(correlation, GateDecision):
         # Pattern A denial — emit and return
-        return await _deny(
+        return await emit_deny(
             correlation.deny_reason or "signal correlation denial",
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
@@ -190,13 +210,20 @@ async def run(
                 continue
             blocking = [f for f in result.findings if f.severity >= Severity.HIGH]
             if blocking:
-                return await _deny(
+                return await emit_deny(
                     f"arg scan blocked: {blocking[0].category}",
                     name, tool, ctx, emitter, start, tenant_id,
                     audit_tags=agent_config.audit_tags,
                 )
 
     # ── Allow ──────────────────────────────────────────────────────────────
+    # The token is minted here, before the event is built, so token_id lands on
+    # the gate event that authorised it. Issuing it afterwards — in the caller —
+    # left AuditEvent.token_id permanently null and the documented SIEM join
+    # with only a right-hand side. issue_token is called only on this path, so
+    # a denied call still mints nothing.
+    token: tuple[str, str] | None = issue_token() if issue_token is not None else None
+
     event = AuditEvent.build(
         boundary=BoundaryName.TOOL_CALL_GATE,
         decision=Decision.REDACT if policy_decision.action == "redact" else Decision.ALLOW,
@@ -205,6 +232,7 @@ async def run(
         duration_ms=now_ms() - start,
         tool_name=name,
         transport=tool.transport,
+        token_id=token[1] if token is not None else None,
         adapters=[policy.name],
         audit_tags=agent_config.audit_tags,
     )
@@ -212,10 +240,12 @@ async def run(
     return GateDecision(
         allowed=True,
         redacted_args=effective_args if policy_decision.action == "redact" else None,
+        dispatch_token=token[0] if token is not None else None,
+        source_name=source_name,
     )
 
 
-async def _deny(
+async def emit_deny(
     reason: str,
     tool_name: str,
     tool: Tool | None,
@@ -226,6 +256,12 @@ async def _deny(
     *,
     audit_tags: dict[str, str] | None = None,
 ) -> GateDecision:
+    """Emit the gate's deny event and return the decision.
+
+    The one place a tool_call_gate deny is written. The facade's pre-gate
+    refusals (rate limit, session budget, unregistered agent) call it too, so
+    every deny at this boundary produces the same event shape.
+    """
     event = AuditEvent.build(
         boundary=BoundaryName.TOOL_CALL_GATE,
         decision=Decision.DENY,

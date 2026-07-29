@@ -1,6 +1,6 @@
-"""ToolRegistry — concrete registry for Tool objects.
+"""ToolRegistry — in-memory registry for Tool objects.
 
-Satisfies SHAIRegistry[Tool]. Adds as_dict() for startup tool resolution.
+register / deregister / get / list, plus as_dict() for startup tool resolution.
 
 Writes hold a threading.Lock (startup only).
 Reads are lock-free — GIL-safe dict reads in CPython.
@@ -18,10 +18,9 @@ log = logging.getLogger(__name__)
 
 
 class ToolRegistry:
-    """Concrete registry for Tool objects.
+    """In-memory registry for Tool objects.
 
-    Satisfies SHAIRegistry[Tool] structurally.
-    Adds as_dict() — used by Harness._resolve_tools() at load_agent() time.
+    as_dict() is used by Harness._resolve_tools() at load_agent() time.
     """
 
     name = "memory"
