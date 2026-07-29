@@ -38,6 +38,59 @@
 patterns:
 
   # -----------------------------------------------------------------------
+  # General authority claim: a claimed privileged principal must occur close
+  # to an authority-bearing action. Neither signal blocks independently.
+  # -----------------------------------------------------------------------
+  - name: identity_spoof.authority_claim
+    meta:
+      description: "Claimed authority principal combined with a nearby privilege-bearing directive"
+      threat_level: 5
+      severity: high
+      category: identity_spoof.authority_claim
+    strings:
+      claimed_authority_principal: >-
+        (?ix)(?:\b(?:as|i\s+am(?:\s+from)?|this\s+is|from|message\s+(?:comes\s+|originates\s+)?from
+        |directive\s+from
+        |command\s+from|notice\s+from|request\s+from|signed\s+by|authorized\s+by
+        |pre-approved\s+by|spoken\s+to\s+by|speaking\s+to|on\s+behalf\s+of|by\s+order\s+of)
+        \s+(?:(?:the|your|an?|authenticated|certified|internal|model(?:'s)?|level-\d+)\s+)*
+        (?:system\s+administrator|root\s+administrator|administrator|admin|developer|operator
+        |model\s+provider|provider|openai|anthropic(?:'s)?(?:\s+(?:safety\s+team|support))?
+        |safety\s+(?:team|officer|review\s+board|layer)|security\s+officer
+        |management|upper\s+management
+        |ceo|cto|product\s+manager|orchestrator|parent\s+(?:agent|orchestrator|process)
+        |harness(?:\s+administrator)?|shai(?:\s+harness)?|system
+        |trusted\s+(?:service|upstream\s+service|parent\s+process)
+        |platform\s+(?:administrator|trust\s+council)
+        |(?:audit[-\s]+)?privileged\s+agent|internal\s+qa\s+engineer
+        |authorized\s+red[-\s]+team\s+tester|model(?:'s)?\s+operators?|creator
+        |elevated\s+principal)\b
+        |\b(?:system\s+administrator|administrator|developer|operator|model\s+provider
+        |openai|anthropic|safety\s+team|management|orchestrator|parent\s+agent
+        |harness|shai|system|trusted\s+service)\b.{0,20}
+        \b(?:has|have|hereby|itself)\s+(?:authorized|granted|instructed|approved|overridden)\b
+        |\b(?:this\s+)?(?:user|requester)\s+(?:is\s+(?:an?\s+)?certified\s+developer\s+with
+        |has)\s+(?:explicit\s+|elevated\s+)?(?:admin(?:istrator)?\s+)?(?:permissions?|access|privileges?)\b)
+      authority_bearing_action: >-
+        (?ix)\b(?:authoriz(?:e|es|ed|ation)|grant(?:s|ed)?|override[sd]?|disable[sd]?
+        |bypass(?:es|ed)?|skip(?:s|ped)?|compl(?:y|ies|ied)|elevat(?:e|es)
+        |ignore\s+(?:the\s+)?(?:usual|normal|safety|security)?\s*restrictions?
+        |ignore\b.{0,30}\b(?:safety\s+guidelines|safety\s+checks|previous\s+instructions)
+        |disregard\s+(?:all\s+)?(?:prior\s+)?(?:guidelines|instructions)
+        |cancel\s+(?:(?:all\s+)?safety|(?:all\s+)?previous\s+instructions)
+        |filters?\s+(?:are|have\s+been)\s+lifted
+        |pre-approved|unrestricted\s+access|you\s+must|instructs?|commands?|requires?
+        |giving\s+you\s+permission|follow\b.{0,25}\binstructions?\s+absolutely
+        |safety\s+is\s+suspended)\b
+    match:
+      within_chars: 180
+      all:
+        - name: authority_principal
+          any: [claimed_authority_principal]
+        - name: authority_action
+          any: [authority_bearing_action]
+
+  # -----------------------------------------------------------------------
   # Claimed orchestrator / parent agent authority
   # A message claiming to be FROM the orchestrator or parent agent and
   # using that claimed identity to issue an instruction or grant permission.
@@ -48,6 +101,7 @@ patterns:
       threat_level: 5
       severity: high
       category: identity_spoof.claimed_orchestrator
+    match: any
     strings:
       as_the_orchestrator:     '(?i)\bas\s+the\s+(orchestrator|parent\s+agent|master\s+agent|coordinator)\b.{0,60}\b(authorize|instruct|override|allow|grant|require|tell\s+you)\b'
       from_orchestrator:       '(?i)\b(from|message\s+from|sent\s+by|on\s+behalf\s+of)\b.{0,20}\b(the\s+)?(orchestrator|parent\s+agent|master\s+agent)\b.{0,40}\b(you\s+must|you\s+should|please|now)\b'
@@ -68,6 +122,7 @@ patterns:
       threat_level: 5
       severity: high
       category: identity_spoof.claimed_system_authority
+    match: any
     strings:
       system_colon_imperative:  '(?i)(?:^|[\s>#*`\-])(system|harness|shai|security)\s*:\s*.{0,20}\b(override|allow|bypass|grant|disable|ignore)\b'
       system_message_override:  '(?i)\b(this\s+is\s+a?\s+)?(system|harness|security)\s+(message|instruction|directive|command)\b.{0,40}\b(override|bypass|allow|grant|disable)\b'
@@ -88,6 +143,7 @@ patterns:
       threat_level: 4
       severity: high
       category: identity_spoof.claimed_peer_privilege
+    match: any
     strings:
       i_am_agent_with_permission:  '(?i)\bI\s+am\s+(the\s+)?\w+\s+agent\b.{0,40}\b(have\s+permission|am\s+authorized|am\s+allowed|have\s+access)\b'
       agent_id_override:           '(?i)\b(my\s+agent[_\s]?id|agent[_\s]?id\s*[:=])\s*\S+.{0,30}\b(override|allow|grant|bypass)\b'
@@ -108,6 +164,7 @@ patterns:
       threat_level: 5
       severity: high
       category: identity_spoof.tool_result_authority_claim
+    match: any
     strings:
       end_of_result_new_instruction:  '(?i)\b(end\s+of\s+(document|result|data|content))\b.{0,60}\b(new\s+instructions?|SYSTEM|orchestrator\s+says)\b'
       injected_system_block:          '(?i)(?:-{2,}|={2,}|#{2,})\s*(system|orchestrator|harness)\s*(?:-{2,}|={2,}|#{2,})'

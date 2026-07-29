@@ -155,6 +155,7 @@ def _make_rule(rule_id: str, pattern: str, category: str = "test_cat") -> dict:
     return {
         "name": rule_id,
         "meta": {"severity": "high", "category": category, "threat_level": 5},
+        "match": "any",
         "strings": {"a": pattern},
     }
 
