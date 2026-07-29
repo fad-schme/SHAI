@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
+from harness.config.schema import SourceConfig
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
 from harness.core.types import Transport
@@ -13,6 +14,14 @@ from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, MCPSource, SourceRegistry
 from harness.tools.tool import Tool
+
+
+def _local(name: str = "docs", **kw) -> SourceConfig:
+    return SourceConfig(name=name, **kw)
+
+
+def _mcp(name: str = "slack", url: str = "https://mcp.slack.com/sse", **kw) -> SourceConfig:
+    return SourceConfig(name=name, transport=Transport.MCP, url=url, **kw)
 
 CTX = AgentContext(agent_id="test_agent")
 
@@ -67,7 +76,7 @@ async def _make_registry(*tools: Tool) -> ToolRegistry:
 
 async def test_register_and_get():
     reg = SourceRegistry(_make_policy())
-    src = LocalSource(name="docs", registry=ToolRegistry())
+    src = LocalSource(_local("docs"), registry=ToolRegistry())
     await reg.register(src)
     got = await reg.get("docs")
     assert got is src
@@ -75,7 +84,7 @@ async def test_register_and_get():
 
 async def test_register_same_object_idempotent():
     reg = SourceRegistry(_make_policy())
-    src = LocalSource(name="docs", registry=ToolRegistry())
+    src = LocalSource(_local("docs"), registry=ToolRegistry())
     r1 = await reg.register(src)
     r2 = await reg.register(src)
     assert r1 is True
@@ -84,8 +93,8 @@ async def test_register_same_object_idempotent():
 
 async def test_register_different_object_same_name_raises():
     reg = SourceRegistry(_make_policy())
-    src1 = LocalSource(name="docs", registry=ToolRegistry())
-    src2 = LocalSource(name="docs", registry=ToolRegistry())
+    src1 = LocalSource(_local("docs"), registry=ToolRegistry())
+    src2 = LocalSource(_local("docs"), registry=ToolRegistry())
     await reg.register(src1)
     with pytest.raises(ConfigError):
         await reg.register(src2)
@@ -99,7 +108,7 @@ async def test_get_unknown_raises():
 
 async def test_deregister():
     reg = SourceRegistry(_make_policy())
-    src = LocalSource(name="docs", registry=ToolRegistry())
+    src = LocalSource(_local("docs"), registry=ToolRegistry())
     await reg.register(src)
     removed = await reg.deregister(src)
     assert removed is True
@@ -109,15 +118,15 @@ async def test_deregister():
 
 async def test_deregister_unknown_returns_false():
     reg = SourceRegistry(_make_policy())
-    src = LocalSource(name="docs", registry=ToolRegistry())
+    src = LocalSource(_local("docs"), registry=ToolRegistry())
     result = await reg.deregister(src)
     assert result is False
 
 
 async def test_list():
     reg = SourceRegistry(_make_policy())
-    s1 = LocalSource(name="a", registry=ToolRegistry())
-    s2 = LocalSource(name="b", registry=ToolRegistry())
+    s1 = LocalSource(_local("a"), registry=ToolRegistry())
+    s2 = LocalSource(_local("b"), registry=ToolRegistry())
     await reg.register(s1)
     await reg.register(s2)
     sources = await reg.list()
@@ -129,7 +138,7 @@ async def test_list():
 async def test_activate_returns_tools():
     tool = Tool(name="search", tags=["read"], transport=Transport.LOCAL)
     tool_reg = await _make_registry(tool)
-    src = LocalSource(name="docs", registry=tool_reg, tool_names=["search"])
+    src = LocalSource(_local("docs", tool_names=["search"]), registry=tool_reg)
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(src)
@@ -141,7 +150,7 @@ async def test_activate_returns_tools():
 async def test_activate_suppressed_by_policy():
     tool = Tool(name="search", tags=["read"], transport=Transport.LOCAL)
     tool_reg = await _make_registry(tool)
-    src = LocalSource(name="docs", registry=tool_reg, tool_names=["search"])
+    src = LocalSource(_local("docs", tool_names=["search"]), registry=tool_reg)
 
     reg = SourceRegistry(_make_policy(active=False))  # policy blocks it
     await reg.register(src)
@@ -193,8 +202,8 @@ async def test_activate_merges_multiple_sources():
     t2 = Tool(name="send_email", tags=["write"], transport=Transport.LOCAL)
     reg1 = await _make_registry(t1)
     reg2 = await _make_registry(t2)
-    s1 = LocalSource(name="read_src",  registry=reg1, tool_names=["search"])
-    s2 = LocalSource(name="write_src", registry=reg2, tool_names=["send_email"])
+    s1 = LocalSource(_local("read_src", tool_names=["search"]),  registry=reg1)
+    s2 = LocalSource(_local("write_src", tool_names=["send_email"]), registry=reg2)
 
     reg = SourceRegistry(_make_policy(active=True))
     await reg.register(s1)
@@ -210,7 +219,7 @@ async def test_local_source_returns_named_tools():
     t1 = Tool(name="search", tags=["read"], transport=Transport.LOCAL)
     t2 = Tool(name="write", tags=["write"], transport=Transport.LOCAL)
     reg = await _make_registry(t1, t2)
-    src = LocalSource(name="read_only", registry=reg, tool_names=["search"])
+    src = LocalSource(_local("read_only", tool_names=["search"]), registry=reg)
     tools = await src.load(CTX)
     assert len(tools) == 1
     assert tools[0].name == "search"
@@ -220,7 +229,7 @@ async def test_local_source_all_tools_when_no_names():
     t1 = Tool(name="a", tags=[], transport=Transport.LOCAL)
     t2 = Tool(name="b", tags=[], transport=Transport.LOCAL)
     reg = await _make_registry(t1, t2)
-    src = LocalSource(name="all", registry=reg)
+    src = LocalSource(_local("all"), registry=reg)
     tools = await src.load(CTX)
     assert {t.name for t in tools} == {"a", "b"}
 
@@ -228,8 +237,8 @@ async def test_local_source_all_tools_when_no_names():
 async def test_local_source_merges_tags():
     tool = Tool(name="search", tags=["read"], transport=Transport.LOCAL)
     reg = await _make_registry(tool)
-    src = LocalSource(name="docs", registry=reg, tool_names=["search"],
-                      tags=["internal"])
+    src = LocalSource(_local("docs", tool_names=["search"], tags=["internal"]),
+                      registry=reg)
     tools = await src.load(CTX)
     assert "internal" in tools[0].tags
     assert "read" in tools[0].tags
@@ -237,54 +246,47 @@ async def test_local_source_merges_tags():
 
 async def test_local_source_missing_tool_skipped():
     reg = await _make_registry()  # empty registry
-    src = LocalSource(name="docs", registry=reg, tool_names=["nonexistent"])
+    src = LocalSource(_local("docs", tool_names=["nonexistent"]), registry=reg)
     tools = await src.load(CTX)
     assert tools == []
 
 
 async def test_local_source_close_noop():
-    src = LocalSource(name="docs", registry=ToolRegistry())
+    src = LocalSource(_local("docs"), registry=ToolRegistry())
     await src.close()  # must not raise
 
 
 # ── MCPSource construction and config ─────────────────────────────────────
 
 def test_mcp_source_constructed():
-    src = MCPSource(
-        name="slack",
-        url="https://mcp.slack.com/sse",
-        credentials={"token": "tok_abc"},
-        tags=["messaging"],
-    )
+    src = MCPSource(_mcp(credentials={"token": "tok_abc"}, tags=["messaging"]))
     assert src.name == "slack"
     assert src.transport == Transport.MCP
     assert "messaging" in src.tags
     assert not src._connected
 
 
-async def test_mcp_source_requires_url():
-    """MCPSource requires a url — httpx is now a core dependency (no ImportError test needed)."""
-    # httpx is a core shai dependency — no longer gated by a lazy import.
-    # Verify MCPSource still enforces url is required for mcp transport."""
-    # (nothing to monkeypatch — just confirm httpx is importable)
-    import httpx  # noqa: F401
+def test_mcp_source_requires_url():
+    """A connector-backed config reaching MCPSource unresolved fails loudly.
 
-    src = MCPSource(name="slack", url="https://mcp.slack.com/sse")
-    # httpx is always available — no error expected
-    pass
-    if False:
-        await src.load(CTX)
+    SourceConfig allows url=None when connector: is set — from_yaml merges the
+    manifest before constructing. Skipping that merge must raise, not produce a
+    source with no endpoint.
+    """
+    unresolved = SourceConfig(name="slack", transport=Transport.MCP, connector="slack")
+    with pytest.raises(ConfigError, match="url is required"):
+        MCPSource(unresolved)
 
 
 async def test_mcp_source_call_raises_when_not_connected():
-    src = MCPSource(name="slack", url="https://mcp.slack.com/sse")
+    src = MCPSource(_mcp())
     from harness.core.errors import ConfigError
     with pytest.raises(ConfigError, match="not connected"):
         await src.call("search", {})
 
 
 async def test_mcp_source_close_when_not_connected():
-    src = MCPSource(name="slack", url="https://mcp.slack.com/sse")
+    src = MCPSource(_mcp())
     await src.close()  # must not raise
     assert not src._connected
 
@@ -292,21 +294,21 @@ async def test_mcp_source_close_when_not_connected():
 # ── MCPSource header building ─────────────────────────────────────────────
 
 def test_mcp_token_credential_becomes_bearer():
-    src = MCPSource(name="s", url="http://x", credentials={"token": "mytoken"})
+    src = MCPSource(_mcp("s", "http://x", credentials={"token": "mytoken"}))
     headers = src._build_headers()
     assert headers.get("Authorization") == "Bearer mytoken"
 
 
 def test_mcp_authorization_credential_used_asis():
-    src = MCPSource(name="s", url="http://x",
-                    credentials={"Authorization": "Basic abc"})
+    src = MCPSource(_mcp("s", "http://x",
+                           credentials={"Authorization": "Basic abc"}))
     headers = src._build_headers()
     assert headers["Authorization"] == "Basic abc"
 
 
 def test_mcp_custom_header_passed_through():
-    src = MCPSource(name="s", url="http://x",
-                    credentials={"X-Custom-Header": "value"})
+    src = MCPSource(_mcp("s", "http://x",
+                           credentials={"X-Custom-Header": "value"}))
     headers = src._build_headers()
     assert headers["X-Custom-Header"] == "value"
 
@@ -573,7 +575,7 @@ async def test_policy_suppressed_source_skips_regardless_of_required():
 
     tr = ToolRegistry()
     await tr.register(Tool(name="search", tags=["read"], transport=Transport.LOCAL))
-    src = LocalSource(name="docs", registry=tr, tool_names=["search"])
+    src = LocalSource(_local("docs", tool_names=["search"]), registry=tr)
 
     reg = SourceRegistry(_make_policy(active=False))  # policy suppresses
     await reg.register(src)

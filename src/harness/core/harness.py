@@ -262,34 +262,20 @@ class SHAI:
                          extra={"connector": manifest.id, "source": src_cfg.name})
 
             if src_cfg.transport == "mcp":
-                # Resolve credential values (already resolved by loader pass)
+                # Credential values were resolved by the loader pass.
+                # connectivity + emitter let _connect() wire ShaiTransport.
                 source = MCPSource(
-                    name=src_cfg.name,
-                    url=src_cfg.url,
-                    credentials=dict(src_cfg.credentials),
-                    tags=list(src_cfg.tags),
-                    allowed_urls=list(src_cfg.allowed_urls),
-                    allowed_methods=list(src_cfg.allowed_methods),
+                    src_cfg,
+                    connectivity=config.connectivity,
+                    emitter=emitter,
+                    tenant_id=config.tenant_id,
+                    metadata_scanners=mcp_metadata_scanners,
+                    metadata_enabled=config.scan_mcp_metadata.enabled,
+                    metadata_block_at=config.scan_mcp_metadata.block_at,
                 )
-                # Pass connectivity config + emitter so ShaiTransport
-                # can be wired at _connect() time
-                source._connectivity = config.connectivity
-                source._emitter      = emitter
-                source._tenant_id    = config.tenant_id
-                # Wire connector manifest enforcement data
-                source._connector_tool_specs = dict(src_cfg.connector_tool_specs)
-                # Wire MCP metadata scanner config
-                source._mcp_metadata_scanners     = mcp_metadata_scanners
-                source._scan_mcp_metadata_enabled = config.scan_mcp_metadata.enabled
-                source._mcp_metadata_block_at     = config.scan_mcp_metadata.block_at
             else:
                 # LOCAL — backed by the shared tool registry
-                source = LocalSource(
-                    name=src_cfg.name,
-                    registry=tool_registry,
-                    tool_names=list(src_cfg.tool_names) or None,
-                    tags=list(src_cfg.tags),
-                )
+                source = LocalSource(src_cfg, registry=tool_registry)
             await source_registry.register(source)
 
         rl_cfg = config.check_tool_call.rate_limit

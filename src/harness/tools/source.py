@@ -28,17 +28,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
 from harness.core.errors import ConfigError, MCPInvocationError
-from harness.core.types import Transport
+from harness.core.types import Severity, Transport
 from harness.tools.registry import ToolRegistry
 from harness.tools.tool import Tool
 
 if TYPE_CHECKING:
+    from harness.audit.emitter import AuditEmitter
+    from harness.config.schema import SourceConfig
+    from harness.connectivity.config import ConnectivityConfig
     from harness.core.context import AgentContext
     from harness.policy.engine import PolicyEngine
 
@@ -224,24 +227,21 @@ class SourceRegistry:
 class LocalSource:
     """Returns a named subset of already-registered local tools.
 
-    tool_names:  explicit list of tool names to include. If empty, all
-                 tools in the registry are returned (filtered by tags).
-    tags:        additional tags applied to all returned tools.
+    Reads its shape from the SourceConfig that declared it:
+      tool_names:  explicit list of tool names to include. If empty, all
+                   tools in the registry are returned (filtered by tags).
+      tags:        additional tags applied to all returned tools.
+
+    registry is the one collaborator the config cannot carry.
     """
 
     transport = Transport.LOCAL
 
-    def __init__(
-        self,
-        registry: ToolRegistry,
-        name: str = "local",
-        tool_names: list[str] | None = None,
-        tags: list[str] | None = None,
-    ) -> None:
-        self.name       = name
-        self.tags       = list(tags or [])
-        self._registry  = registry
-        self._tool_names = list(tool_names or [])
+    def __init__(self, src_cfg: SourceConfig, *, registry: ToolRegistry) -> None:
+        self.name        = src_cfg.name
+        self.tags        = list(src_cfg.tags)
+        self._registry   = registry
+        self._tool_names = list(src_cfg.tool_names)
 
     async def load(self, ctx: AgentContext) -> list[Tool]:
         if self._tool_names:
@@ -381,31 +381,51 @@ class MCPSource:
 
     def __init__(
         self,
-        name: str,
-        url: str,
-        credentials:     dict[str, str] | None = None,
-        tags:            list[str] | None = None,
-        allowed_urls:    list[str] | None = None,
-        allowed_methods: list[str] | None = None,
+        src_cfg: SourceConfig,
+        *,
+        connectivity:      ConnectivityConfig | None = None,
+        emitter:           AuditEmitter | None = None,
+        tenant_id:         str = "default",
+        metadata_scanners: Sequence[Any] = (),
+        metadata_enabled:  bool = True,
+        metadata_block_at: Severity | None = None,
     ) -> None:
-        self.name  = name
-        self.tags  = list(tags or [])
-        self._url  = url.rstrip("/")
-        self._creds: dict[str, str] = credentials or {}
+        """Build an MCP source from its declaration plus harness collaborators.
 
-        # Connectivity — populated when connectivity.enabled in harness.yaml
-        self._allowed_urls:         list[str] = list(allowed_urls or [])
-        self._allowed_methods:      list[str] = list(allowed_methods or [])
-        self._connectivity:         Any = None   # ConnectivityConfig — set by harness
-        self._emitter:              Any = None   # AuditEmitter — set by harness
-        self._tenant_id:            str = "default"
+        src_cfg carries everything the operator declared — url, credentials,
+        tags, the connectivity allow-lists, and the connector manifest's
+        per-tool specs. A connector-backed config must have its manifest
+        resolved first; url is required by the time the source is built.
+
+        connectivity/emitter default to None, which is the connectivity-off
+        posture: _connect() then builds no ShaiTransport. metadata_scanners
+        defaults to empty, which makes metadata scanning a no-op regardless
+        of metadata_enabled.
+        """
+        if not src_cfg.url:
+            raise ConfigError(
+                f"MCP source '{src_cfg.name}': url is required — resolve the "
+                "connector manifest before constructing the source",
+                op="mcp_source_init",
+            )
+        self.name  = src_cfg.name
+        self.tags  = list(src_cfg.tags)
+        self._url  = src_cfg.url.rstrip("/")
+        self._creds: dict[str, str] = dict(src_cfg.credentials)
+
+        # Connectivity — meaningful when connectivity.enabled in harness.yaml
+        self._allowed_urls:         list[str] = list(src_cfg.allowed_urls)
+        self._allowed_methods:      list[str] = list(src_cfg.allowed_methods)
+        self._connectivity:         ConnectivityConfig | None = connectivity
+        self._emitter:              AuditEmitter | None = emitter
+        self._tenant_id:            str = tenant_id
         self._agent_ctx:            Any = None   # AgentContext — set at load() time
-        # Connector manifest enforcement
-        self._connector_tool_specs:       dict  = {}    # tool_name → {tags, action}
-        # MCP metadata scanner — stamped by harness at construction
-        self._mcp_metadata_scanners:      list  = []    # MCPMetadataScanner instances
-        self._scan_mcp_metadata_enabled:  bool  = True
-        self._mcp_metadata_block_at:      object = None  # Severity
+        # Connector manifest enforcement — tool_name → {tags, action}
+        self._connector_tool_specs:       dict = dict(src_cfg.connector_tool_specs)
+        # MCP metadata scanning — MCPMetadataScanner instances and their gate
+        self._mcp_metadata_scanners:      list = list(metadata_scanners)
+        self._scan_mcp_metadata_enabled:  bool = metadata_enabled
+        self._mcp_metadata_block_at:      Severity | None = metadata_block_at
 
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
@@ -501,8 +521,6 @@ class MCPSource:
         be registered. findings is the combined list across all scanners.
         Called only when scan_mcp_metadata.enabled and scanners are present.
         """
-        from harness.core.types import Severity
-
         all_findings = []
         for scanner in self._mcp_metadata_scanners:
             try:

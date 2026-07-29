@@ -5,12 +5,17 @@ import asyncio
 
 import pytest
 
+from harness.config.schema import SourceConfig
 from harness.core.context import AgentContext
 from harness.core.types import Transport
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, SkillSource, SourceRegistry
 from harness.tools.tool import Tool
+
+
+def _local(name: str = "local", **kw) -> SourceConfig:
+    return SourceConfig(name=name, **kw)
 
 
 def make_tool(name: str, tags: list[str] | None = None) -> Tool:
@@ -29,7 +34,7 @@ async def make_registry(*tools: Tool) -> ToolRegistry:
 async def test_local_satisfies_toolsource_protocol():
     """Duck-type check — ToolSource is a Protocol, not runtime_checkable."""
     reg = await make_registry(make_tool("search_docs"))
-    src = LocalSource(registry=reg)
+    src = LocalSource(_local(), registry=reg)
     assert hasattr(src, "name")
     assert hasattr(src, "transport")
     assert hasattr(src, "tags")
@@ -48,14 +53,14 @@ async def test_skill_satisfies_toolsource_protocol():
 # ── LocalSource ───────────────────────────────────────────────────────────
 
 async def test_local_name_and_transport():
-    src = LocalSource(registry=ToolRegistry())
+    src = LocalSource(_local(), registry=ToolRegistry())
     assert src.name == "local"
     assert src.transport == Transport.LOCAL
 
 
 async def test_local_returns_registered_tools():
     reg = await make_registry(make_tool("search_docs"), make_tool("fetch_doc"))
-    src = LocalSource(registry=reg)
+    src = LocalSource(_local(), registry=reg)
     ctx = AgentContext(
         agent_id="a1")
     tools = await src.load(ctx)
@@ -64,7 +69,7 @@ async def test_local_returns_registered_tools():
 
 
 async def test_local_empty_registry():
-    src = LocalSource(registry=ToolRegistry())
+    src = LocalSource(_local(), registry=ToolRegistry())
     ctx = AgentContext(
         agent_id="a1")
     tools = await src.load(ctx)
@@ -77,7 +82,7 @@ async def test_local_subagent_tag_filter():
         make_tool("read_tool",  tags=["read"]),
         make_tool("write_tool", tags=["external_write"]),
     )
-    src = LocalSource(registry=reg)
+    src = LocalSource(_local(), registry=reg)
     ctx = AgentContext(
         agent_id="a1", sub_agent_id="sub",
         allowed_tags=["read"],
@@ -94,7 +99,7 @@ async def test_local_top_level_no_tag_filter():
         make_tool("read_tool",  tags=["read"]),
         make_tool("write_tool", tags=["external_write"]),
     )
-    src = LocalSource(registry=reg)
+    src = LocalSource(_local(), registry=reg)
     ctx = AgentContext(
         agent_id="a1")
     tools = await src.load(ctx)
@@ -104,7 +109,7 @@ async def test_local_top_level_no_tag_filter():
 
 async def test_local_concurrent_safe():
     reg = await make_registry(make_tool("search_docs"))
-    src = LocalSource(registry=reg)
+    src = LocalSource(_local(), registry=reg)
     ctx = AgentContext(
         agent_id="a1")
     results = await asyncio.gather(
@@ -164,7 +169,7 @@ async def test_skill_subagent_tag_filter():
 
 async def test_source_registry_activate():
     reg = await make_registry(make_tool("search_docs"))
-    local_src = LocalSource(registry=reg)
+    local_src = LocalSource(_local(), registry=reg)
     src_registry = SourceRegistry(policy=RuleBasedPolicy())
     await src_registry.register(local_src)
     ctx  = AgentContext(
@@ -196,7 +201,7 @@ async def test_source_registry_policy_suppress():
     from harness.agents.agent_config import RuleConfig, RuleMatchConfig
 
     reg = await make_registry(make_tool("search_docs"))
-    local_src = LocalSource(registry=reg, tags=["internal"])
+    local_src = LocalSource(_local(tags=["internal"]), registry=reg)
     suppress_rule = RuleConfig(
         id="suppress_internal",
         match=RuleMatchConfig(source_tags=["internal"]),
