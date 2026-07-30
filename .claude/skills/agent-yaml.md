@@ -18,8 +18,8 @@ allowed_tool_names:
   - send_email
   - list_channels
 
-# Tag gate L2 — tool.tags must be a subset of this list
-# For subagent contexts, enforced before policy runs
+# Capability gate L4 — every tool's tags must be a subset of this list.
+# Applies to this agent, not only its subagents.
 allowed_tags:
   - read
   - internal
@@ -83,14 +83,18 @@ to be allowed. L1 runs before policy.
 
 ---
 
-## `allowed_tags` — the tag gate (L2)
+## `allowed_tags` — the capability gate (L4)
 
-For subagent contexts (`scope_context_for_subagent()`), every tool's tags
-must be a subset of `allowed_tags`. Tools with tags outside this set are
-denied at L2 before policy runs.
+Every tool's tags must be a **subset** of `allowed_tags`, or the call is denied
+at gate layer 4, before policy runs.
 
-For top-level agents, `allowed_tags` is used as a filter when activating
-sources — tools from a `LocalSource` with tags outside this set are excluded.
+This applies to the agent itself, not only to its subagents. An agent declaring
+`allowed_tags: [read]` cannot call a tool tagged `[read, internal]` — list every
+tag the tools it may call actually carry. Tools from MCP sources carry an `mcp`
+tag plus any tags the source declares.
+
+A subagent context narrows further: the effective set is the intersection of the
+agent's declared tags and the subagent's.
 
 ```yaml
 # parent
@@ -180,7 +184,8 @@ audit_tags:
 ctx = await harness.load_agent("config/agents/my_agent.yaml")
 # ctx.agent_id = "my_agent"
 # ctx.sub_agent_id = None
-# ctx.allowed_tags = None (top-level agents don't narrow tags)
+# ctx.allowed_tags = None (no subagent narrowing; the agent's own
+#                          allowed_tags still gates its calls at L4)
 
 # Load the same agent again — returns a fresh context, same config
 ctx2 = await harness.load_agent("config/agents/my_agent.yaml")

@@ -14,6 +14,12 @@ class Finding(BaseModel, frozen=True):
     category: str
     severity: Severity
     detail:   str | None = None   # short note — never the raw matched text
+    # Numeric sub-scores the producing scanner computed, by name — e.g. the
+    # heuristic scanner's entropy / density / coherence / structural terms.
+    # Consumers that need these read them here; they were previously recovered
+    # by string-splitting `detail`, which meant rewording a human-readable
+    # message silently changed downstream behaviour. Values only, never text.
+    signals:  dict[str, float] = {}
     # Detection technique of the scanner that produced this finding. Stamped by
     # run_scan, not by the scanner. Corroboration counts distinct families, so
     # two catalog scanners agreeing are one method, not two — see ensemble.py

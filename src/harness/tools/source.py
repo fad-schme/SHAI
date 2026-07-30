@@ -38,7 +38,7 @@ import httpx
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError, MCPInvocationError
 from harness.core.events import AuditEvent, now_ms
-from harness.core.types import BoundaryName, Decision, Severity, Transport
+from harness.core.types import BoundaryName, Decision, ScanAction, Severity, Transport
 from harness.tools.registry import ToolRegistry
 from harness.tools.tool import Tool
 
@@ -343,6 +343,7 @@ class MCPSource:
         metadata_scanners: Sequence[Any] = (),
         metadata_enabled:  bool = True,
         metadata_block_at: Severity | None = None,
+        metadata_action:   ScanAction | None = None,
     ) -> None:
         """Build an MCP source from its declaration plus harness collaborators.
 
@@ -380,6 +381,7 @@ class MCPSource:
         self._mcp_metadata_scanners:      list = list(metadata_scanners)
         self._scan_mcp_metadata_enabled:  bool = metadata_enabled
         self._mcp_metadata_block_at:      Severity | None = metadata_block_at
+        self._mcp_metadata_action:        ScanAction = metadata_action or ScanAction.BLOCK
 
         self._client: httpx.AsyncClient | None = None
         self._session_id: str | None = None
@@ -505,32 +507,43 @@ class MCPSource:
         # Severity.__ge__ is the one comparison — a local ladder previously
         # enumerated [LOW, MEDIUM, HIGH] and dropped CRITICAL findings on the
         # floor, which is the opposite of what a threshold is for.
-        block_at     = self._mcp_metadata_block_at or Severity.MEDIUM
-        should_block = any(f.severity >= block_at for f in all_findings)
+        block_at  = self._mcp_metadata_block_at or Severity.MEDIUM
+        reached   = any(f.severity >= block_at for f in all_findings)
+        # action=alert registers the tool anyway and records the finding —
+        # observe-before-enforce, the same escape hatch every other boundary
+        # offers. Only `block` refuses registration.
+        should_block = reached and self._mcp_metadata_action == ScanAction.BLOCK
         max_sev      = (
             max(all_findings, key=lambda f: f.severity._index()).severity
             if all_findings else None
         )
 
-        if should_block:
+        if reached:
             log.warning(
-                "mcp tool blocked — injection payload in metadata",
+                "mcp tool blocked — injection payload in metadata" if should_block
+                else "mcp tool metadata reached block_at but action=alert — registered",
                 extra={
                     "source":   self.name,
                     "tool":     tool_name,
                     "findings": len(all_findings),
                     "max_sev":  str(max_sev),
                     "block_at": str(block_at),
+                    "action":   str(self._mcp_metadata_action),
                 },
             )
 
-        # Findings below block_at register the tool but still land in the trail
-        # with finding_count set — the same ALLOW-with-findings shape run_scan
-        # produces when nothing crosses the threshold.
+        # Three outcomes, matching run_scan's action model: BLOCKED when the
+        # threshold was reached under action=block, WARN when it was reached
+        # under action=alert (registered, but flagged), ALLOW otherwise —
+        # including ALLOW-with-findings for anything below the threshold.
         if self._emitter is not None:
             await self._emitter.emit(AuditEvent.build(
                 boundary=BoundaryName.MCP_METADATA_SCAN,
-                decision=Decision.BLOCKED if should_block else Decision.ALLOW,
+                decision=(
+                    Decision.BLOCKED if should_block
+                    else Decision.WARN if reached
+                    else Decision.ALLOW
+                ),
                 ctx=self._agent_ctx or AgentContext(agent_id="unknown"),
                 tenant_id=self._tenant_id or "default",
                 duration_ms=now_ms() - start,

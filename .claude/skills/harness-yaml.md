@@ -133,7 +133,7 @@ check_tool_call:
     window_seconds: 60          # sliding window duration
     max_calls_per_window: 60    # global budget per agent per window
     max_calls_per_tool: 20      # per-tool budget per agent per window
-  arg_scanners:
+  scanners:
     - name: regex_pii           # scanners run on tool arguments
   scan_args_for_tags:
     - sensitive                 # only scan args for tools tagged with these

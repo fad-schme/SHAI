@@ -1,0 +1,600 @@
+# injection_common.l10n.yaml — multilingual variants of injection_common.yaml
+# =============================================================================
+# French, Spanish, German, and Mandarin Chinese variants of the six shared rule
+# families. injection_common.yaml loads on every catalog scanner that does not
+# override common_patterns, so these rules reach input, output, tool-result and
+# file scans alike — an English-only shared catalog left the most-used surface
+# in the system monolingual.
+#
+# Compound structure is preserved, not flattened. Every rule here keeps the
+# AND-of-ORs shape and the within_chars window of its English counterpart: a
+# translated rule that fired on a single signal would be a different, looser
+# rule wearing the same name.
+#
+# Rule names are <lang>.<base_name>, so _canonical_semantic_name collapses each
+# onto its base rule and a bilingual payload scores as one evidence unit.
+# Signal-group names match the base rule for the same reason.
+
+patterns:
+
+  # ── French (FR) ──────────────────────────────────────────────────────────
+
+  - name: fr.prompt_extraction.compound
+    meta:
+      description: "FR — disclosure or exactness request targeting protected prompt content"
+      threat_level: 5
+      severity: high
+      category: prompt_extraction
+    strings:
+      disclosure_operation_fr: >-
+        (?ix)\b(?:r[ée]p[èe]t(?:er|e|es|ez|ent)|r[ée]cit(?:er|e|es|ez|ent)|reproduis|copi(?:er|e|es|ez|ent)|affich(?:er|e|es|ez|ent)
+        |imprim(?:er|e|es|ez|ent)|montr(?:er|e|es|ez|ent)|r[ée]v[èe]l(?:er|e|es|ez|ent)|cit(?:er|e|es|ez|ent)|renvoie|partag(?:er|e|es|ez|ent)
+        |list(?:er|e|es|ez|ent)|donn(?:er|e|es|ez|ent)|[ée]cris|r[ée]sum(?:er|e|es|ez|ent)|divulgu(?:er|e|es|ez|ent)|traduis)\b
+      protected_object_fr: >-
+        (?ix)(?:\b(?:prompt\s+syst[èe]me|invite\s+syst[èe]me|instructions?\s+(?:cach[ée]es?|initiales?|syst[èe]me)
+        |message\s+(?:d[ée]veloppeur|syst[èe]me)|consignes?\s+(?:cach[ée]es?|initiales?)
+        |r[èe]gles?\s+(?:cach[ée]es?|internes?)|politique\s+(?:de\s+s[ée]curit[ée]|interne))\b
+        |\b(?:ton|votre)\s+(?:prompt|invite)\s+(?:complet|entier|original)?\b
+        |\bfen[êe]tre\s+de\s+contexte\b)
+      referential_target_fr: >-
+        (?ix)(?:\b(?:tout\s+)?(?:le\s+)?(?:texte|contenu)\s+(?:qui\s+)?(?:pr[ée]c[èe]de|est\s+au-dessus)\b
+        |\bles?\s+(?:instructions?|consignes?)\s+qu(?:i|e)\s+(?:t'ont\s+[ée]t[ée]\s+donn[ée]es?|tu\s+as\s+re[çc]ues?)\b
+        |\bavant\s+que\s+je\s+(?:ne\s+)?(?:commence|parle)\b)
+      exactness_modifier_fr: >-
+        (?ix)\b(?:mot\s+pour\s+mot|textuellement|verbatim|exactement|caract[èe]re\s+par\s+caract[èe]re
+        |sans\s+(?:modification|changement)|au\s+format\s+json|bloc\s+de\s+code|int[ée]gralement)\b
+    match:
+      within_chars: 220
+      all:
+        - name: disclosure_request
+          any: [disclosure_operation_fr, exactness_modifier_fr]
+        - name: protected_target
+          any: [protected_object_fr, referential_target_fr]
+
+  - name: fr.tool_coercion.exfiltration
+    meta:
+      description: "FR — tool invocation sending data to an attacker-controlled destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_fr: >-
+        (?ix)(?:\b(?:appel(?:er|le|les|lez|lent)|invoqu(?:er|e|es|ez|ent)|utilis(?:er|e|es|ez|ent)|ex[ée]cut(?:er|e|es|ez|ent)|lanc(?:er|e|es|ez|ent)|d[ée]clench(?:er|e|es|ez|ent))\s+
+        (?:l(?:'|e\s+|a\s+))?(?:outil\s+)?[a-z_][\w.-]*
+        |\b(?:demande|exige)\s+que\s+tu\s+(?:appelles|invoques|ex[ée]cutes)\s+[a-z_][\w.-]*)
+      exfiltration_target_fr: >-
+        (?ix)(?:\b[\w.+-]*attaquant[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious|malveillant)[\w.-]*\.(?:com|net|org|fr)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious|malveillant)[\w.-]*(?:/[\w?=&%./<>-]*)?
+        |\b(?:(?:envoyer|envoie|envoies|envoyez)|transmet(?:tre|s|tez)|exfiltr(?:er|e|es|ez|ent)|transf[ée]r(?:er|e|es|ez|ent))\b.{0,40}
+        \b(?:donn[ée]es?|historique|conversation|identifiants?|secrets?|jetons?)\b)
+    match:
+      within_chars: 220
+      all:
+        - name: tool_action
+          any: [tool_imperative_fr]
+        - name: exfiltration_destination
+          any: [exfiltration_target_fr]
+
+  - name: fr.tool_coercion.destructive_action
+    meta:
+      description: "FR — tool invocation combined with a destructive action"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_fr: >-
+        (?ix)(?:\b(?:appel(?:er|le|les|lez|lent)|invoqu(?:er|e|es|ez|ent)|utilis(?:er|e|es|ez|ent)|ex[ée]cut(?:er|e|es|ez|ent)|lanc(?:er|e|es|ez|ent))\s+
+        (?:l(?:'|e\s+|a\s+))?(?:outil\s+)?[a-z_][\w.-]*)
+      destructive_action_fr: >-
+        (?ix)(?:\b(?:supprim(?:er|e|es|ez|ent)|effac(?:er|e|es|ez|ent)|d[ée]truis|purg(?:er|e|es|ez|ent)|vid(?:er|e|es|ez|ent))\b.{0,30}
+        \b(?:tout|tous|fichiers?|enregistrements?|tables?|utilisateurs?|syst[èe]me)\b
+        |\b(?:r[ée]initialis(?:er|e|es|ez|ent)|chang(?:er|e|es|ez|ent))\s+(?:les?\s+)?mots?\s+de\s+passe\b
+        |\b[ée]cras(?:er|e|es|ez|ent)\b|\bforce[_\s-]*push\b)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_fr]
+        - name: destructive_operation
+          any: [destructive_action_fr]
+
+  - name: fr.tool_coercion.privilege_mutation
+    meta:
+      description: "FR — tool invocation combined with a privilege or security-control change"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_fr: >-
+        (?ix)(?:\b(?:appel(?:er|le|les|lez|lent)|invoqu(?:er|e|es|ez|ent)|utilis(?:er|e|es|ez|ent)|ex[ée]cut(?:er|e|es|ez|ent)|lanc(?:er|e|es|ez|ent))\s+
+        (?:l(?:'|e\s+|a\s+))?(?:outil\s+)?[a-z_][\w.-]*)
+      privilege_mutation_fr: >-
+        (?ix)(?:\b(?:ajout(?:er|e|es|ez|ent)|cr[ée](?:er|e|es|ez|ent)|accord(?:er|e|es|ez|ent))\b.{0,25}
+        \b(?:administrateur|admin|root|acc[èe]s\s+privil[ée]gi[ée])\b
+        |\bd[ée]sactiv(?:er|e|es|ez|ent)\b.{0,20}\b(?:2fa|mfa|authentification|s[ée]curit[ée])\b
+        |\b(?:rends?|(?:mets|mettre|mettez)|d[ée]fini(?:r|s|ssez))\b.{0,25}\b(?:public|publique)\b
+        |\bdroits?\s*[:=]\s*['"]?(?:admin|root|public))
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_fr]
+        - name: privilege_change
+          any: [privilege_mutation_fr]
+
+  - name: fr.tool_coercion.financial_action
+    meta:
+      description: "FR — financial tool action combined with an amount, account, or recipient"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      financial_action_fr: >-
+        (?ix)(?:\b(?:appel(?:er|le|les|lez|lent)|invoqu(?:er|e|es|ez|ent)|utilis(?:er|e|es|ez|ent)|ex[ée]cut(?:er|e|es|ez|ent))\b.{0,25}
+        \b(?:virement|paiement|transfert[_\s-]*(?:de\s+)?fonds?|pr[ée]l[èe]vement)\b
+        |\b(?:vir(?:er|e|es|ez|ent)|transf[ée]r(?:er|e|es|ez|ent)|(?:payer|paie|paies|payez)|d[ée]bit(?:er|e|es|ez|ent))\b.{0,20}
+        \b(?:fonds?|argent|paiement|compte|carte|b[ée]n[ée]ficiaire)\b)
+      financial_target_fr: >-
+        (?ix)(?:[$€£]\s?\d[\d\s,.]*|\b\d[\d\s,.]*\s*(?:eur|euros?|usd|dollars?|livres?)\b
+        |\b(?:compte|b[ée]n[ée]ficiaire|carte|iban|rib)\b.{0,30}\b[\w*-]{3,}\b)
+    match:
+      all:
+        - name: financial_tool_action
+          any: [financial_action_fr]
+        - name: financial_target
+          any: [financial_target_fr]
+
+  - name: fr.tool_coercion.persistence
+    meta:
+      description: "FR — persistent scheduling, forwarding, or webhook to an attacker destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      persistence_action_fr: >-
+        (?ix)(?:\b(?:cr[ée](?:er|e|es|ez|ent)|ajout(?:er|e|es|ez|ent)|install(?:er|e|es|ez|ent)|configur(?:er|e|es|ez|ent)|programm(?:er|e|es|ez|ent))\b.{0,30}
+        \b(?:t[âa]che\s+(?:planifi[ée]e|r[ée]currente)|cron|porte\s+d[ée]rob[ée]e|webhook|r[èe]gle\s+de\s+transfert)\b
+        |\b(?:transf[ée]r(?:er|e|es|ez|ent)|redirig(?:er|e|es|ez|ent)|copi(?:er|e|es|ez|ent))\b.{0,40}
+        \b(?:syst[ée]matiquement|toujours|[àa]\s+chaque\s+fois|en\s+permanence)\b)
+      external_attacker_destination_fr: >-
+        (?ix)(?:\b[\w.+-]*attaquant[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious|malveillant)[\w.-]*\.(?:com|net|org|fr)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious|malveillant)[\w.-]*(?:/[\w?=&%./<>-]*)?)
+    match:
+      all:
+        - name: persistence_operation
+          any: [persistence_action_fr]
+        - name: attacker_destination
+          any: [external_attacker_destination_fr]
+
+  # ── Spanish (ES) ─────────────────────────────────────────────────────────
+
+  - name: es.prompt_extraction.compound
+    meta:
+      description: "ES — disclosure or exactness request targeting protected prompt content"
+      threat_level: 5
+      severity: high
+      category: prompt_extraction
+    strings:
+      disclosure_operation_es: >-
+        (?ix)\b(?:repite|recita|reproduce|copia|muestra|imprime|revela|cita|devuelve
+        |comparte|lista|dame|escribe|resume|divulga|traduce|enumera)\b
+      protected_object_es: >-
+        (?ix)(?:\b(?:prompt\s+del?\s+sistema|mensaje\s+del?\s+sistema|instrucciones?\s+(?:ocultas?|iniciales?|del?\s+sistema)
+        |mensaje\s+del?\s+desarrollador|reglas?\s+(?:ocultas?|internas?)
+        |pol[íi]tica\s+(?:de\s+seguridad|interna))\b
+        |\btu\s+(?:prompt|indicaci[óo]n)\s+(?:completo|entero|original)?\b
+        |\bventana\s+de\s+contexto\b)
+      referential_target_es: >-
+        (?ix)(?:\b(?:todo\s+)?el\s+(?:texto|contenido)\s+(?:que\s+)?(?:aparece\s+)?(?:arriba|antes|anterior)\b
+        |\blas?\s+(?:instrucciones?|directrices?)\s+que\s+(?:te\s+(?:dieron|enviaron)|recibiste)\b
+        |\bantes\s+de\s+que\s+(?:yo\s+)?(?:empezara|hablara)\b)
+      exactness_modifier_es: >-
+        (?ix)\b(?:palabra\s+por\s+palabra|textualmente|literalmente|verbatim|exactamente
+        |car[áa]cter\s+por\s+car[áa]cter|sin\s+(?:cambios?|modificar)|en\s+formato\s+json
+        |bloque\s+de\s+c[óo]digo|[íi]ntegramente)\b
+    match:
+      within_chars: 220
+      all:
+        - name: disclosure_request
+          any: [disclosure_operation_es, exactness_modifier_es]
+        - name: protected_target
+          any: [protected_object_es, referential_target_es]
+
+  - name: es.tool_coercion.exfiltration
+    meta:
+      description: "ES — tool invocation sending data to an attacker-controlled destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_es: >-
+        (?ix)(?:\b(?:llama|invoca|utiliza|usa|ejecuta|lanza|dispara)\s+
+        (?:a\s+)?(?:la\s+)?(?:herramienta\s+)?[a-z_][\w.-]*
+        |\b(?:pide|exige)\s+que\s+(?:llames|invoques|ejecutes)\s+[a-z_][\w.-]*)
+      exfiltration_target_es: >-
+        (?ix)(?:\b[\w.+-]*atacante[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious|malicioso)[\w.-]*\.(?:com|net|org|es)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious|malicioso)[\w.-]*(?:/[\w?=&%./<>-]*)?
+        |\b(?:env[íi]a|transmite|exfiltra|remite)\b.{0,40}
+        \b(?:datos?|historial|conversaci[óo]n|credenciales?|secretos?|tokens?)\b)
+    match:
+      within_chars: 220
+      all:
+        - name: tool_action
+          any: [tool_imperative_es]
+        - name: exfiltration_destination
+          any: [exfiltration_target_es]
+
+  - name: es.tool_coercion.destructive_action
+    meta:
+      description: "ES — tool invocation combined with a destructive action"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_es: >-
+        (?ix)(?:\b(?:llama|invoca|utiliza|usa|ejecuta|lanza)\s+
+        (?:a\s+)?(?:la\s+)?(?:herramienta\s+)?[a-z_][\w.-]*)
+      destructive_action_es: >-
+        (?ix)(?:\b(?:elimina|borra|destruye|purga|vac[íi]a)\b.{0,30}
+        \b(?:todo|todos|archivos?|registros?|tablas?|usuarios?|sistema)\b
+        |\b(?:restablece|cambia)\s+(?:las?\s+)?contrase[ñn]as?\b
+        |\bsobrescribe\b|\bforce[_\s-]*push\b)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_es]
+        - name: destructive_operation
+          any: [destructive_action_es]
+
+  - name: es.tool_coercion.privilege_mutation
+    meta:
+      description: "ES — tool invocation combined with a privilege or security-control change"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_es: >-
+        (?ix)(?:\b(?:llama|invoca|utiliza|usa|ejecuta|lanza)\s+
+        (?:a\s+)?(?:la\s+)?(?:herramienta\s+)?[a-z_][\w.-]*)
+      privilege_mutation_es: >-
+        (?ix)(?:\b(?:a[ñn]ade|agrega|crea|concede|otorga)\b.{0,25}
+        \b(?:administrador|admin|root|acceso\s+privilegiado)\b
+        |\bdesactiva\b.{0,20}\b(?:2fa|mfa|autenticaci[óo]n|seguridad)\b
+        |\b(?:haz|pon|configura)\b.{0,25}\b(?:p[úu]blico|p[úu]blica)\b
+        |\bpermisos?\s*[:=]\s*['"]?(?:admin|root|public))
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_es]
+        - name: privilege_change
+          any: [privilege_mutation_es]
+
+  - name: es.tool_coercion.financial_action
+    meta:
+      description: "ES — financial tool action combined with an amount, account, or recipient"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      financial_action_es: >-
+        (?ix)(?:\b(?:llama|invoca|utiliza|ejecuta)\b.{0,25}
+        \b(?:transferencia|pago|transferir[_\s-]*fondos?|cargo|domiciliaci[óo]n)\b
+        |\b(?:transfiere|paga|carga|abona)\b.{0,20}
+        \b(?:fondos?|dinero|pago|cuenta|tarjeta|beneficiario|destinatario)\b)
+      financial_target_es: >-
+        (?ix)(?:[$€£]\s?\d[\d\s,.]*|\b\d[\d\s,.]*\s*(?:eur|euros?|usd|d[óo]lares?|libras?)\b
+        |\b(?:cuenta|beneficiario|destinatario|tarjeta|iban)\b.{0,30}\b[\w*-]{3,}\b)
+    match:
+      all:
+        - name: financial_tool_action
+          any: [financial_action_es]
+        - name: financial_target
+          any: [financial_target_es]
+
+  - name: es.tool_coercion.persistence
+    meta:
+      description: "ES — persistent scheduling, forwarding, or webhook to an attacker destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      persistence_action_es: >-
+        (?ix)(?:\b(?:crea|a[ñn]ade|agrega|instala|configura|programa)\b.{0,30}
+        \b(?:tarea\s+programada|cron|puerta\s+trasera|backdoor|webhook|regla\s+de\s+reenv[íi]o)\b
+        |\b(?:reenv[íi]a|redirige|copia)\b.{0,40}
+        \b(?:siempre|cada\s+vez|de\s+forma\s+permanente|sistem[áa]ticamente)\b)
+      external_attacker_destination_es: >-
+        (?ix)(?:\b[\w.+-]*atacante[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious|malicioso)[\w.-]*\.(?:com|net|org|es)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious|malicioso)[\w.-]*(?:/[\w?=&%./<>-]*)?)
+    match:
+      all:
+        - name: persistence_operation
+          any: [persistence_action_es]
+        - name: attacker_destination
+          any: [external_attacker_destination_es]
+
+  # ── German (DE) ──────────────────────────────────────────────────────────
+
+  - name: de.prompt_extraction.compound
+    meta:
+      description: "DE — disclosure or exactness request targeting protected prompt content"
+      threat_level: 5
+      severity: high
+      category: prompt_extraction
+    strings:
+      disclosure_operation_de: >-
+        (?ix)\b(?:wiederhol(?:e|en)|rezitiere|reproduziere|kopiere|zeige?|drucke?
+        |gib\s+aus|offenbare|zitiere|teile|liste?|schreibe?|fasse\s+zusammen
+        |verrate?|[üu]bersetze?)\b
+      protected_object_de: >-
+        (?ix)(?:\b(?:system[-\s]?prompt|systemnachricht|versteckte[nrs]?\s+(?:anweisungen?|prompt)
+        |urspr[üu]nglichen?\s+(?:anweisungen?|kontext)|entwicklernachricht
+        |interne[nrs]?\s+(?:regeln?|richtlinien?)|sicherheitsrichtlinien?)\b
+        |\bdein(?:en|e)?\s+(?:vollst[äa]ndig(?:en|es)\s+|urspr[üu]nglich(?:en|es)\s+)?prompt\b
+        |\bkontextfenster\b)
+      referential_target_de: >-
+        (?ix)(?:\b(?:alle[ns]?\s+)?(?:text|inhalt|zeilen)\b.{0,20}\b(?:oberhalb|dar[üu]ber|davor|vorher)\b
+        |\bdie\s+(?:anweisungen?|richtlinien?)\s*,?\s*die\s+(?:du|dir)\s+(?:erhalten|gegeben|gesendet)\b
+        |\bbevor\s+ich\s+(?:angefangen|zu\s+sprechen\s+begonnen)\b)
+      exactness_modifier_de: >-
+        (?ix)\b(?:wortw[öo]rtlich|w[öo]rtlich|verbatim|genau|zeichen\s+f[üu]r\s+zeichen
+        |unver[äa]ndert|im\s+json[-\s]?format|codeblock|vollst[äa]ndig)\b
+    match:
+      within_chars: 220
+      all:
+        - name: disclosure_request
+          any: [disclosure_operation_de, exactness_modifier_de]
+        - name: protected_target
+          any: [protected_object_de, referential_target_de]
+
+  - name: de.tool_coercion.exfiltration
+    meta:
+      description: "DE — tool invocation sending data to an attacker-controlled destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_de: >-
+        (?ix)(?:\b(?:rufe?|verwende?|nutze?|f[üu]hre?|starte?|l[öo]se?\s+aus)\s+
+        (?:das\s+|die\s+)?(?:werkzeug\s+|tool\s+)?[a-z_][\w.-]*
+        |\b(?:verlangt?|fordert?)\s*,?\s*dass\s+du\s+[a-z_][\w.-]*\s+(?:aufrufst|ausf[üu]hrst))
+      exfiltration_target_de: >-
+        (?ix)(?:\b[\w.+-]*angreifer[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious|angreifer)[\w.-]*\.(?:com|net|org|de)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious|angreifer)[\w.-]*(?:/[\w?=&%./<>-]*)?
+        |\b(?:sende?|[üu]bertrage?|exfiltriere?|leite?\s+weiter)\b.{0,40}
+        \b(?:daten|verlauf|unterhaltung|zugangsdaten|geheimnisse?|tokens?)\b)
+    match:
+      within_chars: 220
+      all:
+        - name: tool_action
+          any: [tool_imperative_de]
+        - name: exfiltration_destination
+          any: [exfiltration_target_de]
+
+  - name: de.tool_coercion.destructive_action
+    meta:
+      description: "DE — tool invocation combined with a destructive action"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_de: >-
+        (?ix)(?:\b(?:rufe?|verwende?|nutze?|f[üu]hre?|starte?)\s+
+        (?:das\s+|die\s+)?(?:werkzeug\s+|tool\s+)?[a-z_][\w.-]*)
+      destructive_action_de: >-
+        (?ix)(?:\b(?:l[öo]sche?|entferne?|zerst[öo]re?|bereinige?|leere?)\b.{0,30}
+        \b(?:alles|alle|dateien|datens[äa]tze|tabellen|benutzer|system)\b
+        |\b(?:setze?\s+zur[üu]ck|[äa]ndere?)\b.{0,20}\bpassw(?:ort|[öo]rter)\b
+        |\b[üu]berschreibe?\b|\bforce[_\s-]*push\b)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_de]
+        - name: destructive_operation
+          any: [destructive_action_de]
+
+  - name: de.tool_coercion.privilege_mutation
+    meta:
+      description: "DE — tool invocation combined with a privilege or security-control change"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_de: >-
+        (?ix)(?:\b(?:rufe?|verwende?|nutze?|f[üu]hre?|starte?)\s+
+        (?:das\s+|die\s+)?(?:werkzeug\s+|tool\s+)?[a-z_][\w.-]*)
+      privilege_mutation_de: >-
+        (?ix)(?:\b(?:f[üu]ge?\s+hinzu|erstelle?|gew[äa]hre?|erteile?)\b.{0,25}
+        \b(?:administrator|admin|root|privilegierten?\s+zugriff)\b
+        |\bdeaktiviere?\b.{0,20}\b(?:2fa|mfa|authentifizierung|sicherheit)\b
+        |\b(?:mache?|setze?)\b.{0,25}\b[öo]ffentlich\b
+        |\brechte\s*[:=]\s*['"]?(?:admin|root|public))
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_de]
+        - name: privilege_change
+          any: [privilege_mutation_de]
+
+  - name: de.tool_coercion.financial_action
+    meta:
+      description: "DE — financial tool action combined with an amount, account, or recipient"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      financial_action_de: >-
+        (?ix)(?:\b(?:rufe?|verwende?|f[üu]hre?)\b.{0,25}
+        \b(?:[üu]berweisung|zahlung|geld[üu]bertragung|lastschrift|abbuchung)\b
+        |\b(?:[üu]berweise?|zahle?|belaste?|buche?\s+ab)\b.{0,20}
+        \b(?:geld|betrag|zahlung|konto|karte|empf[äa]nger)\b)
+      financial_target_de: >-
+        (?ix)(?:[$€£]\s?\d[\d\s,.]*|\b\d[\d\s,.]*\s*(?:eur|euros?|usd|dollars?|pfund)\b
+        |\b(?:konto|empf[äa]nger|karte|iban|bankleitzahl)\b.{0,30}\b[\w*-]{3,}\b)
+    match:
+      all:
+        - name: financial_tool_action
+          any: [financial_action_de]
+        - name: financial_target
+          any: [financial_target_de]
+
+  - name: de.tool_coercion.persistence
+    meta:
+      description: "DE — persistent scheduling, forwarding, or webhook to an attacker destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      persistence_action_de: >-
+        (?ix)(?:\b(?:erstelle?|f[üu]ge?\s+hinzu|installiere?|konfiguriere?|plane?)\b.{0,30}
+        \b(?:geplante[nr]?\s+aufgabe|cronjob|cron|hintert[üu]r|backdoor|webhook|weiterleitungsregel)\b
+        |\b(?:leite?\s+weiter|kopiere?|sende?)\b.{0,40}
+        \b(?:immer|jedes\s+mal|dauerhaft|st[äa]ndig)\b)
+      external_attacker_destination_de: >-
+        (?ix)(?:\b[\w.+-]*angreifer[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious|angreifer)[\w.-]*\.(?:com|net|org|de)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious|angreifer)[\w.-]*(?:/[\w?=&%./<>-]*)?)
+    match:
+      all:
+        - name: persistence_operation
+          any: [persistence_action_de]
+        - name: attacker_destination
+          any: [external_attacker_destination_de]
+
+  # ── Mandarin Chinese (ZH) ────────────────────────────────────────────────
+  # No \b word boundaries: Chinese is unsegmented, so \b never fires between
+  # Han characters. Latin fragments inside these patterns keep theirs.
+
+  - name: zh.prompt_extraction.compound
+    meta:
+      description: "ZH — disclosure or exactness request targeting protected prompt content"
+      threat_level: 5
+      severity: high
+      category: prompt_extraction
+    strings:
+      disclosure_operation_zh: >-
+        (?:重复|复述|复制|输出|打印|显示|展示|揭示|透露|泄露|引用|返回|分享|列出|告诉我|写出|翻译)
+      protected_object_zh: >-
+        (?:系统提示(?:词|语)?|系统消息|系统指令|隐藏(?:的)?(?:提示|指令|规则)
+        |初始(?:提示|指令|上下文)|开发者(?:消息|指令)|内部(?:规则|政策)|安全(?:政策|规则)
+        |你的(?:完整|原始)?提示(?:词|语)?|上下文窗口)
+      referential_target_zh: >-
+        (?:(?:上面|上方|之前|以上)(?:的)?(?:全部|所有)?(?:文本|内容|文字)
+        |(?:给你|你收到)(?:的)?(?:指令|指示|说明)
+        |在我(?:开始)?(?:说话|提问)(?:之)?前)
+      exactness_modifier_zh: >-
+        (?:逐字|一字不差|原封不动|完整地?|精确地?|逐个字符|不加修改|json\s*格式|代码块)
+    match:
+      within_chars: 220
+      all:
+        - name: disclosure_request
+          any: [disclosure_operation_zh, exactness_modifier_zh]
+        - name: protected_target
+          any: [protected_object_zh, referential_target_zh]
+
+  - name: zh.tool_coercion.exfiltration
+    meta:
+      description: "ZH — tool invocation sending data to an attacker-controlled destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_zh: >-
+        (?:(?:调用|invoke|使用|执行|运行|触发)\s*(?:工具)?\s*[a-z_][\w.-]*
+        |(?:要求|指示)你(?:调用|执行|运行)\s*[a-z_][\w.-]*)
+      exfiltration_target_zh: >-
+        (?ix)(?:\b[\w.+-]*attacker[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious)[\w.-]*\.(?:com|net|org|cn)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious)[\w.-]*(?:/[\w?=&%./<>-]*)?
+        |(?:发送|传输|外传|转发|上传).{0,20}(?:数据|历史|对话|凭据|密钥|令牌))
+    match:
+      within_chars: 220
+      all:
+        - name: tool_action
+          any: [tool_imperative_zh]
+        - name: exfiltration_destination
+          any: [exfiltration_target_zh]
+
+  - name: zh.tool_coercion.destructive_action
+    meta:
+      description: "ZH — tool invocation combined with a destructive action"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_zh: >-
+        (?:(?:调用|使用|执行|运行)\s*(?:工具)?\s*[a-z_][\w.-]*)
+      destructive_action_zh: >-
+        (?:(?:删除|清除|销毁|清空|抹除).{0,20}(?:全部|所有|文件|记录|数据表|用户|系统)
+        |(?:重置|修改).{0,10}密码
+        |覆盖(?:写入)?|强制推送)
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_zh]
+        - name: destructive_operation
+          any: [destructive_action_zh]
+
+  - name: zh.tool_coercion.privilege_mutation
+    meta:
+      description: "ZH — tool invocation combined with a privilege or security-control change"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      tool_imperative_zh: >-
+        (?:(?:调用|使用|执行|运行)\s*(?:工具)?\s*[a-z_][\w.-]*)
+      privilege_mutation_zh: >-
+        (?:(?:添加|创建|授予|赋予).{0,15}(?:管理员|root|特权|超级用户)
+        |(?:禁用|关闭).{0,10}(?:双因素|2fa|mfa|身份验证|安全)
+        |(?:设为|设置为|改为).{0,10}(?:公开|公共))
+    match:
+      all:
+        - name: tool_action
+          any: [tool_imperative_zh]
+        - name: privilege_change
+          any: [privilege_mutation_zh]
+
+  - name: zh.tool_coercion.financial_action
+    meta:
+      description: "ZH — financial tool action combined with an amount, account, or recipient"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      financial_action_zh: >-
+        (?:(?:调用|使用|执行).{0,15}(?:转账|付款|支付|汇款|扣款)
+        |(?:转账|汇款|支付|付款|扣款).{0,15}(?:资金|金额|账户|卡|收款人))
+      financial_target_zh: >-
+        (?ix)(?:[$€£¥]\s?\d[\d\s,.]*|\b\d[\d\s,.]*\s*(?:元|人民币|美元|欧元|usd|eur|cny)\b
+        |(?:账户|账号|收款人|银行卡|iban).{0,20}[\w*-]{3,})
+    match:
+      all:
+        - name: financial_tool_action
+          any: [financial_action_zh]
+        - name: financial_target
+          any: [financial_target_zh]
+
+  - name: zh.tool_coercion.persistence
+    meta:
+      description: "ZH — persistent scheduling, forwarding, or webhook to an attacker destination"
+      threat_level: 5
+      severity: high
+      category: tool_injection
+    strings:
+      persistence_action_zh: >-
+        (?:(?:创建|添加|安装|配置|设置).{0,20}(?:定时任务|计划任务|cron|后门|webhook|转发规则)
+        |(?:转发|抄送|重定向).{0,20}(?:始终|总是|每次|永久|持续))
+      external_attacker_destination_zh: >-
+        (?ix)(?:\b[\w.+-]*attacker[\w.+-]*@[\w.-]+\b
+        |\b[\w.-]*(?:evil|attacker|malicious)[\w.-]*\.(?:com|net|org|cn)\b
+        |\bhttps?://[\w.-]*(?:evil|attacker|malicious)[\w.-]*(?:/[\w?=&%./<>-]*)?)
+    match:
+      all:
+        - name: persistence_operation
+          any: [persistence_action_zh]
+        - name: attacker_destination
+          any: [external_attacker_destination_zh]

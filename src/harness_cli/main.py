@@ -43,6 +43,7 @@ _BOUNDARIES = (
     "output_scan",
     "file_scan",
     "mcp_metadata_scan",
+    "narrow_scan",
     "system",
 )
 _DECISIONS = ("allow", "warn", "blocked", "deny", "redact", "degraded")

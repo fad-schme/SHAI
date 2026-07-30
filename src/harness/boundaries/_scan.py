@@ -246,6 +246,7 @@ async def run_scan(
     Invariants:
     - Exactly one AuditEvent per call, on every code path.
     - Disabled boundary → ScanStatus.ALLOW, disabled=True audit event.
+    - Enabled boundary with no scanner to run → ScanStatus.BLOCK.
     - Scanner exceptions handled per on_error policy.
     - No raw text in the audit event.
     - Scanner action overrides boundary action for that scanner's findings only.
@@ -253,6 +254,8 @@ async def run_scan(
     start = now_ms()
 
     if not enabled:
+        # Turning a boundary off is an explicit operator decision, and the
+        # event records it as such. Distinct from the case below.
         event = AuditEvent.build(
             boundary=boundary,
             decision=Decision.ALLOW,
@@ -264,6 +267,29 @@ async def run_scan(
         )
         await emitter.emit(event)
         return ScanVerdict(status=ScanStatus.ALLOW)
+
+    if not scanners:
+        # Enabled, but nothing is configured to inspect the content. Fail
+        # closed: "we looked and found nothing" and "nothing looked" are not
+        # the same answer, and returning ALLOW would make them indistinguishable
+        # to the caller. An operator who does not want this content scanned
+        # disables the boundary — which is the branch above, and says so in the
+        # trail. Reaching here means the configuration asks for a scan it cannot
+        # perform.
+        event = AuditEvent.build(
+            boundary=boundary,
+            decision=Decision.BLOCKED,
+            ctx=ctx,
+            tenant_id=tenant_id,
+            duration_ms=0,
+            deny_reason=(
+                "boundary is enabled but no scanner is configured to run — "
+                "declare one under scanners:, or disable the boundary"
+            ),
+            audit_tags=audit_tags or {},
+        )
+        await emitter.emit(event)
+        return ScanVerdict(status=ScanStatus.BLOCK)
 
     if normalization is not None and normalization.enabled:
         norm = canonicalize(
@@ -564,14 +590,16 @@ def _record_candidate_if_needed(
         from harness.patterns.store import upsert_candidate
 
         # Parse sub-scores from the heuristic detail string
-        detail = heuristic_findings[0].detail or ""
-        scores = {"entropy": 0.0, "density": 0.0, "coherence": 0.0, "structural": 0.0}
-        for part in detail.split("(")[-1].rstrip(")").split(","):
-            part = part.strip()
-            if "=" in part:
-                k, v = part.split("=", 1)
-                if k.strip() in scores:
-                    scores[k.strip()] = float(v.strip())
+        # Sub-scores come off the finding, not out of its prose. Every finding
+        # the heuristic scanner emits carries the full set, so which one is
+        # first no longer decides what gets recorded — picking [0] used to
+        # yield all-zero scores whenever the compound-attack finding sorted
+        # ahead of the anomaly one, i.e. on the strongest detections.
+        signals = heuristic_findings[0].signals
+        scores = {
+            key: signals.get(key, 0.0)
+            for key in ("entropy", "density", "coherence", "structural")
+        }
 
         fp = extract_fingerprint(
             text, scores["entropy"], scores["density"],

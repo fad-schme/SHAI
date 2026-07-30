@@ -244,10 +244,6 @@ def _typoglycemia_match_kind(word: str, target: str) -> str | None:
     return "strong" if len(word) != len(target) else "weak"
 
 
-def _is_typoglycemia_variant(word: str, target: str) -> bool:
-    return _typoglycemia_match_kind(word, target) is not None
-
-
 def _normalize_fuzzy_text(text: str) -> tuple[list[str], frozenset[str]]:
     normalized = unicodedata.normalize("NFKC", text).lower()
     transformed_tokens: set[str] = set()
@@ -397,6 +393,19 @@ class HeuristicScanner:
         else:
             severity = Severity.LOW
 
+        # The authoritative copy of the sub-scores. `detail` below renders the
+        # same numbers for a human; consumers read these. Every finding this
+        # scanner emits carries them, so a consumer never has to pick the right
+        # one out of the list to get a complete picture.
+        signals = {
+            "entropy":      s1,
+            "density":      s2,
+            "coherence":    s3,
+            "structural":   s4,
+            "fuzzy_intent": s5,
+            "total":        total,
+        }
+
         parts = []
         if s1 > 0:
             parts.append(f"entropy={s1:.1f}")
@@ -422,6 +431,7 @@ class HeuristicScanner:
                 category="typoglycemia_compound",
                 severity=Severity.HIGH,
                 detail=detail,
+                signals=signals,
             ))
 
         if total >= 1.0:
@@ -430,6 +440,7 @@ class HeuristicScanner:
                 category="heuristic_anomaly",
                 severity=severity,
                 detail=f"total={total:.1f} ({', '.join(parts)})",
+                signals=signals,
             ))
 
         return ScanResult(findings=findings)

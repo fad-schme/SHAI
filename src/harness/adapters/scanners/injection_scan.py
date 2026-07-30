@@ -1,6 +1,5 @@
 """injection_scan.py — YAML-driven injection-pattern scanner.
 
-Replaces the earlier basic_injection and yaml_rule_scanner implementations.
 Default pattern catalog: injection_patterns.yaml (ships with harness).
 Shared rules live in injection_common.yaml. File content additionally loads
 the patterns_for_doc.yaml overlay.
@@ -262,27 +261,74 @@ def compile_rules_from_dicts(rules: list[dict]) -> list[_CompiledRule]:
     return compiled
 
 
-def _compile_catalog(path: Path) -> list[_CompiledRule]:
-    """Read a YAML catalog and compile its `patterns` list.
+def compile_rules_incrementally(
+    rules: list[dict], *, source: str
+) -> list[_CompiledRule]:
+    """Compile rules one at a time, dropping and logging the invalid ones.
 
-    A catalog that cannot be read or parsed logs an error and yields no rules —
-    the caller still gets a usable scanner, just without this file's rules. A
-    file that parses to nothing at all is not handled here and raises; see the
-    empty-catalog follow-up.
+    For rule sets that arrive incrementally and partially trusted — the signed
+    pattern DB, where operators add rules over time. HMAC verification already
+    drops a tampered row without failing the rest; compiling the survivors as
+    one batch would undo that, letting a single malformed rule take down every
+    other rule in the bundle along with startup. A bad rule costs that rule.
+
+    Bundled catalogs use compile_rules_from_dicts instead and fail loud — see
+    _compile_catalog.
+    """
+    compiled: list[_CompiledRule] = []
+    dropped = 0
+    for rule in rules:
+        name = rule.get("name", "<unnamed>") if isinstance(rule, dict) else "<not-a-mapping>"
+        try:
+            compiled.extend(compile_rules_from_dicts([rule]))
+        except (ValueError, KeyError, TypeError, re.error) as e:
+            dropped += 1
+            log.warning(
+                "pattern rule rejected — skipped",
+                extra={"op": "compile_db_rules", "source": source,
+                       "rule": name, "error": str(e)},
+            )
+    if dropped:
+        log.warning("%d of %d rules from %s were rejected",
+                    dropped, len(rules), source)
+    return compiled
+
+
+def _compile_catalog(path: Path) -> list[_CompiledRule]:
+    """Read a bundled YAML catalog and compile its `patterns` list.
+
+    Fails loud on every kind of broken: unreadable, unparseable, not a mapping,
+    or lint-rejected. These files ship inside the package, so a broken one is a
+    build error, not a runtime condition to degrade around.
+
+    The alternative — returning [] and carrying on — is worse than it looks: a
+    scanner with an empty catalog returns ScanResult() for every input and is
+    indistinguishable from one that is working and finding nothing. Silently
+    scanning nothing is the failure mode this boundary exists to prevent.
     """
     try:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except Exception as e:
-        log.error("failed to load pattern file %s: %s", path, e)
-        return []
+        raise ValueError(f"cannot load pattern catalog {path}: {e}") from e
 
     if not isinstance(data, dict):
-        log.error("pattern file %s must contain a YAML mapping", path)
-        return []
+        raise ValueError(
+            f"pattern catalog {path} must contain a YAML mapping, "
+            f"got {type(data).__name__}"
+        )
 
-    compiled = compile_rules_from_dicts(data.get("patterns", []))
-    log.info("injection_scan compiled %d rules from %s", len(compiled), path)
+    if "patterns" not in data:
+        raise ValueError(
+            f"pattern catalog {path} has no 'patterns' key — an empty catalog "
+            f"must say so explicitly with 'patterns: []'"
+        )
+
+    # `patterns: []` is allowed and means what it says. The failure this guards
+    # against is a catalog that *should* have rules and silently loaded none;
+    # an explicitly empty one is a deliberate base for extra_rules to build on.
+    compiled = compile_rules_from_dicts(data["patterns"])
+    log.info("compiled %d rules from %s", len(compiled), path.name)
     return compiled
 
 
@@ -303,17 +349,42 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
+# Ceiling on the proximity search below. The search is a backtracking walk over
+# one span per signal group, so its worst case is the product of the group span
+# counts — on text an attacker writes. Groups are visited fewest-spans-first and
+# a partial window wider than within_chars prunes immediately, so real payloads
+# settle in a handful of steps; this bounds the pathological ones.
+_WITHIN_SEARCH_BUDGET = 20_000
+
+
 def _groups_fit_within(
     spans_by_group: list[list[tuple[int, int]]],
     within_chars: int,
 ) -> bool:
-    """Return whether one match from every group fits in a bounded window."""
+    """Return whether one match from every group fits in a bounded window.
+
+    Fails **closed** on budget exhaustion — an input crafted to blow up the
+    search counts as satisfying the proximity constraint, so the rule still
+    fires and the finding is still reported. Failing open would turn the
+    budget into a bypass: pad the text until the search gives up and the
+    compound rule stops matching.
+    """
     ordered = sorted(spans_by_group, key=len)
+    budget = _WITHIN_SEARCH_BUDGET
 
     def visit(index: int, start: int | None, end: int | None) -> bool:
+        nonlocal budget
         if index == len(ordered):
             return True
         for span_start, span_end in ordered[index]:
+            budget -= 1
+            if budget <= 0:
+                log.debug(
+                    "within_chars proximity search exhausted its budget — "
+                    "treating the rule as matched",
+                    extra={"groups": len(ordered), "within_chars": within_chars},
+                )
+                return True
             next_start = span_start if start is None else min(start, span_start)
             next_end = span_end if end is None else max(end, span_end)
             if next_end - next_start > within_chars:
@@ -379,11 +450,14 @@ class InjectionScanner:
         name: str | None = None,
     ) -> None:
         self.name        = name or type(self).name
-        self._path       = (Path(patterns_file) if patterns_file
+        primary          = (Path(patterns_file) if patterns_file
                             else type(self).default_patterns)
+        # Every catalog this scanner reads, in load order. Shared rules first
+        # (skipped when the caller names an explicit primary — that call is
+        # asking for one specific catalog), then the primary, then any overlay.
         self._paths      = (
             *(type(self).common_patterns if patterns_file is None else ()),
-            self._path,
+            primary,
             *(Path(path) for path in additional_patterns_files),
         )
         self._catalog    = [

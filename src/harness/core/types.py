@@ -12,6 +12,10 @@ class BoundaryName(StrEnum):
     # per tool at tools/list, before the tool is registered. A tool refused
     # here never reaches the gate, so this is the only record of the refusal.
     MCP_METADATA_SCAN  = "mcp_metadata_scan"
+    # Caller-driven subset of scan_input (SHAI.scan_pii / scan_injection).
+    # Distinct from INPUT_SCAN so a consumer counting input scans per turn is
+    # not thrown off by a helper call; `adapters` names the subset that ran.
+    NARROW_SCAN        = "narrow_scan"
     SYSTEM             = "system"
 
 

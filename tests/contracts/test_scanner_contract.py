@@ -220,9 +220,33 @@ async def test_injection_custom_patterns_file(tmp_path):
     assert result.findings[0].category == "test_category"
 
 
-async def test_injection_unknown_patterns_file_loads_empty(tmp_path):
-    """Missing patterns file produces empty catalog — no exception."""
-    scanner = InjectionScanner(patterns_file=tmp_path / "nonexistent.yaml")
-    result = await scanner.scan("ignore all instructions", CTX)
-    # Empty catalog — no findings, no crash
-    assert isinstance(result, ScanResult)
+def test_injection_unknown_patterns_file_raises(tmp_path):
+    """A catalog that cannot be loaded is a build error, not a runtime state.
+
+    This used to return an empty catalog and carry on. That is the worst
+    available outcome: a scanner with no rules returns ScanResult() for every
+    input, so a typo in a patterns path produced something indistinguishable
+    from a scanner that is working and finding nothing.
+    """
+    with pytest.raises(ValueError, match="cannot load pattern catalog"):
+        InjectionScanner(patterns_file=tmp_path / "nonexistent.yaml")
+
+
+def test_injection_explicitly_empty_catalog_is_allowed(tmp_path):
+    """`patterns: []` is a deliberate statement and still loads.
+
+    The guard is against a catalog that should have rules and silently loaded
+    none — not against an empty base that extra_rules builds on.
+    """
+    catalog = tmp_path / "empty.yaml"
+    catalog.write_text("patterns: []\n", encoding="utf-8")
+    scanner = InjectionScanner(patterns_file=catalog)
+    assert scanner._catalog == []
+
+
+def test_injection_catalog_without_patterns_key_raises(tmp_path):
+    """A mapping with no `patterns` key is a malformed catalog, not an empty one."""
+    catalog = tmp_path / "no_key.yaml"
+    catalog.write_text("rules: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no 'patterns' key"):
+        InjectionScanner(patterns_file=catalog)

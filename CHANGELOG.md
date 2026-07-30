@@ -13,6 +13,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.5.0] — 2026-07-29
 
 ### Added
+- **French, Spanish, German and Mandarin pattern coverage for the last two
+  English-only catalogs.** `injection_common.yaml` loads on every catalog
+  scanner, and `mcp_metadata_patterns.yaml` reads tool descriptions written by
+  whoever runs the MCP server — both were monolingual, which made "write the
+  payload in another language" a free bypass on the two widest surfaces in the
+  system. Every bundled catalog now ships a `.l10n.yaml` sibling, and a test
+  fails if one is added without it. Localized rules are named
+  `<lang>.<base_rule>` so a payload written in two languages scores as one piece
+  of evidence rather than two.
+- **`AuditEvent`, `NetworkAuditEvent` and `NetworkPolicyError` are exported.**
+  All three are reachable through the public API — the first two are what
+  `collect_events()` yields, the third can escape a source dispatch — and none
+  was importable from `harness` directly.
+- **`Finding.signals`** — the numeric sub-scores a scanner computed, by name.
+  The heuristic scanner populates entropy, density, coherence, structural,
+  fuzzy-intent and total on every finding it emits. Consumers read these instead
+  of parsing them back out of the human-readable `detail` string.
+- **`narrow_scan` boundary.** `scan_pii()` and `scan_injection()` emit under it
+  rather than `input_scan`, so a consumer counting input scans per turn is not
+  thrown off by a helper call, and `adapters` names the subset that actually
+  ran. Filterable with `shai audit tail --boundary narrow_scan`.
+- **The signed pattern DB feeds `mcp_metadata_scan`.** Its `mcp_metadata`
+  catalog is now routed like the other three, and `MCPMetadataScanner` accepts
+  `extra_rules` — operators extend MCP metadata detection the same way they
+  extend every other catalog scanner.
 - **`mcp_metadata_scan` boundary in the audit trail.** MCP tool metadata
   scanning now emits one `AuditEvent` per tool inspected, so
   `shai audit tail --boundary mcp_metadata_scan` returns rows instead of
@@ -25,6 +50,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it.
 
 ### Changed
+- **BREAKING**: an enabled scan boundary with no scanner configured now blocks.
+  It returned ALLOW. "We inspected this and found nothing" and "nothing
+  inspected this" were the same answer to the caller, which is the one thing a
+  scan verdict must never be ambiguous about. Turning a boundary *off* is
+  unchanged and still allows — that is an explicit decision, and the event
+  carries `disabled: true` to say so. Reaching the new branch means the
+  configuration asked for a scan it could not perform. The rule lives in the
+  shared pipeline, so it covers every boundary rather than the case that
+  prompted it.
+- **BREAKING**: `check_tool_call.arg_scanners:` is now `check_tool_call.scanners:`.
+  Every boundary spells the key the same way. Because the config models reject
+  unknown keys, a stale `arg_scanners:` fails at `from_yaml()` rather than being
+  quietly ignored — rename it in `harness.yaml`.
+- **BREAKING**: `scan_pii()` and `scan_injection()` run only what is configured.
+  When the scanner they name was absent from `scan_input.scanners`, they fell
+  back to the *entire* input stack — so a call asking for targeted PII detection
+  silently ran injection, jailbreak and the heuristic backstop under
+  `scan_input`'s threshold and action. They now run the matching subset, and
+  block when it is empty (see the entry above). An application calling
+  `scan_pii()` without declaring `regex_pii` will start seeing blocks; it was
+  previously getting a scan it never asked for, under the wrong threshold.
+- **BREAKING**: a pattern catalog that cannot be loaded raises instead of
+  loading empty. `InjectionScanner` returned an empty catalog on a missing file,
+  invalid YAML, or a non-mapping document — and a scanner with no rules returns
+  "no findings" for every input, indistinguishable from one that is working. A
+  typo in a `patterns_file` path was a silent hole. It now raises `ValueError`
+  at construction. An explicit `patterns: []` is still valid and still means
+  what it says.
+- **BREAKING**: `scan_mcp_metadata.action` is honoured. It was accepted and
+  ignored, so the boundary was block-or-nothing with no observe-before-enforce
+  path. `alert` now registers the tool and records the finding as `warn`;
+  `block` refuses as before. `redact` is rejected at config load — a tool
+  description is registered whole or not at all, and a partially redacted one
+  still reaches the model.
 - **BREAKING**: an agent's `allowed_tags:` now gates the agent's own tool calls.
   It never did. Layer 4 read only the capability set on the context, which is
   populated for subagents and left empty on a parent turn — so a top-level
@@ -97,6 +156,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `SHAI.from_yaml()` is unchanged and remains the supported constructor.
 
 ### Fixed
+- **The strongest heuristic detections recorded an empty fingerprint.** The
+  scanner emits a second, higher-severity finding when it sees a compound
+  typoglycemia attack, and that finding sorts first. The candidate database
+  read sub-scores by parsing the first finding's `detail` text, and the compound
+  finding's wording has no sub-score section — so entropy, density, coherence
+  and structural all recorded as zero, precisely on the attacks worth learning
+  from. Sub-scores are now carried as data on every finding (`Finding.signals`)
+  rather than recovered from prose.
+- **One malformed rule failed an entire signed bundle.** Signature verification
+  already drops a single tampered row without taking down the rest, but the
+  survivors were then compiled as one batch — so a single schema-invalid rule
+  discarded every other rule in the bundle and failed startup with it. Rules
+  from the database now compile one at a time: a bad rule costs that rule, is
+  logged, and the others load.
+- **A compound rule could be switched off by padding the input.** The
+  `within_chars` proximity check walked one match per signal group with no
+  ceiling, so its cost was the product of the per-group match counts — on text
+  an attacker writes. It is now budgeted, and exhausting the budget counts the
+  rule as *matched*: the alternative would have made "make the search expensive"
+  a way to suppress detection.
+- **Localized rules could inflate severity instead of corroborating.** Eight
+  translated rules carried names that did not derive cleanly from the rule they
+  mirror, so they scored as independent detections alongside their English
+  counterpart rather than collapsing into one piece of evidence. Pinned with
+  `meta.semantic_id`.
 - **Tool results were never scanned in the Anthropic SDK integration.**
   `gated_dispatch` gated the call and dispatched it, then returned the result
   untouched — no `scan_tool_result`, so no T6 indirect-injection protection for
@@ -181,6 +265,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   gone; the loader's resolved value is used as-is.
 
 ### Removed
+- **BREAKING**: fifteen names are no longer exported from the `harness`
+  top-level namespace. `SHAI` is the API; everything still exported is a shape
+  one of its method signatures uses — what you pass in, what you get back, or
+  what can escape as an exception. The rest were exported because they were
+  useful internally: `ToolRegistry`, `LocalSource`, `MCPSource`,
+  `SourceRegistry`, `SubAgentConfig`, `RuleConfig`, `ConnectivityConfig`,
+  `DispatchToken`, `TokenError`, `ScanAction`, `AdapterDiscoveryError`,
+  `PolicyEvaluationError`, `ArgumentViolationError`, `IrreversibleActionError`,
+  `ToolNotRegisteredError`. The four exception types among them never escape a
+  public method — the gate reports its refusals as `GateDecision(allowed=False)`,
+  so catching them was already dead code.
+  **Migration**: each remains importable from its own module — for example
+  `from harness.tools.source import MCPSource`, `from harness.connectivity import
+  DispatchToken`. Anything outside `__all__` is now explicitly an implementation
+  detail and may change without deprecation.
 - **BREAKING**: `scan_tool_result_on` — gone from `ConnectorManifest`,
   `SourceConfig`, and all eight bundled connector manifests. No integration ever
   passed `tool_name`, so the field was inert on every shipped code path and no
@@ -220,6 +319,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   be added back unnoticed.
 
 ### Security
+- A scan that cannot run fails closed. The combination of a boundary enabled
+  with no scanners, a catalog that would not load, and helper methods that
+  silently substituted a different scanner set meant several ways to end up
+  believing content had been inspected when nothing had inspected it. Each now
+  either blocks or refuses to start.
+- Non-English payloads no longer bypass the two widest detection surfaces.
+  Language was a free bypass on the shared rule catalog and on MCP tool
+  metadata — the latter written by whoever runs the server, and handed to the
+  model as trusted schema context.
+- Only the scanners an operator declared will run. The narrow-scan helpers
+  substituting the full input stack meant the set of scanners actually applied
+  to content did not match the configuration, in either direction.
+- A denial-of-service against pattern matching cannot suppress a rule. The
+  bounded proximity search resolves exhaustion as a match, so making the search
+  expensive costs the attacker a detection rather than earning them a bypass.
 - Tool results reaching the model through `gated_dispatch` are scanned for
   indirect injection (T6). This closed a live gap, not a theoretical one:
   the Anthropic SDK integration had no result scanning at all, and the shipped

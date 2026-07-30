@@ -64,6 +64,7 @@ patterns:
 
   - name: fr.doc.social_engineering
     meta:
+      semantic_id: deception_social_engineering
       description: "FR — social engineering tricks in document content"
       threat_level: 2
       severity: medium
@@ -138,6 +139,7 @@ patterns:
 
   - name: es.doc.social_engineering
     meta:
+      semantic_id: deception_social_engineering
       description: "ES — social engineering tricks in document content"
       threat_level: 2
       severity: medium
@@ -212,6 +214,7 @@ patterns:
 
   - name: de.doc.social_engineering
     meta:
+      semantic_id: deception_social_engineering
       description: "DE — social engineering tricks in document content"
       threat_level: 2
       severity: medium
@@ -286,6 +289,7 @@ patterns:
 
   - name: zh.doc.social_engineering
     meta:
+      semantic_id: deception_social_engineering
       description: "ZH — social engineering tricks in document content"
       threat_level: 2
       severity: medium

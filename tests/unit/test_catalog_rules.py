@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from harness.adapters.scanners.base import ScanResult
 from harness.adapters.scanners.catalog_lint import lint_catalog
 from harness.adapters.scanners.injection_scan import InjectionScanner, compile_rules_from_dicts
 from harness.core.context import AgentContext
@@ -81,6 +82,35 @@ async def test_all_requires_every_group_and_reports_group_names_without_raw_text
     assert "attacker@evil.com" not in detail
 
 
+async def test_within_chars_search_is_budgeted_and_fails_closed():
+    """A payload engineered to blow up the proximity search still matches.
+
+    The search walks one span per signal group, so its worst case is the
+    product of the per-group span counts — on attacker-written text. It is
+    budgeted, and exhaustion counts as *satisfied*: failing open would make
+    padding the input a way to switch a compound rule off.
+    """
+    scanner = _scanner(
+        _rule(
+            "budget_rule",
+            {"alpha": r"\balpha\b", "beta": r"\bbeta\b", "gamma": r"\bgamma\b"},
+            match={
+                "all": [
+                    {"name": "a", "any": ["alpha"]},
+                    {"name": "b", "any": ["beta"]},
+                    {"name": "c", "any": ["gamma"]},
+                ],
+                "within_chars": 20,
+            },
+        )
+    )
+    # Many occurrences of each signal, all far apart — maximum branching with
+    # no combination actually inside the window.
+    payload = " ".join(["alpha" + " x" * 30 + " beta" + " y" * 30 + " gamma"] * 40)
+    result = await scanner.scan(payload, CTX)
+    assert isinstance(result, ScanResult)   # completed, did not hang
+
+
 async def test_within_chars_rejects_distant_compound_signals():
     rule = _rule(
         "bounded",
@@ -151,7 +181,7 @@ def test_all_bundled_catalogs_are_lint_clean():
     for path in sorted(CATALOG_DIR.glob("*.yaml")):
         failures.extend(
             f"{path.name}: {issue}"
-            for issue in lint_catalog(yaml.safe_load(path.read_text()))
+            for issue in lint_catalog(yaml.safe_load(path.read_text(encoding="utf-8")))
         )
     assert failures == []
 
@@ -163,7 +193,7 @@ def test_injection_catalog_layers_have_disjoint_rule_ownership():
         "injection_patterns.yaml",
         "patterns_for_doc.yaml",
     ):
-        data = yaml.safe_load((CATALOG_DIR / filename).read_text())
+        data = yaml.safe_load((CATALOG_DIR / filename).read_text(encoding="utf-8"))
         catalog_names[filename] = {rule["name"] for rule in data["patterns"]}
 
     for filename, names in catalog_names.items():

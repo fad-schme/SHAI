@@ -74,7 +74,7 @@ check_tool_call:
     window_seconds: 60
     max_calls_per_window: 30
     max_calls_per_tool: 10
-  arg_scanners:
+  scanners:
     - name: regex_pii
   scan_args_for_tags:
     - sensitive

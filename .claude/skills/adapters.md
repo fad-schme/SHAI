@@ -11,7 +11,6 @@ SHAI discovers adapters via Python entry points. Any package can contribute adap
 | `harness.scanners` | `Scanner` Protocol | `regex_pii`, `injection_scan`, `jailbreak_scan`, `identity_spoof_scan` |
 | `harness.policy` | `PolicyEngine` Protocol | `rules` |
 | `harness.audit_sinks` | `AuditSink` Protocol | `stdout`, `file` |
-| `harness.sources` | `ToolSource` Protocol | `local`, `skill`, `mcp` |
 | `harness.secrets` | `SecretsProvider` ABC | `env` |
 
 ---
@@ -203,7 +202,7 @@ GROUPS = frozenset({
 })
 ```
 
-Note: `harness.sources` adapters are constructed directly in `from_yaml()` from `config.sources`, not via discovery. Discovery covers adapters configured by name in `harness.yaml`.
+Note: tool sources are not discovered by entry point. `from_yaml()` builds them directly from `config.sources`, choosing the class from each source's `transport:` field. Discovery covers only the four groups above.
 
 ---
 

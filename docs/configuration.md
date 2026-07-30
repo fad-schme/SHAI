@@ -95,7 +95,7 @@ check_tool_call:
     window_seconds: 60
     max_calls_per_window: 60
     max_calls_per_tool: 20
-  arg_scanners:
+  scanners:
     - name: regex_pii
   scan_args_for_tags:
     - sensitive                   # arg scanning runs on tools with this tag
@@ -116,14 +116,9 @@ policy:
       action: allow
 ```
 
-or:
-
-```yaml
-policy:
-  name: rules
-  config:
-    rules_path: ./policies/rules.yaml
-```
+Rules are declared inline under `policy.rules` — there is no separate rules
+file. Per-agent rules go in the agent's own `policy_rules:` and are evaluated
+before these.
 
 Rules are evaluated in declaration order. **First match wins.** No match → implicit `allow`.
 

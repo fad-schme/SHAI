@@ -31,6 +31,7 @@ patterns:
 
   - name: fr.identity_spoof.tool_result_authority
     meta:
+      semantic_id: identity_spoof.tool_result_authority_claim
       description: "FR — tool result authority injection"
       threat_level: 5
       severity: high
@@ -66,6 +67,7 @@ patterns:
 
   - name: es.identity_spoof.tool_result_authority
     meta:
+      semantic_id: identity_spoof.tool_result_authority_claim
       description: "ES — tool result authority injection"
       threat_level: 5
       severity: high
@@ -101,6 +103,7 @@ patterns:
 
   - name: de.identity_spoof.tool_result_authority
     meta:
+      semantic_id: identity_spoof.tool_result_authority_claim
       description: "DE — tool result authority injection"
       threat_level: 5
       severity: high
@@ -136,6 +139,7 @@ patterns:
 
   - name: zh.identity_spoof.tool_result_authority
     meta:
+      semantic_id: identity_spoof.tool_result_authority_claim
       description: "ZH — tool result authority injection (Simplified Chinese)"
       threat_level: 5
       severity: high

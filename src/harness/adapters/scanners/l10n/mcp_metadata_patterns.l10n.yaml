@@ -1,0 +1,383 @@
+# mcp_metadata_patterns.l10n.yaml — multilingual variants of mcp_metadata_patterns.yaml
+# =============================================================================
+# French, Spanish, German, and Mandarin Chinese variants of the eight MCP
+# metadata rule families. These fire at connect time, when a source's
+# tools/list response is scanned before any tool is registered.
+#
+# This surface needs translation more than most. A tool description is written
+# by whoever runs the MCP server and is passed to the model as trusted schema
+# context — an English-only catalog means a hostile server evades the whole
+# boundary by writing its payload in another language, at no cost to it.
+#
+# Rule names are <lang>.<base_name> so _canonical_semantic_name collapses them
+# onto the base rule: a payload written in two languages is one evidence unit,
+# not two. Categories mirror the base catalog so findings merge cleanly.
+# Double-quoted YAML strings throughout, so regex backslashes are escaped once.
+
+patterns:
+
+  # ── French (FR) ──────────────────────────────────────────────────────────
+
+  - name: fr.metadata_instruction_override
+    meta:
+      description: "FR — tool metadata attempts to override LLM instructions"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      ignore_instructions_fr:  "(?i)\\bignor(?:e[rz]?|ez)\\b.{0,40}\\b(?:toutes?\\s+les?\\s+|les?\\s+)?(?:instructions?|consignes?|directives?)\\b"
+      disregard_system_fr:     "(?i)\\b(?:ne\\s+tiens?\\s+pas\\s+compte|fais\\s+abstraction)\\b.{0,30}\\b(?:du\\s+)?(?:système|contexte\\s+précédent)\\b"
+      override_instructions_fr: "(?i)\\b(?:remplac(?:er|e|es|ez|ent)|annul(?:er|e|es|ez|ent)|écrase[rz]?)\\b.{0,30}\\b(?:les?\\s+)?instructions?\\b"
+      forget_all_prior_fr:     "(?i)\\boubli(?:e[rz]?|ez)\\b.{0,30}\\b(?:tout|tout\\s+ce\\s+qui\\s+précède|les?\\s+précédentes?)\\b"
+      new_instructions_fr:     "(?i)\\b(?:nouvelles?|cachées?|secrètes?|véritables?)\\s+(?:instructions?|consignes?)\\b.{0,30}:"
+
+  - name: fr.metadata_role_injection
+    meta:
+      description: "FR — tool metadata redefines the model's role or identity"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      you_are_now_fr:          "(?i)\\btu\\s+es\\s+(?:maintenant|désormais)\\b.{0,40}\\b(?:admin(?:istrateur)?|root|système|développeur|sans\\s+censure)\\b"
+      from_now_on_act_fr:      "(?i)\\b(?:désormais|à\\s+partir\\s+de\\s+maintenant)\\b.{0,30}\\b(?:agis?|réponds?|comporte-?toi)\\b"
+      respond_as_admin_fr:     "(?i)\\bréponds?\\s+en\\s+tant\\s+qu(?:e|')\\b.{0,20}\\b(?:admin(?:istrateur)?|système|root|développeur)\\b"
+      assume_the_role_fr:      "(?i)\\b(?:adopt(?:er|e|es|ez|ent)|prends?)\\s+le\\s+rôle\\s+d(?:e|')\\b.{0,30}\\b(?:admin(?:istrateur)?|root|système|développeur)\\b"
+      no_longer_bound_fr:      "(?i)\\btu\\s+n(?:'|e\\s+)es\\s+plus\\s+(?:lié|tenu|soumis)\\b"
+
+  - name: fr.metadata_hidden_payload
+    meta:
+      description: "FR — embedded payload using tool metadata as an injection vector"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      before_answering_fr:     "(?i)\\bavant\\s+de\\s+(?:répondre|toute\\s+réponse)\\b.{0,30}\\b(?:appel(?:er|le|les|lez|lent)|invoqu(?:er|e|es|ez|ent)|exécute[rz]?)\\b"
+      always_call_tool_fr:     "(?i)\\b(?:appel(?:er|le|les|lez|lent)|invoqu(?:er|e|es|ez|ent))\\s+toujours\\b.{0,20}\\b(?:cet\\s+)?outil\\b"
+      must_call_first_fr:      "(?i)\\btu\\s+dois\\s+(?:d'abord\\s+)?(?:appeler|invoquer)\\b"
+      do_not_tell_user_fr:     "(?i)\\bne\\s+(?:dis|informe|montre|mentionne)\\s+(?:rien\\s+)?(?:à\\s+)?l(?:'|a\\s+)(?:utilisateur|humain)\\b"
+      keep_secret_fr:          "(?i)\\b(?:gard(?:er|e|es|ez|ent)|conserv(?:er|e|es|ez|ent))\\s+(?:cela|ceci|ce\\s+point)\\b.{0,20}\\b(?:secret|caché|confidentiel)\\b"
+      without_telling_fr:      "(?i)\\b(?:silencieusement|secrètement|sans\\s+(?:le\\s+)?(?:dire|informer|prévenir))\\b"
+
+  - name: fr.metadata_system_spoofing
+    meta:
+      description: "FR — fake system/assistant turn markers in tool metadata"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      fake_system_tag_fr:      "(?i)(?:^|[\\s>#*`\\-])\\[(?:système|assistant|utilisateur)\\]\\s*[:>]"
+      heredoc_marker_fr:       "(?i)(?:>>>|###|===|---)\\s*(?:système|instructions?|consignes?)\\b"
+      markdown_heading_fr:     "(?i)#{1,3}\\s*(?:système|instructions?|consignes?|admin(?:istrateur)?)\\b"
+
+  - name: fr.metadata_suspicious_name
+    meta:
+      description: "FR — tool name carries instruction syntax instead of an identifier"
+      threat_level: 4
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      name_imperative_fr:      "(?i)^\\s*(?:ignor(?:er|e|es|ez|ent)|oubli(?:er|e|es|ez|ent)|réinitialise[rz]?|remplac(?:er|e|es|ez|ent)|exécute[rz]?|invoqu(?:er|e|es|ez|ent)|appel(?:er|le|les|lez|lent))\\s+\\w"
+
+  - name: fr.metadata_exfiltration_setup
+    meta:
+      description: "FR — metadata sets up collection or forwarding to an external endpoint"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      send_to_url_fr:          "(?i)\\b(?:(?:envoyer|envoie|envoies|envoyez)|transmet(?:tre|s|tez)|transfère[rz]?|publi(?:er|e|es|ez|ent))\\b.{0,40}\\b(?:vers|à)\\b.{0,30}https?://"
+      collect_and_send_fr:     "(?i)\\b(?:collect(?:er|e|es|ez|ent)|recueill(?:ir|e|es|ez|ent)|rassembl(?:er|e|es|ez|ent))\\b.{0,30}\\b(?:et\\s+)?(?:(?:envoyer|envoie|envoies|envoyez)|transmet(?:tre|s|tez))\\b"
+      log_conversations_fr:    "(?i)\\b(?:enregistr(?:er|e|es|ez|ent)|journalis(?:er|e|es|ez|ent))\\b.{0,20}\\btous?\\s+les\\s+(?:messages?|échanges?|entrées?)\\b"
+
+  - name: fr.metadata_arg_injection
+    meta:
+      description: "FR — argument description embeds behavioural instructions"
+      threat_level: 3
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      always_set_to_fr:        "(?i)\\b(?:définis?|(?:mets|mettre|mettez)|règle[rz]?)\\s+toujours\\b.{0,40}\\b(?:secret|jeton|token|clé|admin(?:istrateur)?|root)\\b"
+      include_all_fr:          "(?i)\\binclus?\\b.{0,20}\\b(?:toute\\s+la|tout\\s+le|l'intégralité\\s+de)\\b.{0,30}\\b(?:conversation|historique|contexte)\\b"
+      pass_full_context_fr:    "(?i)\\b(?:transmet(?:tre|s|tez)|pass(?:er|e|es|ez|ent))\\b.{0,30}\\b(?:tout\\s+le\\s+contexte|toute\\s+la\\s+conversation)\\b"
+
+  # ── Spanish (ES) ─────────────────────────────────────────────────────────
+
+  - name: es.metadata_instruction_override
+    meta:
+      description: "ES — tool metadata attempts to override LLM instructions"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      ignore_instructions_es:  "(?i)\\bignor(?:a|e|ar|en)\\b.{0,40}\\b(?:todas?\\s+las?\\s+|las?\\s+)?(?:instrucciones?|indicaciones?|directrices?)\\b"
+      disregard_system_es:     "(?i)\\b(?:haz\\s+caso\\s+omiso|no\\s+tengas?\\s+en\\s+cuenta|desestima)\\b.{0,30}\\b(?:del?\\s+)?(?:sistema|contexto\\s+anterior)\\b"
+      override_instructions_es: "(?i)\\b(?:anula|sobrescribe|reemplaza|invalida)\\b.{0,30}\\b(?:las?\\s+)?instrucciones?\\b"
+      forget_all_prior_es:     "(?i)\\bolvida(?:te)?\\b.{0,30}\\b(?:todo|lo\\s+anterior|las?\\s+anteriores?)\\b"
+      new_instructions_es:     "(?i)\\b(?:nuevas?|ocultas?|secretas?|verdaderas?)\\s+instrucciones?\\b.{0,30}:"
+
+  - name: es.metadata_role_injection
+    meta:
+      description: "ES — tool metadata redefines the model's role or identity"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      you_are_now_es:          "(?i)\\bahora\\s+eres\\b.{0,40}\\b(?:admin(?:istrador)?|root|sistema|desarrollador|sin\\s+censura)\\b"
+      from_now_on_act_es:      "(?i)\\b(?:a\\s+partir\\s+de\\s+ahora|de\\s+ahora\\s+en\\s+adelante)\\b.{0,30}\\b(?:actúa|responde|compórtate)\\b"
+      respond_as_admin_es:     "(?i)\\bresponde\\s+como\\b.{0,20}\\b(?:admin(?:istrador)?|sistema|root|desarrollador)\\b"
+      assume_the_role_es:      "(?i)\\b(?:asume|adopta)\\s+el\\s+(?:rol|papel)\\s+de\\b.{0,30}\\b(?:admin(?:istrador)?|root|sistema|desarrollador)\\b"
+      no_longer_bound_es:      "(?i)\\bya\\s+no\\s+estás\\s+(?:sujeto|obligado|limitado)\\b"
+
+  - name: es.metadata_hidden_payload
+    meta:
+      description: "ES — embedded payload using tool metadata as an injection vector"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      before_answering_es:     "(?i)\\bantes\\s+de\\s+(?:responder|contestar)\\b.{0,30}\\b(?:llama|invoca|ejecuta)\\b"
+      always_call_tool_es:     "(?i)\\b(?:llama|invoca|ejecuta)\\s+siempre\\b.{0,20}\\b(?:esta\\s+)?herramienta\\b"
+      must_call_first_es:      "(?i)\\bdebes\\s+(?:primero\\s+)?(?:llamar|invocar)\\b"
+      do_not_tell_user_es:     "(?i)\\bno\\s+(?:le\\s+)?(?:digas|informes|muestres|menciones)\\b.{0,30}\\b(?:al\\s+)?(?:usuario|humano)\\b"
+      keep_secret_es:          "(?i)\\b(?:mantén|guarda)\\s+(?:esto|este\\s+punto)\\b.{0,20}\\b(?:en\\s+secreto|oculto|confidencial)\\b"
+      without_telling_es:      "(?i)\\b(?:silenciosamente|en\\s+secreto|sin\\s+(?:decírselo|informar|avisar))\\b"
+
+  - name: es.metadata_system_spoofing
+    meta:
+      description: "ES — fake system/assistant turn markers in tool metadata"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      fake_system_tag_es:      "(?i)(?:^|[\\s>#*`\\-])\\[(?:sistema|asistente|usuario)\\]\\s*[:>]"
+      heredoc_marker_es:       "(?i)(?:>>>|###|===|---)\\s*(?:sistema|instrucciones?|indicaciones?)\\b"
+      markdown_heading_es:     "(?i)#{1,3}\\s*(?:sistema|instrucciones?|admin(?:istrador)?)\\b"
+
+  - name: es.metadata_suspicious_name
+    meta:
+      description: "ES — tool name carries instruction syntax instead of an identifier"
+      threat_level: 4
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      name_imperative_es:      "(?i)^\\s*(?:ignora|olvida|reinicia|anula|ejecuta|invoca|llama)\\s+\\w"
+
+  - name: es.metadata_exfiltration_setup
+    meta:
+      description: "ES — metadata sets up collection or forwarding to an external endpoint"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      send_to_url_es:          "(?i)\\b(?:envía|remite|transmite|publica)\\b.{0,40}\\b(?:a|hacia)\\b.{0,30}https?://"
+      collect_and_send_es:     "(?i)\\b(?:recopila|recoge|reúne)\\b.{0,30}\\b(?:y\\s+)?(?:envía|transmite|remite)\\b"
+      log_conversations_es:    "(?i)\\b(?:registra|almacena)\\b.{0,20}\\btod(?:os|as)\\s+l(?:os|as)\\s+(?:mensajes?|conversaciones?|entradas?)\\b"
+
+  - name: es.metadata_arg_injection
+    meta:
+      description: "ES — argument description embeds behavioural instructions"
+      threat_level: 3
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      always_set_to_es:        "(?i)\\b(?:establece|pon|configura)\\s+siempre\\b.{0,40}\\b(?:secreto|token|clave|admin(?:istrador)?|root)\\b"
+      include_all_es:          "(?i)\\bincluye\\b.{0,20}\\b(?:tod[ao]\\s+l[ao]|la\\s+totalidad\\s+de)\\b.{0,30}\\b(?:conversación|historial|contexto)\\b"
+      pass_full_context_es:    "(?i)\\b(?:pasa|transmite)\\b.{0,30}\\b(?:todo\\s+el\\s+contexto|toda\\s+la\\s+conversación)\\b"
+
+  # ── German (DE) ──────────────────────────────────────────────────────────
+
+  - name: de.metadata_instruction_override
+    meta:
+      description: "DE — tool metadata attempts to override LLM instructions"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      ignore_instructions_de:  "(?i)\\bignorier(?:e|en|t)\\b.{0,40}\\b(?:alle\\s+|die\\s+|vorherigen?\\s+)?(?:anweisungen?|anordnungen?|vorgaben?)\\b"
+      disregard_system_de:     "(?i)\\b(?:missachte|berücksichtige\\s+nicht|verwirf)\\b.{0,30}\\b(?:das\\s+)?(?:system|vorherigen?\\s+kontext)\\b"
+      override_instructions_de: "(?i)\\b(?:überschreib(?:e|en)|setze\\s+außer\\s+kraft|hebe\\s+auf)\\b.{0,30}\\b(?:die\\s+)?anweisungen?\\b"
+      forget_all_prior_de:     "(?i)\\bvergiss\\b.{0,30}\\b(?:alles|alles\\s+bisherige|die\\s+vorherigen?)\\b"
+      new_instructions_de:     "(?i)\\b(?:neue|versteckte|geheime|eigentliche)\\s+anweisungen?\\b.{0,30}:"
+
+  - name: de.metadata_role_injection
+    meta:
+      description: "DE — tool metadata redefines the model's role or identity"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      you_are_now_de:          "(?i)\\bdu\\s+bist\\s+(?:jetzt|nun|ab\\s+sofort)\\b.{0,40}\\b(?:admin(?:istrator)?|root|system|entwickler|unzensiert)\\b"
+      from_now_on_act_de:      "(?i)\\b(?:ab\\s+(?:jetzt|sofort)|von\\s+nun\\s+an)\\b.{0,30}\\b(?:handle|antworte|verhalte)\\b"
+      respond_as_admin_de:     "(?i)\\bantworte\\s+als\\b.{0,20}\\b(?:admin(?:istrator)?|system|root|entwickler)\\b"
+      assume_the_role_de:      "(?i)\\b(?:übernimm|nimm)\\s+die\\s+rolle\\s+(?:des|eines)\\b.{0,30}\\b(?:admin(?:istrators?)?|root|systems?|entwicklers?)\\b"
+      no_longer_bound_de:      "(?i)\\bdu\\s+bist\\s+nicht\\s+mehr\\s+(?:gebunden|verpflichtet|beschränkt)\\b"
+
+  - name: de.metadata_hidden_payload
+    meta:
+      description: "DE — embedded payload using tool metadata as an injection vector"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      before_answering_de:     "(?i)\\bbevor\\s+du\\s+antwortest\\b.{0,30}\\b(?:rufe?|führe?)\\b"
+      always_call_tool_de:     "(?i)\\b(?:rufe?|verwende)\\s+immer\\b.{0,20}\\b(?:dieses\\s+)?(?:tool|werkzeug)\\b"
+      must_call_first_de:      "(?i)\\bdu\\s+musst\\s+(?:zuerst\\s+)?(?:aufrufen|ausführen)\\b"
+      do_not_tell_user_de:     "(?i)\\b(?:sage|teile|zeige|erwähne)\\s+(?:es\\s+)?(?:dem\\s+)?(?:benutzer|nutzer|menschen)\\s+nicht\\b"
+      keep_secret_de:          "(?i)\\b(?:halte|behalte)\\s+(?:dies|das)\\b.{0,20}\\b(?:geheim|verborgen|vertraulich)\\b"
+      without_telling_de:      "(?i)\\b(?:stillschweigend|heimlich|ohne\\s+(?:es\\s+)?(?:zu\\s+sagen|zu\\s+informieren))\\b"
+
+  - name: de.metadata_system_spoofing
+    meta:
+      description: "DE — fake system/assistant turn markers in tool metadata"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      fake_system_tag_de:      "(?i)(?:^|[\\s>#*`\\-])\\[(?:system|assistent|benutzer)\\]\\s*[:>]"
+      heredoc_marker_de:       "(?i)(?:>>>|###|===|---)\\s*(?:system|anweisungen?|vorgaben?)\\b"
+      markdown_heading_de:     "(?i)#{1,3}\\s*(?:system|anweisungen?|admin(?:istrator)?)\\b"
+
+  - name: de.metadata_suspicious_name
+    meta:
+      description: "DE — tool name carries instruction syntax instead of an identifier"
+      threat_level: 4
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      name_imperative_de:      "(?i)^\\s*(?:ignoriere|vergiss|zurücksetzen|überschreibe|ausführen|aufrufen)\\s+\\w"
+
+  - name: de.metadata_exfiltration_setup
+    meta:
+      description: "DE — metadata sets up collection or forwarding to an external endpoint"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      send_to_url_de:          "(?i)\\b(?:sende|schicke|übertrage|poste)\\b.{0,40}\\b(?:an|zu|nach)\\b.{0,30}https?://"
+      collect_and_send_de:     "(?i)\\b(?:sammle|erfasse|sammeln)\\b.{0,30}\\b(?:und\\s+)?(?:sende|übertrage|schicke)\\b"
+      log_conversations_de:    "(?i)\\b(?:protokolliere|logge|speichere)\\b.{0,20}\\balle\\s+(?:nachrichten|unterhaltungen|eingaben)\\b"
+
+  - name: de.metadata_arg_injection
+    meta:
+      description: "DE — argument description embeds behavioural instructions"
+      threat_level: 3
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      always_set_to_de:        "(?i)\\b(?:setze|stelle)\\s+(?:dies\\s+)?immer\\s+auf\\b.{0,40}\\b(?:geheim|token|schlüssel|admin(?:istrator)?|root)\\b"
+      include_all_de:          "(?i)\\b(?:füge\\s+hinzu|schließe\\s+ein)\\b.{0,20}\\b(?:die\\s+gesamte|den\\s+gesamten|alle)\\b.{0,30}\\b(?:unterhaltung|verlauf|kontext)\\b"
+      pass_full_context_de:    "(?i)\\b(?:übergib|übertrage)\\b.{0,30}\\b(?:den\\s+gesamten\\s+kontext|die\\s+gesamte\\s+unterhaltung)\\b"
+
+  # ── Mandarin Chinese (ZH) ────────────────────────────────────────────────
+  # No \b word boundaries: Chinese is unsegmented, so \b never fires between
+  # Han characters. These match on the characters directly.
+
+  - name: zh.metadata_instruction_override
+    meta:
+      description: "ZH — tool metadata attempts to override LLM instructions"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      ignore_instructions_zh:  "忽略.{0,20}(?:所有|之前|先前)?(?:指令|指示|说明)"
+      disregard_system_zh:     "(?:不要理会|无视|忽视).{0,20}(?:系统|之前的上下文)"
+      override_instructions_zh: "(?:覆盖|取代|废除).{0,20}(?:指令|指示)"
+      forget_all_prior_zh:     "忘记.{0,20}(?:一切|所有|之前)"
+      new_instructions_zh:     "(?:新的|隐藏的|秘密的|真正的)(?:指令|指示).{0,20}[:：]"
+
+  - name: zh.metadata_role_injection
+    meta:
+      description: "ZH — tool metadata redefines the model's role or identity"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      you_are_now_zh:          "你现在是.{0,20}(?:管理员|系统|开发者|root)"
+      from_now_on_act_zh:      "(?:从现在起|今后).{0,20}(?:扮演|回答|行为)"
+      respond_as_admin_zh:     "以.{0,10}(?:管理员|系统|开发者).{0,10}(?:的身份)?回答"
+      assume_the_role_zh:      "(?:扮演|充当).{0,10}(?:管理员|系统|开发者)(?:的)?(?:角色)?"
+      no_longer_bound_zh:      "你不再(?:受|被).{0,10}(?:限制|约束)"
+
+  - name: zh.metadata_hidden_payload
+    meta:
+      description: "ZH — embedded payload using tool metadata as an injection vector"
+      threat_level: 5
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      before_answering_zh:     "(?:回答|应答)(?:之)?前.{0,20}(?:调用|执行|运行)"
+      always_call_tool_zh:     "(?:总是|始终|每次都)(?:要)?调用.{0,20}(?:工具)?"
+      must_call_first_zh:      "你必须(?:先)?(?:调用|执行)"
+      do_not_tell_user_zh:     "不要(?:告诉|告知|显示|提及).{0,10}(?:用户|使用者|人类)"
+      keep_secret_zh:          "(?:保密|保持秘密|不要公开)"
+      without_telling_zh:      "(?:静默地|秘密地|不动声色地)"
+
+  - name: zh.metadata_system_spoofing
+    meta:
+      description: "ZH — fake system/assistant turn markers in tool metadata"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      fake_system_tag_zh:      "(?:^|[\\s>#*`\\-])\\[(?:系统|助手|用户)\\]\\s*[:>：]"
+      heredoc_marker_zh:       "(?:>>>|###|===|---)\\s*(?:系统|指令|指示)"
+      markdown_heading_zh:     "#{1,3}\\s*(?:系统|指令|管理员)"
+
+  - name: zh.metadata_suspicious_name
+    meta:
+      description: "ZH — tool name carries instruction syntax instead of an identifier"
+      threat_level: 4
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      name_imperative_zh:      "^\\s*(?:忽略|忘记|重置|覆盖|执行|调用)"
+
+  - name: zh.metadata_exfiltration_setup
+    meta:
+      description: "ZH — metadata sets up collection or forwarding to an external endpoint"
+      threat_level: 4
+      severity: high
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      send_to_url_zh:          "(?:发送|传输|转发|上传).{0,20}(?:到|至).{0,20}https?://"
+      collect_and_send_zh:     "(?:收集|采集|汇总).{0,20}(?:并|然后)?(?:发送|传输|转发)"
+      log_conversations_zh:    "(?:记录|日志).{0,20}(?:所有|全部)(?:的)?(?:消息|对话|输入)"
+
+  - name: zh.metadata_arg_injection
+    meta:
+      description: "ZH — argument description embeds behavioural instructions"
+      threat_level: 3
+      severity: medium
+      category: mcp_metadata_injection
+    match: any
+    strings:
+      always_set_to_zh:        "(?:总是|始终)(?:设置|设定)(?:为)?.{0,20}(?:密钥|令牌|管理员|root)"
+      include_all_zh:          "(?:包含|包括).{0,10}(?:所有|全部|完整)(?:的)?.{0,10}(?:对话|历史|上下文)"
+      pass_full_context_zh:    "(?:传递|传入).{0,10}(?:完整|全部)(?:的)?(?:上下文|对话)"

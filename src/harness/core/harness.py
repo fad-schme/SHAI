@@ -6,6 +6,7 @@ Agent tools are resolved once at load_agent() time — no per-turn overhead.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -148,12 +149,15 @@ class SHAI:
         config = load_yaml(path, provider=provider)
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
-        # Signed pattern DB → extra rules for the injection-family scanners.
-        # Rows failing HMAC verification are skipped inside load_verified_rules;
-        # the bundled YAML catalog stays active either way.
+        # Signed pattern DB → extra rules merged onto every catalog scanner's
+        # bundled rules. The DB is incremental: operators add rules over time
+        # and each is independent, so both failure modes drop one row rather
+        # than the set — HMAC failure inside load_verified_rules, schema
+        # failure inside compile_rules_incrementally. The bundled YAML catalog
+        # stays active regardless.
         db_extra_rules: dict[str, list] = {}
         if config.patterns_db.enabled:
-            from harness.adapters.scanners.injection_scan import compile_rules_from_dicts
+            from harness.adapters.scanners.injection_scan import compile_rules_incrementally
             from harness.patterns.store import load_verified_rules
 
             db_secret = config.patterns_db.secret.encode()
@@ -163,7 +167,11 @@ class SHAI:
                     config.patterns_db.path, db_secret, catalog=catalog
                 )
                 if raw_rules:
-                    db_extra_rules[scanner_name] = compile_rules_from_dicts(raw_rules)
+                    compiled = compile_rules_incrementally(
+                        raw_rules, source=f"patterns_db[{catalog}]"
+                    )
+                    if compiled:
+                        db_extra_rules[scanner_name] = compiled
             log.info(
                 "signed pattern DB loaded",
                 extra={
@@ -180,7 +188,7 @@ class SHAI:
         # takes the scanner instances rather than the configured pairs.
         arg_scanners    = [
             c.scanner for c in
-            _build_text_scanners(config.check_tool_call.arg_scanners, extra_rules=db_extra_rules)
+            _build_text_scanners(config.check_tool_call.scanners, extra_rules=db_extra_rules)
         ]
         file_scanners   = _build_file_scanners(
             config.scan_file.scanners,
@@ -213,9 +221,12 @@ class SHAI:
         )
 
         # MCP metadata scanners run inside MCPSource via scan_tool(), not
-        # through run_scan — instances only.
+        # through run_scan — instances only. They take signed-DB rules like
+        # every other catalog scanner.
         mcp_metadata_scanners = [
-            c.scanner for c in _build_text_scanners(config.scan_mcp_metadata.scanners)
+            c.scanner for c in _build_text_scanners(
+                config.scan_mcp_metadata.scanners, extra_rules=db_extra_rules
+            )
         ]
 
         # Build shared registries first — source_registry needs tool_registry
@@ -257,6 +268,7 @@ class SHAI:
                     metadata_scanners=mcp_metadata_scanners,
                     metadata_enabled=config.scan_mcp_metadata.enabled,
                     metadata_block_at=config.scan_mcp_metadata.block_at,
+                    metadata_action=config.scan_mcp_metadata.action,
                 )
             else:
                 # LOCAL — backed by the shared tool registry
@@ -485,51 +497,80 @@ class SHAI:
         return verdict
 
     async def scan_pii(self, text: str, ctx: AgentContext) -> ScanVerdict:
-        """Run only the RegexPIIScanner on text.
+        """Run the configured PII scanner on text, and nothing else.
 
-        Runs the full scan pipeline (action, block_at, audit event) but with
-        only the PII scanner — not the full input scanner stack.
-        Useful when you need targeted PII detection on content that doesn't
-        need injection scanning (e.g. a structured API response).
+        Same pipeline as scan_input — action, block_at, on_error, one audit
+        event — narrowed to `regex_pii`. Useful for content that needs PII
+        detection but not injection scanning (a structured API response, say).
+
+        **Blocks** when `regex_pii` is not declared under `scan_input.scanners`:
+        asking for a scan that cannot be performed is not an allow. See
+        _narrow_scan.
         """
-        pii_scanners = [
-            c for c in self._input_scanners
-            if getattr(c.scanner, "name", "") == "regex_pii"
-        ]
-        if not pii_scanners:
-            pii_scanners = self._input_scanners   # fallback: run all
-        return await run_scan(
-            text, ctx,
-            boundary=BoundaryName.INPUT_SCAN,
-            scanners=pii_scanners,
-            boundary_action=self._config.scan_input.action,
-            emitter=self._emitter,
-            tenant_id=self._tenant_id,
-            enabled=self._config.scan_input.enabled,
-            block_at=self._config.scan_input.block_at,
-            state=self._scan_state,
-            normalization=self._config.normalization,
-            audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_input.on_error,
+        return await self._narrow_scan(
+            text, ctx, subset="regex_pii",
+            match=lambda n: n == "regex_pii",
         )
 
     async def scan_injection(self, text: str, ctx: AgentContext) -> ScanVerdict:
-        """Run only the InjectionScanner on text.
+        """Run the configured injection scanner on text, and nothing else.
 
-        Runs the full scan pipeline but with only the injection scanner.
-        Useful for targeted injection detection on a specific input surface
-        (e.g. a URL parameter, a tool name, a structured field).
+        Same pipeline as scan_input, narrowed to the injection-catalog family.
+        Useful for a specific input surface — a URL parameter, a tool name, a
+        structured field.
+
+        **Blocks** when no injection scanner is declared under
+        `scan_input.scanners`. See _narrow_scan.
         """
-        inj_scanners = [
+        return await self._narrow_scan(
+            text, ctx, subset="injection_scan",
+            match=lambda n: n.startswith("injection_scan"),
+        )
+
+    async def _narrow_scan(
+        self,
+        text: str,
+        ctx: AgentContext,
+        *,
+        subset: str,
+        match: Callable[[str], bool],
+    ) -> ScanVerdict:
+        """Run the subset of `scan_input.scanners` whose name satisfies `match`.
+
+        Config is the only source of what runs. A scanner the operator did not
+        declare is never substituted in: these helpers previously fell back to
+        the *entire* input stack when the named scanner was absent, so asking
+        for targeted PII detection silently ran injection, jailbreak and the
+        heuristic backstop under scan_input's block_at — the opposite of what
+        the call says.
+
+        With nothing to run, run_scan fails the call closed: an enabled
+        boundary that inspects nothing must not answer ALLOW, because the
+        caller cannot tell that from a scan that ran and found nothing. The
+        operator picks which scanners run; picking none for a surface the code
+        asks about is a configuration error, not a pass.
+
+        Emits under BoundaryName.NARROW_SCAN rather than INPUT_SCAN so a
+        consumer counting input scans per turn is not thrown off by a helper
+        call, and `adapters` names the subset that actually ran.
+        """
+        scanners = [
             c for c in self._input_scanners
-            if getattr(c.scanner, "name", "").startswith("injection_scan")
+            if match(getattr(c.scanner, "name", ""))
         ]
-        if not inj_scanners:
-            inj_scanners = self._input_scanners   # fallback: run all
+        if not scanners:
+            log.warning(
+                "narrow scan requested but no matching scanner is configured — "
+                "nothing will run",
+                extra={"op": "narrow_scan", "subset": subset,
+                       "configured": [getattr(c.scanner, "name", "?")
+                                      for c in self._input_scanners],
+                       **ctx.to_log_fields()},
+            )
         return await run_scan(
             text, ctx,
-            boundary=BoundaryName.INPUT_SCAN,
-            scanners=inj_scanners,
+            boundary=BoundaryName.NARROW_SCAN,
+            scanners=scanners,
             boundary_action=self._config.scan_input.action,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
@@ -1019,16 +1060,15 @@ class SHAI:
 # below make the mapping explicit — no magic string dispatch.
 
 def _extract_density(verdict) -> float:
-    """Extract instruction density sub-score from heuristic scanner findings."""
+    """Instruction-density sub-score from the heuristic scanner, or 0.0.
+
+    Reads Finding.signals rather than parsing Finding.detail — the detail
+    string is for humans and rewording it must not change what the threat
+    accumulator scores.
+    """
     for f in verdict.findings:
-        if f.scanner == "heuristic_scan" and f.detail:
-            for part in f.detail.split("(")[-1].rstrip(")").split(","):
-                part = part.strip()
-                if part.startswith("density="):
-                    try:
-                        return float(part.split("=", 1)[1])
-                    except ValueError:
-                        pass
+        if f.scanner == "heuristic_scan" and "density" in f.signals:
+            return f.signals["density"]
     return 0.0
 
 
@@ -1052,6 +1092,7 @@ _DB_CATALOG_FOR_SCANNER: dict[str, str] = {
     "injection_scan":      "injection",
     "jailbreak_scan":      "jailbreak",
     "identity_spoof_scan": "identity_spoof",
+    "mcp_metadata_scan":   "mcp_metadata",
 }
 
 

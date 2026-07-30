@@ -50,6 +50,7 @@ class Finding:
     severity:      Severity    # LOW | MEDIUM | HIGH
     detail:        str | None  # category name only — never the matched text
     method_family: str         # producing scanner's technique, stamped by run_scan
+    signals:       dict[str, float]  # numeric sub-scores the scanner computed
 ```
 
 **`detail` never contains matched text.** This is intentional — matched PII
@@ -145,6 +146,7 @@ class AuditEvent:
 | `output_scan` | `scan_output()` |
 | `file_scan` | `scan_file()` |
 | `mcp_metadata_scan` | MCP tool-registration metadata scan |
+| `narrow_scan` | `scan_pii()` / `scan_injection()` — one named scanner |
 | `system` | Scanner degrade / circuit-breaker events — no direct call, emitted alongside a scan boundary when a scanner fails |
 
 ### Decision values

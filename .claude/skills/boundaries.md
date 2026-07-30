@@ -25,11 +25,12 @@ safe_text = verdict.redacted_text or user_text
 
 ## Named scanner methods
 
-Each scanner is also callable individually through the facade:
+A single configured scanner can be run on its own through the facade. These run
+the scanner you name **and nothing else** — if it is not declared under
+`scan_input.scanners`, the call blocks rather than substituting a different
+scanner. Scanners are selected in `harness.yaml`, never imported.
 
 ```python
-from harness import SHAI, RegexPIIScanner, InjectionScanner, MCPMetadataScanner
-
 # Run only PII detection — no injection scan overhead
 verdict = await harness.scan_pii(text, ctx)
 
@@ -59,7 +60,7 @@ if not gate.allowed:
     # Provide denial feedback to the LLM
     return f"Tool call denied: {gate.deny_reason}"
 
-# gate.redacted_args is set when L4 arg scanning redacted something
+# gate.redacted_args is set when L7 arg scanning redacted something
 args = gate.redacted_args or tool_args
 result = await my_dispatch(tool_name, args)
 ```
@@ -72,7 +73,7 @@ result = await my_dispatch(tool_name, args)
 | L1 | `tool_name` in `allowed_tool_names`? | No |
 | L2 | Argument rules (deterministic parameter constraints) | No |
 | L3 | Irreversibility gate (destructive tools require `human_approved`) | No |
-| L4 | `tool.tags ⊆ ctx.allowed_tags`? (subagents only) | No |
+| L4 | `tool.tags ⊆ allowed_tags`? (the agent's own, narrowed by subagent) | No |
 | L5 | Intersection policy (subagent → parent → global) | By design |
 | L6 | Signal correlation — reads `TurnSignals` from earlier boundaries | No |
 | L7 | Arg scanning — for `sensitive`-tagged tools OR when L6 tightened | Config |

@@ -161,7 +161,12 @@ class TestDensityTracking:
 
 class TestExtractDensity:
 
-    def test_extracts_from_heuristic_detail(self):
+    def test_extracts_from_heuristic_signals(self):
+        """Read from Finding.signals, not from the human-readable detail.
+
+        The detail string is for people. Parsing it meant a reworded message
+        silently changed what the threat accumulator scored.
+        """
         from harness.core.harness import _extract_density
         from harness.core.types import ScanStatus
         from harness.core.verdicts import Finding, ScanVerdict
@@ -173,9 +178,27 @@ class TestExtractDensity:
                 category="heuristic_anomaly",
                 severity=Severity.MEDIUM,
                 detail="total=3.4 (density=2.0, coherence=1.4)",
+                signals={"density": 2.0, "coherence": 1.4, "total": 3.4},
             )],
         )
         assert _extract_density(verdict) == 2.0
+
+    def test_ignores_a_detail_string_with_no_signals(self):
+        """A finding carrying only prose contributes nothing — it is not parsed."""
+        from harness.core.harness import _extract_density
+        from harness.core.types import ScanStatus
+        from harness.core.verdicts import Finding, ScanVerdict
+
+        verdict = ScanVerdict(
+            status=ScanStatus.ALLOW,
+            findings=[Finding(
+                scanner="heuristic_scan",
+                category="heuristic_anomaly",
+                severity=Severity.MEDIUM,
+                detail="total=3.4 (density=2.0)",
+            )],
+        )
+        assert _extract_density(verdict) == 0.0
 
     def test_returns_zero_when_no_heuristic(self):
         from harness.core.harness import _extract_density

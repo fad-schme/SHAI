@@ -67,17 +67,24 @@ class MCPMetadataScanner:
     def __init__(
         self,
         patterns_file: Path | None = None,
+        extra_rules: list | None = None,
     ) -> None:
         """
         patterns_file: path to YAML catalog. Defaults to mcp_metadata_patterns.yaml.
+        extra_rules:   compiled rules from the signed pattern DB (`mcp_metadata`
+                       catalog), merged onto the bundled ones. This scanner is a
+                       catalog scanner like the rest, so operators extend it the
+                       same way.
         """
         pfile = patterns_file or _PATTERNS_FILE
         self._scanner = InjectionScanner(
             patterns_file=pfile,
+            extra_rules=extra_rules,
             name="mcp_metadata_scan",
         )
         log.debug("MCPMetadataScanner initialised",
-                  extra={"patterns_file": str(pfile)})
+                  extra={"patterns_file": str(pfile),
+                         "extra_rules": len(extra_rules or [])})
 
     # ── Public API ─────────────────────────────────────────────────────────
 

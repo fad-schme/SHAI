@@ -1,43 +1,42 @@
-"""shai — Secure Harness AI, control-plane SDK for production agents."""
+"""shai — Secure Harness AI, control-plane SDK for production agents.
+
+`SHAI` is the public API. Everything else exported here is a shape that appears
+in one of its method signatures — what you pass in, what you get back, or what
+can escape as an exception. Nothing is exported because it happens to be useful
+internally.
+
+Anything not listed in `__all__` is an implementation detail and may change
+without a deprecation. Adapters live behind their entry-point groups
+(`harness.scanners`, `harness.audit_sinks`, `harness.policy`, `harness.secrets`)
+and are selected by name in harness.yaml, not imported.
+"""
 from importlib.metadata import PackageNotFoundError, version
 
-from harness.agents.agent_config import AgentConfig, RuleConfig, SubAgentConfig
-from harness.connectivity.config import ConnectivityConfig
-from harness.connectivity.token import DispatchToken, TokenError
+from harness.agents.agent_config import AgentConfig
 from harness.core.context import AgentContext
 from harness.core.errors import (
-    AdapterDiscoveryError,
     AgentConflictError,
     AgentNotRegisteredError,
-    ArgumentViolationError,
     AuditEmissionError,
     ConfigError,
     HarnessError,
-    IrreversibleActionError,
     MCPInvocationError,
-    PolicyEvaluationError,
+    NetworkPolicyError,
     SubAgentNotDeclaredError,
-    ToolNotRegisteredError,
 )
+from harness.core.events import AuditEvent, NetworkAuditEvent
 from harness.core.harness import SHAI
 from harness.core.types import (
     BoundaryName,
     Decision,
     Irreversibility,
-    ScanAction,
     ScanStatus,
     Severity,
     Transport,
 )
 from harness.core.verdicts import Finding, GateDecision, ScanVerdict
 from harness.integrations.base import ShaiTool, shai_tool
-from harness.tools.registry import ToolRegistry
-from harness.tools.source import (
-    LocalSource,
-    MCPSource,
-    SourceRegistry,
-    ToolSource,
-)
+from harness.tools.source import ToolSource
 from harness.tools.tool import ArgumentRule, Tool
 
 try:
@@ -46,52 +45,47 @@ except PackageNotFoundError:
     __version__ = "0.0.0+dev"
 
 __all__ = [
-    # Facade
+    # The API. Everything below is a shape one of its methods uses.
     "SHAI",
     "__version__",
-    # Tools
+
+    # Declaring tools — register_tools()
     "Tool",
     "ArgumentRule",
     "Irreversibility",
-    "ToolRegistry",
-    "ToolSource",
-    "LocalSource",
-    "MCPSource",
-    "SourceRegistry",
-    # Agent
+    "Transport",
+    "shai_tool",
+    "ShaiTool",
+
+    # Agent scope — load_agent(), scope_context_for_subagent(), list_agents()
     "AgentContext",
     "AgentConfig",
-    "SubAgentConfig",
-    "RuleConfig",
-    # Verdicts
+
+    # What the boundaries return
     "ScanVerdict",
     "GateDecision",
     "Finding",
-    # Types / enums
-    "BoundaryName",
-    "Decision",
-    "ScanAction",
     "ScanStatus",
     "Severity",
-    "Transport",
-    # Errors
+
+    # What collect_events() yields
+    "AuditEvent",
+    "NetworkAuditEvent",
+    "BoundaryName",
+    "Decision",
+
+    # What get_source() returns
+    "ToolSource",
+
+    # Exceptions that can escape a public method. The gate's own refusals are
+    # GateDecision(allowed=False), never exceptions — these are startup and
+    # dispatch failures.
     "HarnessError",
     "ConfigError",
-    "AdapterDiscoveryError",
-    "AgentNotRegisteredError",
     "AgentConflictError",
+    "AgentNotRegisteredError",
     "SubAgentNotDeclaredError",
-    "ToolNotRegisteredError",
-    "PolicyEvaluationError",
-    "ArgumentViolationError",
-    "IrreversibleActionError",
     "AuditEmissionError",
     "MCPInvocationError",
-    # Connectivity
-    "ConnectivityConfig",
-    # Tool decorator
-    "shai_tool",
-    "ShaiTool",
-    "DispatchToken",
-    "TokenError",
+    "NetworkPolicyError",
 ]

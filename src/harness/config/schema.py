@@ -123,7 +123,12 @@ class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
 
     max_size_mb: reject files above this size before any scanning.
     """
-    enabled:             bool         = True
+    # Off unless the operator asks for it: scan_file reads uploaded files from
+    # disk, and a harness that never receives uploads should not be doing that.
+    # One default, declared here — HarnessConfig used to override it to False
+    # while this said True, so the schema disagreed with itself about what an
+    # omitted scan_file block means.
+    enabled:             bool         = False
     block_at:            Severity     = Severity.HIGH
     action:              ScanAction   = ScanAction.BLOCK
     on_error:            OnError      = OnError.FAIL_CLOSED
@@ -216,7 +221,10 @@ class ExecutionBudgetConfig(BaseModel, frozen=True, extra="forbid"):
 
 class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     """No enabled flag — the gate is mandatory."""
-    arg_scanners:       list[AdapterRef]      = Field(default_factory=list)
+    # Named `scanners` like every scan_* boundary. These run over the tool's
+    # arguments at gate layer 7, not over free text, but the key an operator
+    # writes is the same one everywhere.
+    scanners:           list[AdapterRef]      = Field(default_factory=list)
     scan_args_for_tags: list[str]             = Field(default_factory=lambda: ["sensitive"])
     rate_limit:         RateLimitConfig       = Field(default_factory=RateLimitConfig)
     execution_budget:   ExecutionBudgetConfig = Field(default_factory=ExecutionBudgetConfig)
@@ -352,6 +360,12 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
     A tool description containing 'ignore all previous instructions' has no
     benign interpretation.
 
+    action:
+      block — refuse to register a tool whose metadata reaches block_at (default)
+      alert — register it anyway and record the finding, for observe-before-enforce
+              rollout. `redact` has no meaning here: the tool description is what
+              is being judged, and a partially-redacted one still reaches the LLM.
+
     Default scanner: mcp_metadata_scan (MCPMetadataScanner).
     """
     enabled:  bool       = True
@@ -361,6 +375,15 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
         default_factory=lambda: [AdapterRef(name="mcp_metadata_scan")]
     )
 
+    @model_validator(mode="after")
+    def _action_supported(self) -> MCPMetadataScanConfig:
+        if self.action == ScanAction.REDACT:
+            raise ValueError(
+                "scan_mcp_metadata.action does not support 'redact' — a tool "
+                "description is registered whole or not at all. Use 'block' or 'alert'."
+            )
+        return self
+
 
 class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     version:         int = 1
@@ -368,7 +391,7 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     normalization:        NormalizationConfig      = Field(default_factory=NormalizationConfig)
     session:              ThreatAccumulatorConfig  = Field(default_factory=ThreatAccumulatorConfig)
     scan_input:      BoundaryConfig
-    scan_file:       FileScanConfig       = Field(default_factory=lambda: FileScanConfig(enabled=False))
+    scan_file:       FileScanConfig       = Field(default_factory=FileScanConfig)
     scan_tool_result:    ToolResultScanConfig    = Field(default_factory=ToolResultScanConfig)
     scan_mcp_metadata:   MCPMetadataScanConfig   = Field(default_factory=MCPMetadataScanConfig)
     check_tool_call:     ToolCallGateConfig      = Field(default_factory=ToolCallGateConfig)

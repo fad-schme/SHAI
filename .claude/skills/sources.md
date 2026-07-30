@@ -184,7 +184,3 @@ class MySource:
 
 Register in `pyproject.toml`:
 
-```toml
-[project.entry-points."harness.sources"]
-my_source = "my_package.sources:MySource"
-```

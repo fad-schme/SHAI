@@ -56,11 +56,11 @@ await harness.scan_input(text, ctx)
 
 Always construct `ctx` via `await harness.load_agent(...)` — that path registers it. Hand-constructed contexts are for advanced use only (e.g. background jobs that legitimately don't map to a loaded agent — you register those explicitly).
 
-### `ToolNotRegisteredError` on `check_tool_call`
+### Unregistered tool at `check_tool_call`
 
 The LLM proposed a tool name that isn't in the tool registry. Either you forgot to `register_tools()` for it, or the LLM hallucinated. Both are worth logging — the second case is often the tell for a jailbreak attempt.
 
-The gate emits a `deny` audit event for this before raising, so your audit trail sees it either way.
+**The gate does not raise.** No refusal from `check_tool_call` is an exception — it returns `GateDecision(allowed=False, deny_reason="tool 'x' not registered")` and emits a `deny` audit event. Check `gate.allowed`; do not wrap the call in `try`/`except`.
 
 ### `NetworkPolicyError` from `ShaiTransport`
 
