@@ -21,9 +21,34 @@ import hmac
 import json
 import logging
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+@contextmanager
+def _connect(db_path: str | Path) -> Iterator[sqlite3.Connection]:
+    """Open a connection that always closes, committing on clean exit.
+
+    `with sqlite3.connect(...)` commits or rolls back but does **not** close —
+    the transaction is the Connection's context manager, the handle is not. Every
+    call site here used that form, so each leaked an open handle until GC. On
+    POSIX that is an invisible leak; on Windows an open handle blocks `unlink`,
+    which is how a temp-directory teardown around this DB came to fail.
+
+    Rows come back as `sqlite3.Row` for every caller — the read paths all set
+    that individually before, and the write paths do not fetch.
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS patterns (
@@ -70,7 +95,7 @@ def _verify_row(rule_id: str, catalog: str, payload: str, signature: str, secret
 
 def init_db(db_path: str | Path) -> None:
     """Create the patterns table if it doesn't exist."""
-    with sqlite3.connect(str(db_path)) as conn:
+    with _connect(db_path) as conn:
         conn.executescript(_DDL)
 
 
@@ -88,8 +113,7 @@ def load_verified_rules(
         return []
 
     rules: list[dict] = []
-    with sqlite3.connect(str(path)) as conn:
-        conn.row_factory = sqlite3.Row
+    with _connect(path) as conn:
         rows = conn.execute(
             "SELECT rule_id, catalog, payload, signature FROM patterns WHERE catalog = ?",
             (catalog,),
@@ -147,7 +171,7 @@ def apply_bundle(
 
     init_db(db_path)
     now = time.time()
-    with sqlite3.connect(str(db_path)) as conn:
+    with _connect(db_path) as conn:
         for entry in bundle:
             conn.execute(
                 "INSERT OR REPLACE INTO patterns (rule_id, catalog, payload, signature, version, created_at) "
@@ -165,8 +189,7 @@ def list_rules(db_path: str | Path) -> list[dict]:
     path = Path(db_path)
     if not path.exists():
         return []
-    with sqlite3.connect(str(path)) as conn:
-        conn.row_factory = sqlite3.Row
+    with _connect(path) as conn:
         rows = conn.execute(
             "SELECT rule_id, catalog, version, created_at FROM patterns ORDER BY catalog, rule_id"
         ).fetchall()
@@ -178,8 +201,7 @@ def verify_all(db_path: str | Path, secret: bytes) -> tuple[int, int]:
     path = Path(db_path)
     if not path.exists():
         return 0, 0
-    with sqlite3.connect(str(path)) as conn:
-        conn.row_factory = sqlite3.Row
+    with _connect(path) as conn:
         rows = conn.execute("SELECT rule_id, catalog, payload, signature FROM patterns").fetchall()
     valid = invalid = 0
     for row in rows:
@@ -211,8 +233,7 @@ def upsert_candidate(
     init_db(path)
     now = time.time()
 
-    with sqlite3.connect(str(path)) as conn:
-        conn.row_factory = sqlite3.Row
+    with _connect(path) as conn:
         # Check existing open/promoted candidates for similarity
         rows = conn.execute(
             "SELECT id, fingerprint FROM heuristic_candidates WHERE status IN ('open', 'promoted')"
@@ -254,8 +275,7 @@ def load_promoted_candidates(db_path: str | Path) -> list[dict]:
     if not path.exists():
         return []
     try:
-        with sqlite3.connect(str(path)) as conn:
-            conn.row_factory = sqlite3.Row
+        with _connect(path) as conn:
             rows = conn.execute(
                 "SELECT id, fingerprint, skeleton, severity, hit_count "
                 "FROM heuristic_candidates WHERE status = 'promoted'"
@@ -275,8 +295,7 @@ def list_candidates(db_path: str | Path, status: str | None = None, min_hits: in
     if not path.exists():
         return []
     effective_min = min_hits if min_hits > 0 else (3 if status == "open" else 1)
-    with sqlite3.connect(str(path)) as conn:
-        conn.row_factory = sqlite3.Row
+    with _connect(path) as conn:
         if status:
             rows = conn.execute(
                 "SELECT * FROM heuristic_candidates WHERE status = ? AND hit_count >= ? ORDER BY hit_count DESC",
@@ -294,7 +313,7 @@ def set_candidate_status(db_path: str | Path, candidate_id: int, status: str) ->
     """Set candidate status. Returns True if a row was updated."""
     if status not in ("open", "dismissed", "promoted", "retired"):
         raise ValueError(f"invalid status: {status}")
-    with sqlite3.connect(str(db_path)) as conn:
+    with _connect(db_path) as conn:
         cursor = conn.execute(
             "UPDATE heuristic_candidates SET status = ? WHERE id = ?",
             (status, candidate_id),

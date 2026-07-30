@@ -176,6 +176,27 @@ def test_compiler_rejects_missing_metadata_match_and_unknown_signals():
         compile_rules_from_dicts([unknown])
 
 
+@pytest.mark.parametrize("unsupported_key", ["none", "withinchars", "any"])
+def test_lint_rejects_unsupported_match_keys(unsupported_key: str):
+    """An unimplemented match key must fail loud rather than compile and be ignored.
+
+    The compiler reads only `all` and `within_chars`, so a rule declaring a
+    constraint under any other key would otherwise match as if the constraint
+    were absent.
+    """
+    rule = _rule(
+        "unsupported",
+        {"defined": r"\btwo words\b"},
+        {
+            "all": [{"name": "group", "any": ["defined"]}],
+            unsupported_key: ["something"],
+        },
+    )
+    assert "unknown-match-key" in {issue.code for issue in lint_catalog({"patterns": [rule]})}
+    with pytest.raises(ValueError, match="unknown-match-key"):
+        compile_rules_from_dicts([rule])
+
+
 def test_all_bundled_catalogs_are_lint_clean():
     failures = []
     for path in sorted(CATALOG_DIR.glob("*.yaml")):

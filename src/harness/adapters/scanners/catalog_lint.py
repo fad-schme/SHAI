@@ -12,6 +12,11 @@ from typing import Any
 
 _REQUIRED_META = ("severity", "category", "threat_level")
 _VALID_SEVERITIES = {"low", "medium", "high"}
+# Every key the compiler reads out of a `match` mapping. Anything else is
+# silently dropped by _compile_signal_groups, so an author who writes an
+# unimplemented or misspelled key gets a rule that lints clean, compiles, and
+# ignores the constraint they thought they declared. Reject it at lint time.
+_VALID_MATCH_KEYS = {"all", "within_chars"}
 _COMMON_SINGLE_WORDS = (
     "admin",
     "assistant",
@@ -99,6 +104,18 @@ def _lint_match(
                 "match must be 'any' or a mapping containing a non-empty all list",
             )
         ]
+
+    # str() because YAML permits non-string keys; lint_catalog must not raise.
+    unknown_keys = sorted(str(key) for key in set(match) - _VALID_MATCH_KEYS)
+    if unknown_keys:
+        issues.append(
+            CatalogLintIssue(
+                "unknown-match-key",
+                rule_name,
+                None,
+                f"match has unsupported key(s): {', '.join(unknown_keys)}",
+            )
+        )
 
     groups = match["all"]
     if not groups:

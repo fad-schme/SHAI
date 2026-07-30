@@ -126,7 +126,7 @@ Runs before the LLM. Scanners run concurrently via `asyncio.gather`. Per-scanner
 
 ### Tool Stream Control — `scan_tool_result`
 
-Runs before tool results re-enter the LLM context. Uses `patterns_for_doc.yaml` (9 rules, doc-tuned). Disabled by default. Closes the ClawJacked-style indirect injection vector.
+Runs before tool results re-enter the LLM context. Scanners are whatever `scan_tool_result.scanners` names — the example config uses `injection_scan`, `identity_spoof_scan` and `jailbreak_scan`. Disabled by default. Closes the ClawJacked-style indirect injection vector.
 
 ### Egress Scan — `scan_output`
 

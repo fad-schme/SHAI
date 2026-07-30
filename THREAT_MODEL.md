@@ -171,6 +171,15 @@ homoglyph obfuscation up to `max_depth`.
 - The heuristic scanner catches structural anomalies, not semantic attacks.
   A grammatically clean, semantically hostile prompt (e.g. a role-play with
   no override tokens) may pass.
+- **Pattern coverage is English plus four localized languages** — French,
+  Spanish, German, and Mandarin Chinese. A payload written in any other
+  language is matched only where it happens to contain Latin-script tokens the
+  English catalog recognises (`system prompt`, a tool name, an attacker URL).
+  Translation is a live and inexpensive bypass, and the catalog approach does
+  not scale to it: an attacker chooses from every written language, while each
+  additional locale is a hand-written rule set. Treat non-English input as
+  substantially less well covered, and gate it with tool-level controls rather
+  than relying on content scanning.
 - We have **not yet published adversarial benchmark numbers.** Do not assume
   detection rates without testing against your own threat scenarios.
 

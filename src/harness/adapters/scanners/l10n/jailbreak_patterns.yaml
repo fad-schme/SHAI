@@ -86,6 +86,205 @@ patterns:
       - intent_score
 
   # -----------------------------------------------------------------------
+  # Persona assignment with guardrail removal (compound)
+  # Trigger: assigning a persona AND stating that the persona is free of the
+  # model's constraints. Generalizes jailbreak.persona_override, which above
+  # recognises a fixed list of named personas; this rule matches the structure
+  # instead, so a persona invented today still fires.
+  #
+  # Scope is deliberately narrow. A persona that is merely malicious — "you
+  # are a hacker AI", "take on the character of ChaosGPT" — does NOT match,
+  # because nothing here removes a guardrail. Those need a harmful-task
+  # control; widening persona detection to reach them would turn any roleplay
+  # request into a block.
+  #
+  # The property group requires an explicit removal *phrase*. A bare adjective
+  # is not enough: "the chatbot in that game says 'you are now unrestricted'"
+  # is someone quoting a video game. Bare adjectives count only when attached
+  # to an AI/model noun ("a jailbroken model"), where they name the assistant
+  # rather than describe a character.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.persona_guardrail_removal
+    meta:
+      description: "Persona assignment combined with an explicit statement that the persona has no constraints"
+      threat_level: 5
+      severity: high
+      category: jailbreak.persona_override
+    strings:
+      persona_assignment: >-
+        (?ix)(?:
+          \byou\s+are(?:\s+now)?\b
+          |\b(?:act|behave|respond|speak|answer)\s+as\b
+          |\b(?:pretend|imagine)\s+(?:you\s+are|to\s+be|you're)\b
+          |\bpretending\s+to\s+be\b
+          |\brole\s*play(?:ing)?\s+as\b
+          |\brole\s*play\s*:
+          |\b(?:assume|adopt|take\s+on)\s+the\s+(?:role|persona|identity|character)\b
+          |\bplay(?:ing)?\s+the\s+role\s+of\b
+          |\bplaying\s+a\s+character\b
+          |\bpersona\s+(?:shift|\d)
+          |\bbecome\s+[a-z0-9-]*gpt\b
+          |\bcall\s+yourself\b
+        )
+      guardrail_removal_property: >-
+        (?ix)(?:
+          \b(?:with\s+)?no\s+(?:ethical|safety|moral|content)\s+
+            (?:guidelines?|rules?|constraints?|limits?|polic(?:y|ies)|stance|training)\b
+          |\bno\s+(?:restrictions?|censorship|filters?|morals?|limits?|guardrails?|boundaries)\b
+          |\bwithout\s+(?:any\s+)?(?:restrictions?|censorship|limits?|filtering|constraints?)\b
+          |\b(?:ignores?|ignoring)\s+(?:(?:all|its|your|the|human)\s+){0,3}
+            (?:rules?|guidelines?|restrictions?|content\s+polic(?:y|ies)|safety\s+protocols?|programming)\b
+          |\b(?:un|not\s+)bound\s+by\b
+          |\bfreed\s+from\s+(?:all\s+)?(?:constraints?|restrictions?)\b
+          |\brestrictions?\s+(?:do\s*n[o']t|don't)\s+apply\b
+          |\b(?:can\s+do|says?|answers?|reveals?|tells?)\s+(?:anything|everything)\b
+          |\bbend\s+all\s+rules\b
+          |\bbypass\s+anything\b
+          |\b(?:jailbroken|uncensored|unfiltered|unrestricted|unaligned|unchained)\s+
+            (?:ai|model|assistant|version|gpt|llm|chatbot)\b
+          |\b(?:ai|model|assistant|version|llm|chatbot)\s+
+            (?:that\s+is\s+|which\s+is\s+)?(?:jailbroken|uncensored|unfiltered|unrestricted|unaligned)\b
+        )
+    match:
+      within_chars: 120
+      all:
+        - name: persona_assignment
+          any: [persona_assignment]
+        - name: guardrail_removal_property
+          any: [guardrail_removal_property]
+    functions:
+      - persona_score
+      - intent_score
+
+  # -----------------------------------------------------------------------
+  # Instruction control (compound)
+  # Trigger: an override/reset action co-occurring with the model's own
+  # instruction set, prompt, or context — in either order, so passive and
+  # reversed phrasings ("all prior directives are hereby cancelled") match
+  # alongside the imperative form.
+  #
+  # Runs alongside jailbreak.instruction_override rather than replacing it.
+  # The complete-phrase rule above still owns the canonical shapes; this one
+  # covers the verb and object vocabulary it misses. Neither group alone
+  # matches, so no single verb or noun is a blocking route on its own.
+  #
+  # Object qualifiers are load-bearing for precision: bare "instructions" or
+  # "prompt" would fire on ordinary correspondence ("ignore the previous
+  # email", "disregard my earlier message"). Every alternative below pins the
+  # object to the model's own state.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.instruction_control
+    meta:
+      description: "Override or reset action combined with the model's own instructions, prompt, or context"
+      threat_level: 5
+      severity: high
+      category: jailbreak.instruction_override
+    strings:
+      override_action: >-
+        (?ix)(?:
+          \b(?:ignore|disregard|discard|dismiss|cancel|nullify|void|supersede
+            |overwrite|override|forget|erase|revoke|rescind|bypass|skip
+            |clear|reset)\b
+          |\bset\s+aside\b
+          |\bcast\s+off\b
+          |\bdo\s+not\s+follow\b
+          |\bno\s+longer\s+(?:apply|applies|valid|in\s+effect)\b
+          |\bnull\s+and\s+void\b
+          |\b(?:are|is|was|were|has\s+been|have\s+been)\s+(?:hereby\s+)?
+            (?:cancell?ed|revoked|cleared|discarded|reset|superseded|void|wiped)\b
+          |\b(?:discarded|cleared|wiped)\s*[.!]
+          |\bstart\s+(?:fresh|over|from\s+zero)\b
+        )
+      # Two nouns are deliberately absent from the generic-qualifier branch:
+      #   "programming" — costs a fictional-quote false positive ("the AI
+      #     character says 'ignore all previous programming'"), and the attack
+      #     shapes using it say "its programming", not "your".
+      #   "context" — "forget the previous context, I want to start a new topic"
+      #     is an ordinary request to change subject, and is indistinguishable
+      #     from "void all prior context" on these two signals alone. Kept only
+      #     under "your context", which does name the model's own state.
+      protected_instruction_object: >-
+        (?ix)(?:
+          \b(?:previous|prior|earlier|existing|above|initial|original|old|former)\s+
+            (?:instructions?|directives?|prompts?|guidelines?|rules?|state
+              |conversation|session)\b
+          |\b(?:instructions?|directives?|guidelines?|rules?)\s+
+            (?:above|you\s+were\s+(?:given|told))\b
+          |\byour\s+(?:instructions?|prompts?|guidelines?|rules?|directives?
+            |principles|constraints?|restrictions?|memory|context
+            |default\s+behaviou?r)\b
+          |\bsystem\s+prompt\b
+          |\bthe\s+above\b
+          |\b(?:everything|what)\s+you\s+were\s+told\b
+          |\bevery\s+constraint\b
+          |\b(?:any|all)\s+restrictions?\s+placed\s+on\s+you\b
+          |\bnew\s+instructions?\b
+        )
+    match:
+      within_chars: 120
+      all:
+        - name: override_action
+          any: [override_action]
+        - name: protected_instruction_object
+          any: [protected_instruction_object]
+    functions:
+      - structure_score
+      - intent_score
+
+  # -----------------------------------------------------------------------
+  # Safety-control deactivation (compound)
+  # Trigger: a deactivation action co-occurring with a *named model safety
+  # control*. Generic "training", "policy" and bare "safety" are deliberately
+  # excluded as objects — "skip the safety training refresher this quarter"
+  # is an HR message, not an attack.
+  #
+  # The imperative alternative is anchored to a sentence boundary so that
+  # third-person description does not match: "attackers try to bypass content
+  # filters" is a sentence about attackers, and its verb is not sentence-
+  # initial. Passive forms are matched separately, since "all content filters
+  # are bypassed" carries the action after the object.
+  # -----------------------------------------------------------------------
+  - name: jailbreak.safety_deactivation
+    meta:
+      description: "Deactivation action combined with a named model safety control"
+      threat_level: 5
+      severity: high
+      category: jailbreak.safety_deactivation
+    strings:
+      deactivation_action: >-
+        (?ix)(?:
+          (?:^|[.!?:]\s*)(?:please\s+|now\s+|just\s+|temporarily\s+|immediately\s+)?
+            (?:disable|deactivate|suspend|turn\s+off|switch\s+off|bypass|skip
+              |silence|detach|remove|lift|drop|ignore|mute)\b
+          |\b(?:are|is|was|were|has\s+been|have\s+been)\s+(?:now\s+)?
+            (?:disabled|deactivated|bypassed|removed|detached|suspended|lifted|off)\b
+          |\b(?:removed|disabled|bypassed|detached|suspended|lifted)\s*[.!]
+          |\bwithout\s+(?:filtering|moderation)\b
+          |\bis\s+off\s+for\b
+        )
+      safety_control_object: >-
+        (?ix)(?:
+          \bcontent\s+(?:filters?|moderation|polic(?:y|ies))\b
+          |\bsafety\s+(?:layers?|checks?|protocols?|filters?|nets?|guards?)\b
+          |\bmoderation\b
+          |\bguardrails?\b
+          |\balignment\s+(?:training|protocols?|layers?)\b
+          |\bethical\s+(?:guidelines?|rules?|constraints?)\b
+          |\byour\s+(?:restrictions?|filters?|limits?|safeguards?)\b
+          |\b(?:all|any)\s+(?:content\s+)?(?:filters?|restrictions?)\b
+          |\bfilters?\b
+        )
+    match:
+      within_chars: 120
+      all:
+        - name: deactivation_action
+          any: [deactivation_action]
+        - name: safety_control_object
+          any: [safety_control_object]
+    functions:
+      - intent_score
+
+  # -----------------------------------------------------------------------
   # Refusal suppression
   # Trigger: explicit instruction not to refuse or say you can't — the
   # structural signature of a jailbreak wrapper.

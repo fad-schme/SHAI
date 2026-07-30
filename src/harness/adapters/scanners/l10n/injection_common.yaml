@@ -153,6 +153,110 @@ patterns:
         - name: financial_target
           any: [financial_target]
 
+  # Indirect injection: content that stops addressing its human reader and
+  # starts addressing the model. The load-bearing signal is the *vocative* —
+  # "[AI: ...]", "note to AI assistants reading this", "[Assistant, ...]" —
+  # not the mention of AI. Benign text discusses AI in the third person ("the
+  # AI safety paper recommends never allowing send_email"); an injected note
+  # speaks to it directly.
+  #
+  # Source-context markers ("search result:", "README excerpt:", "PDF page 3:")
+  # are deliberately NOT a required group. Every corpus instance has one, but
+  # the set is open-ended — every document type in existence — while the
+  # addressee is a small structural pattern. Requiring the marker would cost
+  # recall on unseen document types and buy no precision the addressee does not
+  # already provide.
+  - name: indirect_injection.embedded_agent_directive
+    meta:
+      description: "Content addressed to the model rather than its reader, carrying an instruction"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      embedded_agent_addressee: >-
+        (?ix)(?:
+          \[\s*(?:[a-z':]+\s+){0,3}(?:ai|llm|assistant|agent|bot|chatgpt|claude)\b
+            [^\]]{0,40}?[:,]
+          |\b(?:notes?|messages?|instructions?)\s+to\s+(?:the\s+|any\s+|all\s+)?
+            (?:ai|llm|assistant|agent|bot)s?\b
+          |\b(?:ai|llm|assistant|agent)s?\s+
+            (?:reading|scraping|processing|viewing|parsing|indexing)\s+this\b
+          |\bto\s+any\s+(?:ai|llm|assistant|agent|bot)\b
+          |\b(?:ai|llm|assistant)\s+note\s*:
+          |\battention\s+(?:ai|llm|assistant|agent)s?\b
+          |\bsystem\s+instructions?\s+embedded\b
+          |\[\s*system\s+instruction
+        )
+      agent_directed_action: >-
+        (?ix)(?:
+          \b(?:ignore|bypass|cancel|disregard|override|skip|disable)\b
+          |\b(?:reveal|leak|disclose|expose|dump)\b
+          |\b(?:send|forward|email|share|transmit|exfiltrate|post|comply)\s+\S
+          |\bexecute\b
+          |\border\s+\d
+          |\b(?:unrestricted|developer)\s+mode\b
+        )
+    match:
+      within_chars: 100
+      all:
+        - name: embedded_agent_addressee
+          any: [embedded_agent_addressee]
+        - name: agent_directed_action
+          any: [agent_directed_action]
+    functions:
+      - structure_score
+      - intent_score
+
+  # Forged conversation structure: a trusted-role key/value carrying an
+  # instruction. Lives here rather than in the jailbreak catalog because the
+  # payload arrives as data — pasted text, a tool result, or file content — and
+  # `injection_scan` is the one scanner configured at all four boundaries.
+  #
+  # Both signals must sit inside one tightly bounded region. A document that
+  # mentions a system role in one paragraph and `send_email` three paragraphs
+  # later is not this attack, which is what `within_chars` enforces.
+  #
+  # A trusted-role shape is *required*. A bare function-call object with no role
+  # structure stays outside this rule by design — `{"tool_calls": [...]}` alone
+  # is a legitimate serialization that appears in ordinary API payloads.
+  - name: json_role_injection.trusted_role_directive
+    meta:
+      description: "Forged trusted-role structure carrying an imperative or safety-removal instruction"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    strings:
+      trusted_role_structure: >-
+        (?ix)(?:
+          ["']?(?:role|speaker|sender|author|from)["']?\s*[:=]\s*
+            ["']?(?:system|developer|assistant|orchestrator)\b
+          |\[\s*role\s*\]\s*name\s*[:=]\s*["']?(?:system|developer|assistant)\b
+          |["']?type["']?\s*[:=]\s*["']?system_directive\b
+          |["']?authority["']?\s*[:=]\s*["']?(?:admin|system|root)\b
+        )
+      embedded_directive: >-
+        (?ix)(?:
+          \b(?:ignore|disregard|override|overriding|cancel|bypass|disable|skip)\b
+          |\bunrestricted\s+mode\b
+          |\bbypass[_\s-]*safety\b
+          |\b(?:comply|obey)\b
+          |\badmin(?:istrator)?\s+privileges\b
+          |\bauthorized\s+override\b
+          |\btool[_\s-]*call\b
+          |\byou\s+(?:are|have)\s+(?:now\s+)?unrestricted\b
+          |\b(?:send|forward|exfiltrate|leak|reveal|dump)[\w_]*\s+\S
+        )
+    match:
+      within_chars: 100
+      all:
+        - name: trusted_role_structure
+          any: [trusted_role_structure]
+        - name: embedded_directive
+          any: [embedded_directive]
+    functions:
+      - structure_score
+      - intent_score
+
   - name: tool_coercion.persistence
     meta:
       description: "Persistent scheduling, forwarding, webhook, or backdoor action to an attacker destination"

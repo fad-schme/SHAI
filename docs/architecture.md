@@ -129,8 +129,11 @@ gate, MIME, macros, extracted text scan)
 ### Tool Stream Control — `scan_tool_result`
 
 Runs before tool results re-enter the LLM context. Configured injection
-scanners use the common and input catalogs. Disabled by default. Closes the
-ClawJacked-style indirect injection vector.
+scanners use the common and input catalogs; the example config also runs
+`identity_spoof_scan` and `jailbreak_scan` here, since a retrieved document
+telling the model to discard its instructions is an indirect injection rather
+than a user jailbreak. Disabled by default. Closes the ClawJacked-style
+indirect injection vector.
 
 ### Egress Scan — `scan_output`
 

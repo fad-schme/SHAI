@@ -89,7 +89,7 @@ shai validate
 #   boundaries:
 #     scan_input:       enabled=True   block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
 #     scan_output:      enabled=True   block_at=high   scanners=['regex_pii']
-#     scan_tool_result: enabled=True   block_at=high   scanners=['injection_scan', 'identity_spoof_scan']
+#     scan_tool_result: enabled=True   block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
 #     scan_file:        enabled=False
 ```
 

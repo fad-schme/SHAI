@@ -64,9 +64,9 @@ The five built-in scanners:
 
 | Scanner | Catches |
 |---|---|
-| `injection_scan` | Direct and indirect prompt injection, tool coercion, context spoofing (6 common + 16 input rules; file scanning adds 9 document rules; localized overlays included) |
-| `jailbreak_scan` | Persona override, instruction override, refusal suppression, prompt extraction (6 rules + multilingual) |
-| `identity_spoof_scan` | Claimed orchestrator/system authority, peer privilege escalation (4 rules + multilingual) |
+| `injection_scan` | Direct and indirect prompt injection, tool coercion, context spoofing (8 common + 16 input rules; file scanning adds 9 document rules; fr/es/de/zh overlays included) |
+| `jailbreak_scan` | Persona override, instruction control, safety deactivation, refusal suppression, prompt extraction (8 rules, plus fr/es/de/zh overlays) |
+| `identity_spoof_scan` | Claimed orchestrator/system authority, peer privilege escalation (4 rules, plus fr/es/de/zh overlays) |
 | `regex_pii` | 7 PII categories with Luhn-validated credit cards and SSN structural rules — supports redaction |
 | `heuristic_scan` | Structural anomalies: entropy, instruction density, coherence, structural markers. Always on (not configurable). |
 

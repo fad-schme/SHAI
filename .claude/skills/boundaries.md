@@ -113,8 +113,14 @@ else:
     result = tverdict.redacted_text or result
 ```
 
-**Runs:** `patterns_for_doc.yaml` (injection-pattern rules tuned for document content).
-**Catches:** indirect prompt injection embedded in tool results (T6).
+**Runs:** whichever scanners `scan_tool_result.scanners` names — the shipped
+example uses `injection_scan` (`injection_common.yaml` + `injection_patterns.yaml`),
+`identity_spoof_scan`, and `jailbreak_scan`, plus the always-on heuristic
+backstop. `patterns_for_doc.yaml` is **not** loaded here; it reaches only
+`scan_file`, via `_build_text_scanners(include_document_patterns=True)`.
+**Catches:** indirect prompt injection embedded in tool results (T6), including
+guardrail-integrity payloads — a retrieved document instructing the model to
+discard its instructions is an indirect injection, not a user jailbreak.
 
 **Signal-driven tightening.** When `TurnSignals` shows that the input scan
 flagged injection and the gate allowed a specific tool this turn,
@@ -261,8 +267,8 @@ boundary list both adapters, `file_scanner` and `file_content_scan`.
 |---|---|---|---|
 | `RegexPIIScanner` | `harness.adapters.scanners.regex_pii` | Built-in PII + secrets (Luhn-validated cards, structure-validated SSNs, `secret.private_key`, `secret.jwt`, `secret.aws_secret`, `secret.conn_string`, `secret.slack_webhook`) | `scan_input`, `scan_output`, arg scanning |
 | `InjectionScanner` | `harness.adapters.scanners.injection_scan` | `injection_patterns.yaml` — direct injection, tool coercion, encoded payloads, delimiter smuggling (incl. KaTeX/LaTeX invisible text) | `scan_input` |
-| `InjectionScanner` (doc) | same class, different catalog | `patterns_for_doc.yaml` — tuned for document content | `scan_tool_result`, `FileContentScanner` default chain |
-| `JailbreakScanner` | `harness.adapters.scanners.jailbreak_scan` | `jailbreak_patterns.yaml` — persona override, refusal suppression, mode activation, prompt extraction, hypothetical laundering | Any text boundary |
+| `InjectionScanner` (doc) | same class, different catalog | `patterns_for_doc.yaml` — tuned for document content, unioned with the common + input catalogs | `scan_file` only (`FileContentScanner` chain) |
+| `JailbreakScanner` | `harness.adapters.scanners.jailbreak_scan` | `jailbreak_patterns.yaml` — persona override, instruction control, safety deactivation, refusal suppression, mode activation, prompt extraction, hypothetical laundering | Any text boundary; recommended at `scan_input`, `scan_output` **and** `scan_tool_result` |
 | `IdentitySpoofScanner` | `harness.adapters.scanners.identity_spoof_scan` | `identity_spoof_patterns.yaml` — claimed orchestrator/system authority, peer-privilege claims, tool-result authority | High value at `scan_tool_result` |
 | `HeuristicScanner` | `harness.adapters.scanners.heuristic_scan` | Not YAML-driven. 5 sub-scores: entropy, instruction density, coherence, structural markers, **typoglycemia** (Damerau-Levenshtein-1 against an intent-space keyword list, with anagram-scramble fast path and prefix-relationship rejection so morphology like `ignored`, `filters`, `systems` is not scored) | Always on |
 | `FileScanner` | `harness.adapters.scanners.file_scanner` | Not YAML-driven. Structural only — MIME, extension, size, filename, PDF markers, SVG, archives, EXIF, Office macros | `scan_file` |

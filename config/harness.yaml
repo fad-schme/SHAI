@@ -36,6 +36,10 @@ scan_tool_result:
   scanners:
     - name: injection_scan
     - name: identity_spoof_scan
+    # Guardrail-integrity rules apply here too: an attacker-controlled document
+    # or search result carrying "ignore your previous instructions" is an
+    # indirect-injection payload, not a user asking for a jailbreak.
+    - name: jailbreak_scan
 
 # ── File upload scanning ──────────────────────────────────────────────────
 # The structural pass always runs and needs no configuration: MIME, size,
