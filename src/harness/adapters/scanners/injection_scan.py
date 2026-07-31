@@ -12,11 +12,12 @@ Severity is declared per-rule in the YAML catalog (meta.severity).
 The numeric score is used as a tiebreaker when multiple rules fire, and
 to emit a meaningful Finding.detail. It is not the primary severity signal.
 
-Severity thresholds (score-based override — any matching high-severity rule
-also forces severity=high regardless of numeric total):
+Severity thresholds live in the `SCALE` class attribute (SeverityScale), not
+in an if/elif chain here — any matching high-severity rule forces HIGH
+regardless of the numeric total:
   score >= 6.0  → HIGH
   score >= 3.0  → MEDIUM
-  score >= 1.0  → LOW
+  otherwise     → LOW   (scoring is only reached once a rule matched)
 
 Pattern file format
 -------------------
@@ -51,9 +52,8 @@ from typing import Any
 
 import yaml
 
-from harness.adapters.scanners.base import ScanResult
+from harness.adapters.scanners.base import ScanResult, SeverityScale
 from harness.core.context import AgentContext
-from harness.core.types import Severity
 from harness.core.verdicts import Finding
 
 log = logging.getLogger(__name__)
@@ -138,11 +138,6 @@ def _load_scoring_functions() -> dict[str, Any]:
         return {}
 
 
-_SHAI_SEVERITY: dict[str, Severity] = {
-    "low":    Severity.LOW,
-    "medium": Severity.MEDIUM,
-    "high":   Severity.HIGH,
-}
 
 
 # ── Catalog compilation ───────────────────────────────────────────────────
@@ -441,6 +436,10 @@ class InjectionScanner:
     method_family = "regex_catalog"
     default_patterns: Path = _DEFAULT_PATTERNS
     common_patterns: tuple[Path, ...] = (_COMMON_PATTERNS,)
+    # No floor: scoring is only reached once a rule has already matched, so
+    # every scored text warrants at least a LOW finding. Subclasses inherit
+    # this — they share the scoring model and differ only in catalog.
+    SCALE = SeverityScale(high=6.0, medium=3.0)
 
     def __init__(
         self,
@@ -565,15 +564,23 @@ class InjectionScanner:
         category_bonus = float(len(set(matched_categories)))
         total_score    = regex_score + function_score + category_bonus
 
-        # Severity: rule-declared high overrides numeric total
-        if has_high_rule or total_score >= 6.0:
-            severity_str = "high"
-        elif total_score >= 3.0:
-            severity_str = "medium"
-        else:
-            severity_str = "low"
+        # Severity: rule-declared high overrides the numeric total.
+        shai_severity = self.SCALE.severity_for(
+            total_score, force_high=has_high_rule)
+        if shai_severity is None:
+            # Unreachable while SCALE declares no floor — kept so the contract
+            # stays honest if one is ever added.
+            return ScanResult()
 
-        shai_severity = _SHAI_SEVERITY.get(severity_str, Severity.LOW)
+        # The sub-scores behind the severity. Consumers read them from
+        # `signals`; recovering them by parsing `detail` would make rewording
+        # a human-readable message a behavioural change.
+        signals = {
+            "regex_score":    regex_score,
+            "function_score": function_score,
+            "category_bonus": category_bonus,
+            "total_score":    total_score,
+        }
 
         # One Finding per unique category — keeps audit events compact
         findings: list[Finding] = []
@@ -600,6 +607,7 @@ class InjectionScanner:
                     f"{category} — matched rule: {record['rule_name']}; "
                     f"signal groups: {', '.join(record['signal_groups'])}"
                 ),
+                signals=signals,
             ))
 
         return ScanResult(findings=findings)

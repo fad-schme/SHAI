@@ -674,3 +674,57 @@ class TestContextLifecycle:
         ctx._attach_signals(TurnSignals())
         sub_ctx = ctx.scope_subagent("child_agent", allowed_tags=["read"])
         assert sub_ctx.turn_signals is None
+
+
+class TestResultSignalsAccumulate:
+    """Result-side signals accumulate across a turn rather than replacing.
+
+    A turn is a chain: one poisoned tool result is not undone by the next tool
+    returning clean content. Replacing was an evasion path — any consumer
+    reading these fields to make a decision would see the evidence cleared by
+    an intervening benign call.
+    """
+
+    @staticmethod
+    def _verdict(*categories: str,
+                 status: ScanStatus = ScanStatus.ALLOW) -> ScanVerdict:
+        return ScanVerdict(
+            status=status,
+            findings=[
+                Finding(scanner="s", category=c, severity=Severity.LOW,
+                        detail="d")
+                for c in categories
+            ],
+        )
+
+    def test_categories_union_across_scans(self):
+        signals = TurnSignals()
+        signals.record_tool_result(self._verdict("heuristic_anomaly"))
+        signals.record_tool_result(self._verdict("tool_injection"))
+        assert signals.tool_result_categories == {
+            "heuristic_anomaly", "tool_injection"}
+
+    def test_clean_result_does_not_clear_earlier_findings(self):
+        signals = TurnSignals()
+        signals.record_tool_result(self._verdict("tool_injection"))
+        signals.record_tool_result(self._verdict())
+        assert signals.tool_result_categories == {"tool_injection"}
+        assert signals.tool_result_has_injection is True
+
+    def test_verdict_keeps_the_most_severe_status(self):
+        signals = TurnSignals()
+        signals.record_tool_result(self._verdict("x", status=ScanStatus.BLOCK))
+        signals.record_tool_result(self._verdict(status=ScanStatus.ALLOW))
+        assert signals.tool_result_verdict == ScanStatus.BLOCK
+
+    def test_verdict_escalates_from_allow_to_block(self):
+        signals = TurnSignals()
+        signals.record_tool_result(self._verdict(status=ScanStatus.ALLOW))
+        signals.record_tool_result(self._verdict("x", status=ScanStatus.BLOCK))
+        assert signals.tool_result_verdict == ScanStatus.BLOCK
+
+    def test_first_record_sets_status_from_none(self):
+        signals = TurnSignals()
+        assert signals.tool_result_verdict is None
+        signals.record_tool_result(self._verdict(status=ScanStatus.WARN))
+        assert signals.tool_result_verdict == ScanStatus.WARN

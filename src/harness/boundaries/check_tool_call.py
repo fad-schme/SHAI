@@ -63,7 +63,6 @@ async def run(
     emitter: AuditEmitter,
     tenant_id: str,
     scan_args_for_tags: frozenset[str] = frozenset({"sensitive"}),
-    correlate_tool_result: bool = False,
     turn_signals: TurnSignals | None = None,
     source_name: str = "local",
     issue_token: Callable[[], tuple[str, str]] | None = None,
@@ -182,10 +181,9 @@ async def run(
     # Reads TurnSignals recorded by earlier boundaries. Either denies (Pattern A:
     # injection + high-risk tool) or marks the call for tightened arg scanning
     # (Pattern B: WARN + write-capable tool). No effect when signals absent.
-    correlation = _check_signal_correlation(
-        tool, turn_signals, correlate_tool_result)
+    correlation = _check_signal_correlation(tool, turn_signals)
     if isinstance(correlation, GateDecision):
-        # Pattern A/C denial — emit and return
+        # Pattern A denial — emit and return
         return await emit_deny(
             correlation.deny_reason or "signal correlation denial",
             name, tool, ctx, emitter, start, tenant_id,
@@ -282,66 +280,33 @@ async def emit_deny(
 def _check_signal_correlation(
     tool: Tool,
     signals: TurnSignals | None,
-    correlate_tool_result: bool = False,
 ) -> GateDecision | object | None:
     """Layer 6: correlate proposed tool call against earlier boundary signals.
 
     Returns:
-      GateDecision(allowed=False, ...) — Pattern A/C deny
+      GateDecision(allowed=False, ...) — Pattern A deny: injection input + high-risk tool
       _TIGHTEN_MARKER                  — Pattern B tighten: WARN input + write-capable tool
       None                             — no signals or nothing to correlate
-
-    Patterns A and B read input-side signals; C reads result-side. They are
-    guarded independently — an integration that never calls scan_input still
-    gets C, and one whose tool results are clean still gets A and B.
     """
-    if signals is None:
+    if signals is None or signals.input_verdict is None:
         return None
 
     tool_tags = set(tool.tags)
-    tighten = False
 
-    if signals.input_verdict is not None:
-        # Pattern A: injection input + high-risk tool → deny
-        if signals.input_has_injection:
-            risky_overlap = tool_tags & _HIGH_RISK_TAGS
-            if risky_overlap:
-                return GateDecision(
-                    allowed=False,
-                    deny_reason=(
-                        f"correlated with input injection signal — "
-                        f"tool has high-risk tag(s): {sorted(risky_overlap)}"
-                    ),
-                )
-
-        # Pattern B: input WARN + write-capable tool → tighten scrutiny.
-        # Recorded rather than returned: a Pattern C deny outranks a tighten,
-        # and returning here would let the *presence* of extra risk evidence
-        # produce the weaker outcome.
-        if signals.input_verdict == ScanStatus.WARN and "read" not in tool_tags:
-            tighten = True
-
-    # Pattern C: an earlier tool result in this turn produced findings the
-    # scan boundary did not block on, and the agent now wants to act.
-    #
-    # Indirect injection whose payload carries no blocking-severity signal
-    # still tends to leave a trace — a heuristic anomaly, an off-threshold
-    # category. On its own that trace is far too weak to block a tool result;
-    # paired with a write-capable call it did not precede by accident, it is
-    # the same corroboration Pattern A applies to the input side.
-    #
-    # Write-capable rather than _HIGH_RISK_TAGS: a read-only tool cannot
-    # complete an injection's objective, and the tag vocabulary for "this
-    # writes somewhere" is deployment-specific, whereas `read` is the one tag
-    # Pattern B already relies on meaning what it says.
-    if correlate_tool_result and signals.tool_result_categories:
-        if "read" not in tool_tags:
+    # Pattern A: injection input + high-risk tool → deny
+    if signals.input_has_injection:
+        risky_overlap = tool_tags & _HIGH_RISK_TAGS
+        if risky_overlap:
             return GateDecision(
                 allowed=False,
                 deny_reason=(
-                    "correlated with tool-result scan signal — write-capable "
-                    "tool call follows a tool result with findings"
+                    f"correlated with input injection signal — "
+                    f"tool has high-risk tag(s): {sorted(risky_overlap)}"
                 ),
             )
 
-    return _TIGHTEN_MARKER if tighten else None
+    # Pattern B: input WARN + write-capable tool → tighten scrutiny
+    if signals.input_verdict == ScanStatus.WARN and "read" not in tool_tags:
+        return _TIGHTEN_MARKER
+
+    return None

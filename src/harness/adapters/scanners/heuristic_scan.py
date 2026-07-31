@@ -16,7 +16,7 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 
-from harness.adapters.scanners.base import ScanResult
+from harness.adapters.scanners.base import ScanResult, SeverityScale
 from harness.core.context import AgentContext
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
@@ -327,20 +327,55 @@ def _fuzzy_intent(text: str) -> _FuzzyIntent:
             transformed_tokens,
         )
     )
-    fuzzy_target_count = (
-        action_fuzzy_count
-        + protected_fuzzy_count
-        + destination_fuzzy_count
-    )
+    # Corroboration for weak (same-length substitution) matches must come from
+    # *within one class*, not across classes.
+    #
+    # Two corrupted protected-object keywords in one message is a deliberate
+    # pattern — "ynstructions" and "systym" together are not a coincidence.
+    # One weak match in each of two different classes is: `content` collides
+    # with `context` and `attached` with `attacker`, so an ordinary email
+    # ("please ignore the previous email … the correct version is attached")
+    # inside any JSON carrying a `content` field scored as a compound
+    # typoglycemia attack at HIGH.
+    #
+    # Summing across classes, and the cross-class `fuzzy_actions and
+    # fuzzy_protected` pairing, both let two accidental real-word collisions
+    # corroborate each other. Neither can tell deliberate corruption from a
+    # coincidental near-miss, because that distinction is lexical and this
+    # scanner has no dictionary. Requiring the repetition within a single
+    # class is the discriminator available without one.
+    #
+    # Destinations are excluded from the weak-match count. That vocabulary is
+    # short common nouns — email, account, url, shell — with dense real-word
+    # neighbourhoods, so two *accidental* collisions land in it easily:
+    # `gmail` is one substitution from `email` and `attached` two from
+    # `attacker`, which made an ordinary Gmail tool result ("the new ones are
+    # attached, sent from gmail") a compound attack. Actions and protected
+    # objects are longer, more specific words where repetition is real signal.
+    # A *strong* destination match still counts on its own — a scrambled
+    # `webhook` is evidence; a near-miss on `email` is not.
+    #
+    # ACCEPTED GAP: dropping the cross-class pairing means exactly two
+    # same-length corruptions, one action and one protected object, no longer
+    # register — "ignoer the systym prompt" passes. A third corrupted word, or
+    # any insertion/deletion (which scores `strong`), restores detection. The
+    # trade is deliberate: the pairing fired on ordinary email traffic, and
+    # this evasion needs a precise two-word construction. Pinned by
+    # tests/unit/test_typoglycemia_corroboration.py::TestAcceptedEvasion.
     has_obfuscation = (
         strong_actions
         or strong_protected
         or strong_destinations
-        or (fuzzy_actions and fuzzy_protected)
-        or fuzzy_target_count >= 2
+        or max(action_fuzzy_count, protected_fuzzy_count) >= 2
     )
+    # Scoring consults has_obfuscation rather than recomputing a bar beside it.
+    # A lone weak match otherwise contributed 0.8 on its own, and that mattered
+    # far beyond typos: `content` is one substitution from `context`, so any
+    # tool result with a `content` field scored 0.8, which in turn unlocked the
+    # gated coherence sub-score (JSON is not prose) and produced a LOW
+    # heuristic_anomaly on ordinary structured tool output.
     fuzzy_evidence_count = sum((fuzzy_actions, fuzzy_protected, fuzzy_destinations))
-    score = min(2.0, fuzzy_evidence_count * 0.8)
+    score = min(2.0, fuzzy_evidence_count * 0.8) if has_obfuscation else 0.0
     if actions and protected and has_obfuscation:
         score = max(score, 2.0)
     return _FuzzyIntent(
@@ -362,6 +397,10 @@ class HeuristicScanner:
 
     name = "heuristic_scan"
     method_family = "structural_heuristic"
+    # Floor of 1.0: below it the sub-scores are noise, and no
+    # heuristic_anomaly finding is emitted. A compound typoglycemia
+    # attack is reported separately and does not consult the scale.
+    SCALE = SeverityScale(high=5.0, medium=3.0, floor=1.0)
 
     async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
         if not text or not text.strip():
@@ -383,15 +422,12 @@ class HeuristicScanner:
 
         total = s1 + s2 + s3 + s4 + s5
 
-        if total < 1.0 and not fuzzy_intent.is_compound_attack:
-            return ScanResult()
+        # None below the scale's floor — the same 1.0 that decides whether a
+        # heuristic_anomaly finding is emitted at all, expressed once.
+        severity = self.SCALE.severity_for(total)
 
-        if total >= 5.0:
-            severity = Severity.HIGH
-        elif total >= 3.0:
-            severity = Severity.MEDIUM
-        else:
-            severity = Severity.LOW
+        if severity is None and not fuzzy_intent.is_compound_attack:
+            return ScanResult()
 
         # The authoritative copy of the sub-scores. `detail` below renders the
         # same numbers for a human; consumers read these. Every finding this
@@ -434,7 +470,7 @@ class HeuristicScanner:
                 signals=signals,
             ))
 
-        if total >= 1.0:
+        if severity is not None:
             findings.append(Finding(
                 scanner=self.name,
                 category="heuristic_anomaly",

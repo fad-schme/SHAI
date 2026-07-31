@@ -129,12 +129,12 @@ class TurnSignals:
         previous scan: a turn is a chain, and one poisoned tool result is not
         undone by the next tool returning clean content.
 
-        Replacing was an evasion path. A downstream consumer that reads these
-        signals to make a decision — layer 6 Pattern C gates a write on them —
-        would see the evidence cleared by any intervening clean tool call, so
-        an attacker landing one poisoned result then triggering a benign read
-        got the write through. The verdict keeps the most severe status seen
-        for the same reason.
+        Replacing was an evasion path: any consumer reading these signals to
+        make a decision would see the evidence cleared by an intervening clean
+        tool call, so an attacker landing one poisoned result then triggering a
+        benign read would look identical to a clean turn. compute_risk() reads
+        both fields at scan_output. The verdict keeps the most severe status
+        seen for the same reason.
         """
         self.tool_result_verdict = _worst_status(
             self.tool_result_verdict, verdict.status)
