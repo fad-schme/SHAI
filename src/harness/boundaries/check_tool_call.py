@@ -299,6 +299,7 @@ def _check_signal_correlation(
         return None
 
     tool_tags = set(tool.tags)
+    tighten = False
 
     if signals.input_verdict is not None:
         # Pattern A: injection input + high-risk tool → deny
@@ -313,9 +314,12 @@ def _check_signal_correlation(
                     ),
                 )
 
-        # Pattern B: input WARN + write-capable tool → tighten scrutiny
+        # Pattern B: input WARN + write-capable tool → tighten scrutiny.
+        # Recorded rather than returned: a Pattern C deny outranks a tighten,
+        # and returning here would let the *presence* of extra risk evidence
+        # produce the weaker outcome.
         if signals.input_verdict == ScanStatus.WARN and "read" not in tool_tags:
-            return _TIGHTEN_MARKER
+            tighten = True
 
     # Pattern C: an earlier tool result in this turn produced findings the
     # scan boundary did not block on, and the agent now wants to act.
@@ -340,4 +344,4 @@ def _check_signal_correlation(
                 ),
             )
 
-    return None
+    return _TIGHTEN_MARKER if tighten else None

@@ -45,6 +45,16 @@ RISK_HIGH     = 0.60   # scan_output blocks the turn on consolidated risk alone
 _INJECTION_CATEGORIES = frozenset({"tool_injection", "prompt_injection"})
 _HIGH_RISK_TAGS       = frozenset({"destructive", "financial", "external"})
 
+# Severity order for accumulating a status across several scans in one turn.
+_STATUS_RANK = {ScanStatus.ALLOW: 0, ScanStatus.WARN: 1, ScanStatus.BLOCK: 2}
+
+
+def _worst_status(current: ScanStatus | None, incoming: ScanStatus) -> ScanStatus:
+    """Return the more severe of two scan statuses."""
+    if current is None:
+        return incoming
+    return max(current, incoming, key=lambda s: _STATUS_RANK[s])
+
 
 class TurnSignals:
     """Per-turn signal bus. Attached to AgentContext at scan_input.
@@ -113,9 +123,22 @@ class TurnSignals:
         self.gate_tool_tags = tool_tags
 
     def record_tool_result(self, verdict: ScanVerdict) -> None:
-        """Record scan_tool_result verdict. Called by SHAI.scan_tool_result."""
-        self.tool_result_verdict = verdict.status
-        self.tool_result_categories = {f.category for f in verdict.findings}
+        """Record scan_tool_result verdict. Called by SHAI.scan_tool_result.
+
+        Result-side signals accumulate across the turn instead of replacing the
+        previous scan: a turn is a chain, and one poisoned tool result is not
+        undone by the next tool returning clean content.
+
+        Replacing was an evasion path. A downstream consumer that reads these
+        signals to make a decision — layer 6 Pattern C gates a write on them —
+        would see the evidence cleared by any intervening clean tool call, so
+        an attacker landing one poisoned result then triggering a benign read
+        got the write through. The verdict keeps the most severe status seen
+        for the same reason.
+        """
+        self.tool_result_verdict = _worst_status(
+            self.tool_result_verdict, verdict.status)
+        self.tool_result_categories |= {f.category for f in verdict.findings}
 
     # ── Read helpers ─────────────────────────────────────────────────────
 

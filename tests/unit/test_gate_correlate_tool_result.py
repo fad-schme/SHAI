@@ -136,6 +136,67 @@ class TestExistingPatternsUnaffected:
             correlate_tool_result=True) is _TIGHTEN_MARKER
 
 
+class TestDenyOutranksTighten:
+    def test_pattern_c_deny_wins_over_pattern_b_tighten(self):
+        """Extra risk evidence must not produce the weaker outcome.
+
+        Regression guard: Pattern B used to return _TIGHTEN_MARKER before
+        Pattern C was evaluated, so a WARN input on top of a findings-bearing
+        tool result downgraded a deny to a tighten.
+        """
+        signals = TurnSignals()
+        signals.record_input(_verdict("noise", status=ScanStatus.WARN))
+        signals.record_tool_result(_verdict("heuristic_anomaly"))
+        result = _check_signal_correlation(
+            _tool("external_write"), signals, correlate_tool_result=True)
+        assert isinstance(result, GateDecision)
+        assert result.allowed is False
+
+    def test_same_case_without_flag_still_tightens(self):
+        """With Pattern C off, Pattern B's tighten must survive the refactor."""
+        signals = TurnSignals()
+        signals.record_input(_verdict("noise", status=ScanStatus.WARN))
+        signals.record_tool_result(_verdict("heuristic_anomaly"))
+        assert _check_signal_correlation(
+            _tool("external_write"), signals) is _TIGHTEN_MARKER
+
+
+class TestResultSignalsAccumulate:
+    """A later clean tool result must not erase earlier evidence."""
+
+    def test_clean_result_does_not_clear_the_taint(self):
+        signals = TurnSignals()
+        signals.record_input(_verdict())
+        signals.record_tool_result(_verdict("heuristic_anomaly"))
+        signals.record_tool_result(_verdict())          # benign second call
+        result = _check_signal_correlation(
+            _tool("external_write"), signals, correlate_tool_result=True)
+        assert isinstance(result, GateDecision), (
+            "an intervening clean tool result cleared the signal Pattern C "
+            "depends on — this is the evasion path the accumulation fixes"
+        )
+
+    def test_categories_union_across_scans(self):
+        signals = TurnSignals()
+        signals.record_tool_result(_verdict("heuristic_anomaly"))
+        signals.record_tool_result(_verdict("tool_injection"))
+        assert signals.tool_result_categories == {
+            "heuristic_anomaly", "tool_injection"}
+        assert signals.tool_result_has_injection is True
+
+    def test_verdict_keeps_the_most_severe_status(self):
+        signals = TurnSignals()
+        signals.record_tool_result(_verdict("x", status=ScanStatus.BLOCK))
+        signals.record_tool_result(_verdict(status=ScanStatus.ALLOW))
+        assert signals.tool_result_verdict == ScanStatus.BLOCK
+
+    def test_first_record_sets_status_from_none(self):
+        signals = TurnSignals()
+        assert signals.tool_result_verdict is None
+        signals.record_tool_result(_verdict(status=ScanStatus.WARN))
+        assert signals.tool_result_verdict == ScanStatus.WARN
+
+
 class TestDenyReasonCarriesNoRawText:
     def test_reason_is_a_category_note_only(self):
         """Invariant 3 — deny_reason never carries scanned content."""
