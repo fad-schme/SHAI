@@ -228,6 +228,15 @@ class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     scan_args_for_tags: list[str]             = Field(default_factory=lambda: ["sensitive"])
     rate_limit:         RateLimitConfig       = Field(default_factory=RateLimitConfig)
     execution_budget:   ExecutionBudgetConfig = Field(default_factory=ExecutionBudgetConfig)
+    # Layer 6, Pattern C. When a tool result produced findings the boundary did
+    # not consider severe enough to block, deny the next write-capable tool
+    # call in the same turn.
+    #
+    # Off by default: it trades false positives for recall on indirect
+    # injection whose payload carries no blocking-severity signal, and the
+    # cost depends on how often an operator's benign tool results produce
+    # sub-threshold findings. Measure before enabling.
+    correlate_tool_result: bool = False
 
 
 

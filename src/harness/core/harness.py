@@ -92,6 +92,7 @@ class SHAI:
         self._file_scanners       = file_scanners
         self._policy              = policy
         self._scan_args_for_tags        = frozenset(config.check_tool_call.scan_args_for_tags)
+        self._correlate_tool_result     = config.check_tool_call.correlate_tool_result
         self._rate_limiter              = rate_limiter
         self._session_budget            = SessionBudget()
         self._threat_accumulator: ThreatAccumulator | None = (
@@ -636,6 +637,7 @@ class SHAI:
             emitter=self._emitter,
             tenant_id=self._tenant_id,
             scan_args_for_tags=self._scan_args_for_tags,
+            correlate_tool_result=self._correlate_tool_result,
             turn_signals=ctx.turn_signals,
             source_name=source_name,
             # The gate calls this only when it allows, and before it emits, so
