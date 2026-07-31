@@ -120,13 +120,17 @@ _PATTERNS: list[tuple[str, Severity, re.Pattern]] = [
         Severity.HIGH,
         # Matches: "my password is X", "password: X", "credentials: X",
         # "token: X", "api_key=X", "secret: X", "passwd X" etc.
-        # The value capture group matches non-whitespace sequences of 6+ chars
-        # following the keyword, up to end-of-token.
+        #
+        # `assign` and `space` distinguish how the value was introduced. An
+        # explicit assignment is strong evidence on its own; a bare space is
+        # not — "password securely" has the same shape as "passwd hunter2" —
+        # so _valid_credential gates the bare-space form on the value looking
+        # like a secret rather than like the next word of a sentence.
         re.compile(
             r"(?i)\b(?:password|passwd|credentials?|secret|token|api[_\-]?key"
             r"|auth[_\-]?token|access[_\-]?key)\b"
-            r"(?:\s*(?:is|are):?\s*|\s*[:=]\s*|\s+)"
-            r"([^\s,;\"'`]{6,})"
+            r"(?:(?P<assign>\s*(?:is|are):?\s*|\s*[:=]\s*)|(?P<space>\s+))"
+            r"(?P<value>[^\s,;\"'`]{6,})"
         ),
     ),
 ]
@@ -173,6 +177,44 @@ def _valid_ssn(candidate: str, text: str) -> bool:
     return dashed or bool(_SSN_KEYWORD_RE.search(text))
 
 
+# Trailing sentence punctuation is inside the value charclass, so "securely."
+# arrives with its full stop attached. Strip it before judging the shape.
+_VALUE_TRAILING_PUNCT = ".!?:)]}"
+
+
+def _valid_credential(match: re.Match[str]) -> bool:
+    """Reject a credential keyword followed by an ordinary English word.
+
+    The keyword alternation fires on common nouns — password, secret, token,
+    credentials — so "the secret meeting", "token economics" and "reset your
+    password immediately" all match the bare-space form and would otherwise be
+    HIGH-severity credential findings.
+
+    An explicit assignment (`is`, `:`, `=`) is trusted on structure alone. A
+    bare space is only trusted when the value carries a signal prose does not:
+    a digit, a symbol, or internal capitalisation of the kind generated tokens
+    have and sentence words do not.
+
+    A single-case alphabetic value introduced by a bare space is deliberately
+    given up: "passwd correcthorsebatterystaple" and "passwd SECRETVALUE" are
+    indistinguishable from "password requirements" and "PASSWORD POLICY"
+    without a dictionary, and admitting either case would restore the
+    false-positive class this gate exists to remove. The assignment forms
+    ("passwd: SECRETVALUE") still catch both, as do the structured secret
+    patterns above for anything with a recognisable format.
+    """
+    if match.group("assign"):
+        return True
+
+    value = match.group("value").rstrip(_VALUE_TRAILING_PUNCT)
+    if len(value) < 6:
+        return False
+    if any(c.isdigit() or not c.isalnum() for c in value):
+        return True
+    # Alphabetic only: generated tokens capitalise mid-word, sentences do not.
+    return any(c.isupper() for c in value[1:]) and any(c.islower() for c in value)
+
+
 class RegexPIIScanner:
     """Reference PII scanner using compiled regex patterns."""
 
@@ -198,10 +240,12 @@ class RegexPIIScanner:
             matched_spans = []
             for m in pattern.finditer(text):
                 candidate = m.group(0)
-                # Precision gates for the two high-FP numeric categories.
+                # Precision gates for the high-FP categories.
                 if category == "pii.credit_card" and not _luhn_ok(candidate):
                     continue
                 if category == "pii.ssn" and not _valid_ssn(candidate, text):
+                    continue
+                if category == "secret.credential" and not _valid_credential(m):
                     continue
                 matched_spans.append(candidate)
                 findings.append(Finding(
@@ -213,7 +257,9 @@ class RegexPIIScanner:
 
             # Redact only validated matches. For validated categories we
             # replace the specific matched strings; for the rest, blanket sub.
-            if category in ("pii.credit_card", "pii.ssn"):
+            # A validated category must never fall through to pattern.sub —
+            # that would redact the matches its validator just rejected.
+            if category in ("pii.credit_card", "pii.ssn", "secret.credential"):
                 for span in set(matched_spans):
                     redacted = redacted.replace(span, f"[REDACTED:{category}]")
             else:
