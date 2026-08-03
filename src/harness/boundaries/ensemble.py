@@ -9,10 +9,31 @@ category are promoted to HIGH.
 Corroboration counts method families, not scanner names — the same rule
 TurnSignals.compute_risk applies. Two catalog scanners reading different
 YAML files are one detection technique agreeing with itself, which is not
-evidence enough to promote. Injection catalog + structural heuristic is.
+evidence enough to promote.
 
 Severity weights: LOW=1, MEDIUM=3, HIGH=6, CRITICAL=10.
 Threshold: 4.0 (two MEDIUMs = 6 > 4.0 → promoted).
+
+Why the shipped scanners never promote each other
+-------------------------------------------------
+Promotion keys on a **shared category**, and the catalogs and `heuristic_scan`
+share none: the catalogs emit `prompt_injection`, `tool_injection` and friends,
+the heuristic scanner emits `typoglycemia_compound` and `heuristic_anomaly`.
+That is deliberate, not an oversight, and aligning them would be wrong in both
+directions:
+
+  * `typoglycemia_compound` is already HIGH at emission, and promotion only
+    raises *to* HIGH. Giving it a catalog category cannot change any verdict.
+  * `heuristic_anomaly` means "this text is structurally unusual" — it makes no
+    claim about *which* attack. Filing it under `prompt_injection` would turn
+    corroboration into amplification: any anomaly plus one MEDIUM lexical hit
+    reaches HIGH, which is not two techniques agreeing on the same phenomenon.
+
+So this mechanism is inert across the built-in scanners by design. It is live
+for operator-supplied scanners that declare a distinct `method_family` **and**
+emit an existing catalog category — that is the case it exists for. Nonspecific
+structural evidence belongs in `TurnSignals.compute_risk`, which weighs
+independent families without asserting they identified the same thing.
 """
 from __future__ import annotations
 

@@ -344,12 +344,12 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-# Ceiling on the proximity search below. The search is a backtracking walk over
-# one span per signal group, so its worst case is the product of the group span
-# counts — on text an attacker writes. Groups are visited fewest-spans-first and
-# a partial window wider than within_chars prunes immediately, so real payloads
-# settle in a handful of steps; this bounds the pathological ones.
-_WITHIN_SEARCH_BUDGET = 20_000
+# Memory bound on the spans collected per signal group. Not a correctness knob:
+# the proximity check below is linear, so this exists only to stop a pathological
+# document from materialising an unbounded span list. Normalization already caps
+# input size, and 20k matches of one signal in one document is far outside
+# anything real — the previous cap was 32, and that one *was* load-bearing.
+_MAX_SPANS_PER_GROUP = 20_000
 
 
 def _groups_fit_within(
@@ -358,37 +358,61 @@ def _groups_fit_within(
 ) -> bool:
     """Return whether one match from every group fits in a bounded window.
 
-    Fails **closed** on budget exhaustion — an input crafted to blow up the
-    search counts as satisfying the proximity constraint, so the rule still
-    fires and the finding is still reported. Failing open would turn the
-    budget into a bypass: pad the text until the search gives up and the
-    compound rule stops matching.
+    Restated: the selected spans fit iff some window of width `within_chars`
+    *fully contains* at least one span from every group. Taking `L` as the
+    window's left edge, that is — for every group g — a span with
+    `start >= L and end <= L + within_chars`.
+
+    Sweeping `L` downward over the distinct start positions makes this linear.
+    Let `f(g, L)` be the smallest `end` among group g's spans with
+    `start >= L`; it is non-increasing as L decreases, so walking spans in
+    descending start order and keeping a running minimum per group computes it
+    for free. The rule matches iff at some L every group has a value and
+    `max(f(g, L)) - L <= within_chars`.
+
+    Linear, and that is the point. The previous implementation was a
+    backtracking walk over one span per group, whose worst case is the *product*
+    of the group span counts on text an attacker writes. Bounding that needed a
+    step budget, the budget had to fail **closed** so padding could not become a
+    bypass, and a fail-closed budget means adversarial padding *reports a match*.
+    A per-group span cap then had to stay small enough to keep the budget out of
+    reach, which silently dropped real matches in long documents. All three
+    defects were consequences of the algorithm, and the sweep removes the
+    algorithm: no branching factor, so no budget, no fail-closed path, and no
+    cap that decides what matches.
     """
-    ordered = sorted(spans_by_group, key=len)
-    budget = _WITHIN_SEARCH_BUDGET
+    k = len(spans_by_group)
+    if k == 0:
+        return True                      # nothing to place — vacuously satisfied
+    if any(not spans for spans in spans_by_group):
+        return False                     # a group with no match cannot be covered
 
-    def visit(index: int, start: int | None, end: int | None) -> bool:
-        nonlocal budget
-        if index == len(ordered):
+    # Descending by start. Ties must be consumed together: L is a start value,
+    # and every span sharing it is inside the window `start >= L`.
+    events = sorted(
+        ((start, end, gid)
+         for gid, spans in enumerate(spans_by_group)
+         for start, end in spans),
+        reverse=True,
+    )
+
+    best_end = [None] * k                # f(g, L) — smallest end seen so far
+    remaining = k                        # groups still without any span
+
+    for i, (start, end, gid) in enumerate(events):
+        if best_end[gid] is None:
+            best_end[gid] = end
+            remaining -= 1
+        elif end < best_end[gid]:
+            best_end[gid] = end
+
+        # Evaluate once per distinct start, after its whole tie-run is in.
+        if i + 1 < len(events) and events[i + 1][0] == start:
+            continue
+        if remaining == 0 and max(best_end) - start <= within_chars:
             return True
-        for span_start, span_end in ordered[index]:
-            budget -= 1
-            if budget <= 0:
-                log.debug(
-                    "within_chars proximity search exhausted its budget — "
-                    "treating the rule as matched",
-                    extra={"groups": len(ordered), "within_chars": within_chars},
-                )
-                return True
-            next_start = span_start if start is None else min(start, span_start)
-            next_end = span_end if end is None else max(end, span_end)
-            if next_end - next_start > within_chars:
-                continue
-            if visit(index + 1, next_start, next_end):
-                return True
-        return False
 
-    return visit(0, None, None)
+    return False
 
 
 # ── Scanner ───────────────────────────────────────────────────────────────
@@ -504,7 +528,10 @@ class InjectionScanner:
                             else:
                                 spans.extend(
                                     match.span()
-                                    for match in islice(cp.value.finditer(normalized), 32)
+                                    for match in islice(
+                                        cp.value.finditer(normalized),
+                                        _MAX_SPANS_PER_GROUP,
+                                    )
                                 )
                                 group_matched = bool(spans)
                     except Exception as pat_err:  # nosec B112 — malformed pattern; skip signal, do not abort scan

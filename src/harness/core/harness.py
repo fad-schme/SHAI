@@ -477,7 +477,7 @@ class SHAI:
         )
 
         # Record signals from the input scan
-        ctx.turn_signals.record_input(verdict)
+        ctx.turn_signals.record_input(verdict, text=text)
 
         # Accumulator record moved to scan_output — needs full turn context
         # for consolidated turn_risk. scan_input BLOCK short-circuits still
@@ -706,9 +706,11 @@ class SHAI:
             on_error=self._config.scan_tool_result.on_error,
         )
 
-        # Record signals from the tool result scan
+        # Record signals from the tool result scan. The raw result is digested,
+        # not the redacted form — a redacted span is still a span the tool put
+        # into the turn, and an argument built from it is still ingested.
         if ctx.turn_signals is not None:
-            ctx.turn_signals.record_tool_result(verdict)
+            ctx.turn_signals.record_tool_result(verdict, text=result)
 
         return verdict
 

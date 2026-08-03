@@ -66,11 +66,17 @@ Finding(
 ```
 
 This finding is always MEDIUM, and it is injected after the per-scanner action
-loop — it never blocks. It participates in the ensemble: if a scanner from a
-different method family flags the same category, both are promoted to HIGH in
-the verdict and the audit event. It carries `structural_heuristic`, the same
-family as `heuristic_scan`, so the scanner whose output produced the candidate
-does not corroborate it — a catalog scanner agreeing does.
+loop — it never blocks. It carries `structural_heuristic`, the same family as
+`heuristic_scan`, so the scanner whose output produced the candidate cannot
+corroborate it.
+
+Nor, in practice, can anything else: the finding's category is
+`heuristic_anomaly`, and `ensemble.py` promotes only on a **shared** category
+that no catalog rule uses. A promoted candidate therefore never reaches HIGH
+through the ensemble. That is deliberate — see the "Why the shipped scanners
+never promote each other" note in `ensemble.py`. The candidate still raises
+`TurnSignals` risk, which weighs independent method families without requiring
+them to have identified the same thing.
 
 Promoted candidates are cached in memory. Because the CLI runs in a separate
 process, a status change cannot invalidate a running harness's cache. Restart

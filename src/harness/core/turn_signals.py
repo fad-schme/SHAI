@@ -26,11 +26,16 @@ diminishing returns as evidence accumulates.
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import math
+import re
 from uuid import uuid4
 
 from harness.core.types import ScanStatus, Severity
 from harness.core.verdicts import ScanVerdict
+
+log = logging.getLogger(__name__)
 
 # ── Public thresholds ────────────────────────────────────────────────────
 
@@ -44,6 +49,48 @@ RISK_HIGH     = 0.60   # scan_output blocks the turn on consolidated risk alone
 
 _INJECTION_CATEGORIES = frozenset({"tool_injection", "prompt_injection"})
 _HIGH_RISK_TAGS       = frozenset({"destructive", "financial", "external"})
+
+# ── Content provenance ───────────────────────────────────────────────────
+# Tokens are hashed before they are stored. TurnSignals is read by the gate
+# and reachable from any boundary, so holding raw prompt or tool-result spans
+# on it would put scanned content one attribute access away from a log line
+# or an audit field (Invariant 3). Digests answer the only question asked of
+# them — "did this exact token appear over there" — and answer nothing else.
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._@+/-]{2,}")
+_DIGEST_LEN = 16
+_MIN_TOKEN_LEN = 3
+
+# Interior separators identify a destination — `notes/reviews.md`, an email
+# address — so they are part of the token. Trailing ones are sentence
+# punctuation. Keeping them would make `bank_acct_88213.` at the end of a
+# payload a different token from the argument the call carries, which is a
+# silent miss on exactly the phrasing an attacker writes.
+_TRAILING = "._-/+@"
+
+# A cap, not a tuning knob. It bounds each call *and* the turn: the per-call
+# limit alone leaves the accumulated set growing with the number of tool calls,
+# which a long turn over high-cardinality results takes into tens of MB.
+# Accumulation stops rather than trimming — str hashing is randomized per
+# process, so evicting from a full set would make the same turn reach different
+# verdicts across runs, and the gate is required to be deterministic.
+# Overflow drops tokens, which can only lose a taint match: the control fails
+# open, consistent with the layer 7 arg scanners that log and skip on failure.
+_MAX_DIGESTS = 16_384
+
+
+def token_digests(text: str) -> set[str]:
+    """Hashed token set for provenance comparison. Never stores raw text."""
+    out: set[str] = set()
+    for match in _TOKEN_RE.finditer(text.lower()):
+        token = match.group().rstrip(_TRAILING)
+        if len(token) < _MIN_TOKEN_LEN:
+            continue
+        out.add(hashlib.sha256(token.encode()).hexdigest()[:_DIGEST_LEN])
+        if len(out) >= _MAX_DIGESTS:
+            log.debug("token digest cap reached — provenance may under-match",
+                      extra={"cap": _MAX_DIGESTS})
+            break
+    return out
 
 # Severity order for accumulating a status across several scans in one turn.
 _STATUS_RANK = {ScanStatus.ALLOW: 0, ScanStatus.WARN: 1, ScanStatus.BLOCK: 2}
@@ -74,6 +121,8 @@ class TurnSignals:
         "gate_tool_tags",
         "tool_result_verdict",
         "tool_result_categories",
+        "input_digests",
+        "tool_result_digests",
     )
 
     def __init__(self) -> None:
@@ -97,15 +146,27 @@ class TurnSignals:
         self.tool_result_verdict: ScanStatus | None = None
         self.tool_result_categories: set[str] = set()
 
+        # Content provenance — hashed tokens, per channel. Populated only when
+        # a boundary passes its text; a caller that does not stays at "no
+        # provenance known", which never denies.
+        self.input_digests: set[str] = set()
+        self.tool_result_digests: set[str] = set()
+
     # ── Writers ──────────────────────────────────────────────────────────
 
-    def record_input(self, verdict: ScanVerdict) -> None:
+    def record_input(self, verdict: ScanVerdict, *, text: str | None = None) -> None:
         """Record scan_input verdict. Called by SHAI.scan_input after run_scan.
 
         Families are read off the findings, which run_scan stamped with the
         producing scanner's technique. Only scanners that fired contribute,
         and two catalog scanners agreeing count as one method, not two.
+
+        `text` is the scanned prompt, digested for provenance. It establishes
+        what the user actually asked for — the reference every later
+        `arg_is_ingested` check is made against.
         """
+        if text is not None and len(self.input_digests) < _MAX_DIGESTS:
+            self.input_digests |= token_digests(text)
         self.input_verdict = verdict.status
         self.input_categories = {f.category for f in verdict.findings}
         if verdict.findings:
@@ -122,7 +183,8 @@ class TurnSignals:
         self.gate_tool_name = tool_name
         self.gate_tool_tags = tool_tags
 
-    def record_tool_result(self, verdict: ScanVerdict) -> None:
+    def record_tool_result(self, verdict: ScanVerdict, *,
+                           text: str | None = None) -> None:
         """Record scan_tool_result verdict. Called by SHAI.scan_tool_result.
 
         Result-side signals accumulate across the turn instead of replacing the
@@ -135,7 +197,15 @@ class TurnSignals:
         benign read would look identical to a clean turn. compute_risk() reads
         both fields at scan_output. The verdict keeps the most severe status
         seen for the same reason.
+
+        `text` is digested for provenance and accumulates for the same reason:
+        content ingested at step 1 is still ingested content at step 4. Note
+        this records what the tool *returned*, whether or not any scanner
+        flagged it — the provenance fact does not depend on detection, which
+        is the whole point of tracking it separately from the findings.
         """
+        if text is not None and len(self.tool_result_digests) < _MAX_DIGESTS:
+            self.tool_result_digests |= token_digests(text)
         self.tool_result_verdict = _worst_status(
             self.tool_result_verdict, verdict.status)
         self.tool_result_categories |= {f.category for f in verdict.findings}
@@ -149,6 +219,26 @@ class TurnSignals:
     @property
     def tool_result_has_injection(self) -> bool:
         return bool(self.tool_result_categories & _INJECTION_CATEGORIES)
+
+    def arg_is_ingested(self, value: str) -> bool:
+        """True when `value` carries a token that came from a tool result this
+        turn and appears nowhere in the user's prompt.
+
+        The question a detector cannot answer: not "is this text an attack"
+        but "who put this here". An indirect injection's payoff is a tool call
+        carrying values the attacker supplied — a recipient, a path, an amount
+        — and those values enter the turn through the tool result and only
+        there. A value the user named is in `input_digests` and is not
+        ingested, however alarming it looks; a value neither channel carries
+        (a constant, an agent-generated id) is not ingested either.
+
+        Returns False whenever provenance is unknown — no tool result recorded,
+        or a caller that never passed text. An absent signal is not evidence.
+        """
+        if not self.tool_result_digests:
+            return False
+        ingested = token_digests(value) & self.tool_result_digests
+        return bool(ingested - self.input_digests)
 
     # ── Consolidated risk ────────────────────────────────────────────────
 

@@ -426,8 +426,8 @@ patterns:
   - name: fr.policy_evasion
     meta:
       description: "FR — requests to suspend or bypass content policy"
-      threat_level: 5
-      severity: high
+      threat_level: 4
+      severity: medium
       category: prompt_injection
     match: any
     strings:
@@ -443,8 +443,8 @@ patterns:
   - name: es.policy_evasion
     meta:
       description: "ES — requests to suspend or bypass content policy"
-      threat_level: 5
-      severity: high
+      threat_level: 4
+      severity: medium
       category: prompt_injection
     match: any
     strings:
@@ -460,8 +460,8 @@ patterns:
   - name: de.policy_evasion
     meta:
       description: "DE — requests to suspend or bypass content policy"
-      threat_level: 5
-      severity: high
+      threat_level: 4
+      severity: medium
       category: prompt_injection
     match: any
     strings:
@@ -477,8 +477,8 @@ patterns:
   - name: zh.policy_evasion
     meta:
       description: "ZH — requests to suspend or bypass content policy"
-      threat_level: 5
-      severity: high
+      threat_level: 4
+      severity: medium
       category: prompt_injection
     match: any
     strings:
@@ -557,7 +557,7 @@ patterns:
     meta:
       description: "FR — privilege escalation intent"
       threat_level: 4
-      severity: high
+      severity: medium
       category: privilege_escalation
     match: any
     strings:
@@ -573,7 +573,7 @@ patterns:
     meta:
       description: "ES — privilege escalation intent"
       threat_level: 4
-      severity: high
+      severity: medium
       category: privilege_escalation
     match: any
     strings:
@@ -589,7 +589,7 @@ patterns:
     meta:
       description: "DE — privilege escalation intent"
       threat_level: 4
-      severity: high
+      severity: medium
       category: privilege_escalation
     match: any
     strings:
@@ -605,7 +605,7 @@ patterns:
     meta:
       description: "ZH — privilege escalation intent"
       threat_level: 4
-      severity: high
+      severity: medium
       category: privilege_escalation
     match: any
     strings:

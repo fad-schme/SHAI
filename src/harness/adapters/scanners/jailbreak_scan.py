@@ -40,4 +40,20 @@ class JailbreakScanner(InjectionScanner):
     name = "jailbreak_scan"
     method_family = "regex_catalog"
     default_patterns = _DEFAULT_PATTERNS
+
+    # Deliberate: this scanner does NOT load injection_common.yaml.
+    #
+    # Its whole contract is that findings carry `jailbreak.*` categories so
+    # policy rules and audit consumers can target guardrail-integrity attacks
+    # independently of injection ones. The common catalog emits
+    # `prompt_injection`, `tool_injection` and `prompt_extraction`, which would
+    # put non-jailbreak categories in this scanner's output and break that
+    # separation. It would also duplicate every common rule whenever
+    # injection_scan runs alongside — the usual case in both shipped configs.
+    #
+    # Consequence, accepted: a boundary configured with `jailbreak_scan` and
+    # nothing else does not get the common compounds. That is the same bargain
+    # every scanner makes — an operator gets the catalog they declared. Declare
+    # `injection_scan` alongside it to cover the data-channel families.
+    # IdentitySpoofScanner opts out for the same reason.
     common_patterns = ()

@@ -26,13 +26,25 @@ class ArgumentRule(BaseModel, frozen=True):
     allowlist   Value must be one of these strings (exact match).
     pattern     Value must match this regex (re.search semantics).
     required    Argument must be present and non-None.
+    user_origin Value must trace to the user, not to text a tool returned.
+
+    Every field above except `user_origin` is evaluated by `evaluate()` against
+    the arguments alone. `user_origin` is not: deciding it needs the turn's
+    provenance record, so the gate enforces it at layer 6 and denies there (see
+    check_tool_call._check_signal_correlation).
+
+    Declare it only where it actually holds — a recipient, a path, an amount the
+    user names. An argument the agent legitimately fills from something it read
+    (a body, a summary, an address resolved out of a contact list) will trip it,
+    so leaving it undeclared there is the correct configuration, not a gap.
     """
-    arg:       str
-    max_value: float | None = None
-    min_value: float | None = None
-    allowlist: list[str] | None = None
-    pattern:   str | None = None
-    required:  bool = False
+    arg:         str
+    max_value:   float | None = None
+    min_value:   float | None = None
+    allowlist:   list[str] | None = None
+    pattern:     str | None = None
+    required:    bool = False
+    user_origin: bool = False
 
     def evaluate(self, args: dict[str, Any]) -> str | None:
         """Return a violation message, or None if the rule passes.

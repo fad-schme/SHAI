@@ -10,6 +10,69 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [0.6.0] — 2026-07-31
+
+### Added
+- **`ArgumentRule.user_origin`** — declares that an argument's value must trace
+  to the user's prompt rather than to text a tool returned during the same
+  turn. Defaults `False`, so every existing tool is outside the control until
+  it is declared. Intended for the arguments that route or authorise —
+  recipient, path, url, amount — and not for free-text bodies, which
+  legitimately carry content the agent just read.
+- **Content provenance on `TurnSignals`** — `input_digests`,
+  `tool_result_digests` and `arg_is_ingested()`. `record_input()` and
+  `record_tool_result()` take a new keyword-only `text=`; boundaries pass the
+  scanned text and it is stored as hashed tokens, never as spans. Both sets are
+  capped per turn; past the cap the comparison under-matches rather than
+  growing without bound.
+
+### Fixed
+- **`within_chars` proximity now answers correctly on long and on padded
+  input.** The check behind every compound (`match.all`) rule was a backtracking
+  walk whose worst case is the product of the group match counts, and its two
+  guards each caused a defect. Spans were capped at 32 per signal group, so in a
+  long document the occurrence that actually satisfied proximity could fall
+  outside the cap and the rule stopped firing with nothing logged. The step
+  budget guarding the walk failed closed, so input padded to exhaust it was
+  *reported as a match*. Both are gone: the check is now a linear sweep, with no
+  budget, no fail-closed path, and a per-group span limit that bounds memory
+  rather than deciding outcomes.
+
+  Two behaviour changes follow. Compound rules now fire on long documents where
+  the matching signals sit far into the text — this affects the
+  indirect-injection family most, which operates on retrieved documents and
+  message bodies. And input crafted to exhaust the old budget no longer produces
+  a finding; those were never verified matches, but a deployment counting them
+  will see fewer.
+
+### Changed
+- **Localized `policy_evasion` and `escalation_phrases` no longer outrank their
+  English base rules.** The `fr`/`es`/`de`/`zh` variants of both were
+  `severity: high` against a `medium` base, and `has_high_rule` forces the whole
+  scan to HIGH on a single high match — so the same phrasing blocked in four
+  languages and only warned in English. All eight are now `medium`, matching the
+  base rule. Deployments relying on the stricter non-English behaviour will see
+  those inputs warn rather than block.
+- **Gate layer 6 evaluates both denial patterns before the tighten.** A `WARN`
+  input on a write-capable tool previously returned the tighten marker before
+  any later pattern was considered, so additional evidence could produce the
+  weaker outcome. Denials are now decided first. No existing configuration
+  changes behaviour: the pattern this ordering matters for is opt-in.
+
+### Security
+- **Indirect-injection containment no longer depends on detecting the payload.**
+  Gate layer 6 denies a call when an argument declared `user_origin` carries a
+  value that entered the turn through a tool result and appears nowhere in the
+  user's prompt. This holds regardless of whether any scanner flagged that tool
+  result, which is the point: an indirect injection carrying no override
+  language produces no findings, but it still has to supply the value it
+  redirects the call to.
+
+  Known cost: an agent that resolves a user-named entity through a read — a
+  contact lookup turning a name into an address — trips this exactly as a
+  poisoned document does, because by provenance the two are identical. Declare
+  `user_origin` only on arguments the user names directly.
+
 ## [0.5.0] — 2026-07-29
 
 ### Added

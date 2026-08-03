@@ -12,7 +12,9 @@ Layer 3: irreversibility — blast-radius gate, requires human_approved
 Layer 4: tool.tags ⊆ ctx.allowed_tags?             (subagent capability gate)
 Layer 5: intersection policy (subagent ∩ parent ∩ global rules)
 Layer 6: signal correlation — deny high-risk tools when input scan flagged
-         injection; mark WARN+write-capable calls for tightened arg scanning
+         injection (A) or when a user_origin argument carries a value ingested
+         from a tool result (C); mark WARN+write-capable calls for tightened
+         arg scanning (B)
 Layer 7: optional arg scanning (unconditional if layer 6 marked TIGHTEN)
 """
 from __future__ import annotations
@@ -179,9 +181,13 @@ async def run(
 
     # ── Layer 6: signal correlation ──────────────────────────────────────
     # Reads TurnSignals recorded by earlier boundaries. Either denies (Pattern A:
-    # injection + high-risk tool) or marks the call for tightened arg scanning
-    # (Pattern B: WARN + write-capable tool). No effect when signals absent.
-    correlation = _check_signal_correlation(tool, turn_signals)
+    # injection + high-risk tool; Pattern C: a user_origin argument carrying an
+    # ingested value) or marks the call for tightened arg scanning (Pattern B:
+    # WARN + write-capable tool). No effect when signals absent.
+    #
+    # Runs on effective_args — layer 5 may have redacted them, and the gate must
+    # correlate against what would actually be dispatched.
+    correlation = _check_signal_correlation(tool, effective_args, turn_signals)
     if isinstance(correlation, GateDecision):
         # Pattern A denial — emit and return
         return await emit_deny(
@@ -279,16 +285,21 @@ async def emit_deny(
 
 def _check_signal_correlation(
     tool: Tool,
+    args: dict[str, Any],
     signals: TurnSignals | None,
 ) -> GateDecision | object | None:
     """Layer 6: correlate proposed tool call against earlier boundary signals.
 
     Returns:
-      GateDecision(allowed=False, ...) — Pattern A deny: injection input + high-risk tool
+      GateDecision(allowed=False, ...) — deny (Pattern A or C)
       _TIGHTEN_MARKER                  — Pattern B tighten: WARN input + write-capable tool
       None                             — no signals or nothing to correlate
+
+    Every deny is evaluated before the tighten. Pattern B returning early would
+    let a WARN input downgrade a Pattern C deny to a scan, so more evidence
+    would produce the weaker outcome.
     """
-    if signals is None or signals.input_verdict is None:
+    if signals is None:
         return None
 
     tool_tags = set(tool.tags)
@@ -304,6 +315,37 @@ def _check_signal_correlation(
                     f"tool has high-risk tag(s): {sorted(risky_overlap)}"
                 ),
             )
+
+    # Pattern C: an argument the tool declares user_origin carries a value that
+    # entered this turn through a tool result and not through the user's prompt.
+    #
+    # Independent of every finding: a base-setting indirect injection is a plain
+    # imperative sentence that no catalog matches and that reads as legitimate
+    # in isolation, so gating on what the scanners said reproduces their
+    # blindness one layer down. What the attacker cannot avoid is supplying the
+    # *value* — the payload is only worth writing if it redirects the call
+    # somewhere the user never named.
+    #
+    # Denies. The known cost is entity resolution — the user names a person, the
+    # agent reads a contact list, and the address it sends to was spelled out
+    # only by the tool result. Provenance cannot tell that from an injected
+    # destination, and the operator resolves it by declaring user_origin on the
+    # arguments where it holds, not by the gate deferring the decision. SHAI is
+    # a filter with no human in it; a boundary that answers "ask someone" has
+    # not decided anything.
+    for rule in tool.argument_rules:
+        if not rule.user_origin:
+            continue
+        value = args.get(rule.arg)
+        if value is None or not signals.arg_is_ingested(str(value)):
+            continue
+        return GateDecision(
+            allowed=False,
+            deny_reason=(
+                f"argument '{rule.arg}' is declared user_origin but its "
+                f"value entered this turn through a tool result"
+            ),
+        )
 
     # Pattern B: input WARN + write-capable tool → tighten scrutiny
     if signals.input_verdict == ScanStatus.WARN and "read" not in tool_tags:

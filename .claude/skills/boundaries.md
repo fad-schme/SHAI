@@ -282,8 +282,19 @@ boundary list both adapters, `file_scanner` and `file_content_scan`.
 both corroboration consumers count distinct families: `TurnSignals` for the
 risk-score bonus, and `ensemble.py` for severity promotion. Two `regex_catalog`
 scanners agreeing count as **one** family (no bonus, no promotion), while
-injection + heuristic count as two (both apply). This prevents catalog scanners
-from double-counting themselves into HIGH.
+injection + heuristic count as two. This prevents catalog scanners from
+double-counting themselves into HIGH.
+
+The two consumers then diverge, and the difference matters. `TurnSignals`
+rewards distinct families directly. `ensemble.py` additionally requires a
+**shared category**, and the built-in scanners share none — the catalogs emit
+`prompt_injection` and friends, `heuristic_scan` emits `typoglycemia_compound`
+and `heuristic_anomaly`. **Severity promotion therefore never fires between the
+scanners SHAI ships, by design:** a structural anomaly makes no claim about
+which attack it saw, so promoting on it would amplify a nonspecific signal
+rather than corroborate a specific one. Promotion is live for an
+operator-supplied scanner that declares its own `method_family` and emits an
+existing catalog category.
 
 **Catalog files** (built-in, under `src/harness/adapters/scanners/l10n/`):
 - `injection_patterns.yaml` — 17+ rules, tuned for user text input.

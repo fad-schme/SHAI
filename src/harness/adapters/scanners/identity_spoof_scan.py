@@ -46,4 +46,9 @@ class IdentitySpoofScanner(InjectionScanner):
     name = "identity_spoof_scan"
     method_family = "regex_catalog"
     default_patterns = _DEFAULT_PATTERNS
+
+    # Deliberate — same reasoning as JailbreakScanner: loading
+    # injection_common.yaml would emit non-`identity_spoof.*` categories from
+    # this scanner and duplicate the common rules wherever injection_scan runs
+    # alongside. See the note there.
     common_patterns = ()
