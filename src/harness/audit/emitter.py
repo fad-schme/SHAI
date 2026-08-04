@@ -146,7 +146,20 @@ class AuditEmitter:
         try:
             yield bucket
         finally:
-            self._subscribers.remove(bucket)
+            # Unsubscribe by identity, never by equality. list.remove() compares
+            # with ==, and two buckets that have collected the same events — most
+            # commonly two empty ones — are equal. It would then drop whichever
+            # was registered first, leaving this block still subscribed after it
+            # exited and making the other block's exit raise ValueError.
+            #
+            # Scanning in reverse finds the innermost block first, which is the
+            # common nesting case. A bucket that is somehow already gone removes
+            # nothing rather than raising: this runs in a finally, and an
+            # exception here would mask whatever the caller's block was raising.
+            for index in range(len(self._subscribers) - 1, -1, -1):
+                if self._subscribers[index] is bucket:
+                    del self._subscribers[index]
+                    break
 
     async def close(self) -> None:
         await asyncio.gather(

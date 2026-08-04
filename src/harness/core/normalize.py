@@ -80,6 +80,31 @@ _B64_CANDIDATE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
 _HEX_CANDIDATE = re.compile(r"(?:[0-9a-fA-F]{2}){8,}")
 # percent-encoding presence check.
 _PCT = re.compile(r"%[0-9a-fA-F]{2}")
+# base32 candidate: RFC 4648 alphabet, optionally padded. Uppercase-only, so
+# it cannot collide with the base64 candidate above on ordinary mixed-case text.
+_B32_CANDIDATE = re.compile(r"[A-Z2-7]{16,}={0,6}")
+# ascii85 candidate: only the delimited form. Undelimited ascii85 is nearly any
+# run of printable ASCII, which would decode ordinary prose into noise.
+_A85_CANDIDATE = re.compile(r"<~.{8,}?~>", re.DOTALL)
+# binary candidate: four or more space-separated octets.
+_BINARY_CANDIDATE = re.compile(r"(?:[01]{8}[ \t]*){4,}")
+# literal \uXXXX escape sequences, two or more in a row.
+_UESC_CANDIDATE = re.compile(r"(?:\\u[0-9a-fA-F]{4}){2,}")
+# morse candidate: a run of morse letters separated by spaces. Requires five
+# letters so ellipses, em-dashes, and "..." in prose cannot qualify.
+_MORSE_CANDIDATE = re.compile(r"(?:[.\-]{1,6}[ /]+){4,}[.\-]{1,6}")
+
+# International Morse, letters and digits only. Static data, no punctuation:
+# punctuation codes overlap common prose separators and buy nothing.
+_MORSE_TABLE = {
+    ".-": "a", "-...": "b", "-.-.": "c", "-..": "d", ".": "e", "..-.": "f",
+    "--.": "g", "....": "h", "..": "i", ".---": "j", "-.-": "k", ".-..": "l",
+    "--": "m", "-.": "n", "---": "o", ".--.": "p", "--.-": "q", ".-.": "r",
+    "...": "s", "-": "t", "..-": "u", "...-": "v", ".--": "w", "-..-": "x",
+    "-.--": "y", "--..": "z",
+    "-----": "0", ".----": "1", "..---": "2", "...--": "3", "....-": "4",
+    ".....": "5", "-....": "6", "--...": "7", "---..": "8", "----.": "9",
+}
 
 
 @dataclass
@@ -222,6 +247,48 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
         if decoded.isprintable():
             out.append(("hex", decoded))
 
+    for m in _B32_CANDIDATE.finditer(text):
+        chunk = m.group(0)
+        if _shannon_entropy(chunk) < entropy_threshold:
+            continue  # SHOUTED prose matches the base32 alphabet too
+        try:
+            decoded = base64.b32decode(chunk, casefold=False).decode("utf-8")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            continue
+        if decoded.isprintable():
+            out.append(("base32", decoded))
+
+    for m in _A85_CANDIDATE.finditer(text):
+        try:
+            decoded = base64.a85decode(m.group(0), adobe=True).decode("utf-8")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            continue
+        if decoded.isprintable():
+            out.append(("ascii85", decoded))
+
+    for m in _BINARY_CANDIDATE.finditer(text):
+        bits = m.group(0).split()
+        try:
+            decoded = bytes(int(b, 2) for b in bits).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if decoded.isprintable():
+            out.append(("binary", decoded))
+
+    for m in _UESC_CANDIDATE.finditer(text):
+        try:
+            decoded = codecs.decode(m.group(0), "unicode_escape")
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if decoded.isprintable():
+            out.append(("unicode_escape", decoded))
+
+    for m in _MORSE_CANDIDATE.finditer(text):
+        letters = [t for t in re.split(r"[ /]+", m.group(0)) if t]
+        if len(letters) < 5 or any(t not in _MORSE_TABLE for t in letters):
+            continue  # partial morse is more likely punctuation than a payload
+        out.append(("morse", "".join(_MORSE_TABLE[t] for t in letters)))
+
     if _PCT.search(text):
         try:
             from urllib.parse import unquote
@@ -231,6 +298,13 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
                 out.append(("url", decoded))
         except (ValueError, UnicodeDecodeError):
             pass
+
+    # Reversal, like rot13 below, is whole-string and always "succeeds" — every
+    # input reverses into something. Gate it the same way: surface the view only
+    # when reversing recovered natural language that was not already there.
+    reversed_text = text[::-1]
+    if reversed_text != text and _word_score(reversed_text) > _word_score(text):
+        out.append(("reversed", reversed_text))
 
     # rot13 is whole-string, not substring. Applied unconditionally it produces
     # a garbage view for every ordinary input (all alphabetic text "decodes"),

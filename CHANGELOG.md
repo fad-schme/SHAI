@@ -10,6 +10,73 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [0.6.1] — 2026-08-04
+
+### Added
+- **`role_boundary_forgery` rule (injection catalog)** — matches chat-template
+  control tokens appearing in content the model did not generate: the ChatML
+  family (`<|im_start|>`, `<|im_end|>`, `<|system|>`), Llama's `<<SYS>>` and
+  `[INST]`, and other vendors' reserved turn markers. These tokens exist only
+  to frame the model's own transcript, so one in a user turn, a tool result,
+  or an uploaded document is categorical evidence rather than cumulative — a
+  single match fires at `high`.
+
+  Deliberately limited to reserved tokens. Generic role markup — `<system>`,
+  `</document>`, `<s>` — was tried and removed: those are ordinary XML, config,
+  and HTML-strikethrough elements, and matching them blocked legitimate
+  documents. Content carrying real control tokens now blocks where it
+  previously passed.
+
+- **`instruction_override` extended to sixteen further languages** — Italian,
+  Portuguese, Japanese, Korean, Arabic, Hindi, Russian, Turkish, Polish,
+  Dutch, Norwegian, Swedish, Danish, Finnish, Greek, and Vietnamese, joining
+  the existing `fr`/`es`/`de`/`zh`. Every pattern requires both an override
+  verb and an instructions noun inside a bounded window; a bare verb is
+  ordinary language in all of these locales.
+
+  Only `instruction_override` is extended. The other nine rule kinds carried
+  by `fr`/`es`/`de`/`zh` are unchanged, so coverage in the new languages is
+  narrower than in the original four. Deployments handling non-English input
+  will see override attempts blocked that previously passed.
+
+- **Six further decoders in the normalization layer** — base32, ascii85
+  (delimited `<~…~>` form only), binary octet runs, literal `\uXXXX` escape
+  sequences, Morse, and reversed text. Each produces an additional scan view,
+  so a payload obfuscated under any of them is now matched against the same
+  catalogs as plaintext.
+
+  Reversal and Morse are gated, because both "succeed" on arbitrary input:
+  reversal surfaces a view only when it recovers more natural language than
+  the input already had — the same guard rot13 uses — and Morse requires a run
+  of at least five valid letters, so ellipses and dashes in prose do not
+  qualify. Undelimited ascii85 is not attempted at all: it matches nearly any
+  run of printable ASCII and would decode ordinary prose into noise.
+
+### Fixed
+- **`collect_events()` no longer unsubscribes the wrong collector.** The
+  context manager registered a list and removed it on exit with
+  `list.remove()`, which compares by `==`. Two buckets holding the same events
+  — most often two empty ones — are equal, so an exiting block could drop a
+  *different* block's subscription. The consequences were a `ValueError:
+  list.remove(x): x not in list` raised from the other block's `finally`
+  (masking whatever that block was doing), and a collector that stayed
+  attached after its `with` had exited, quietly accumulating events from the
+  rest of the process.
+
+  Removal is now by identity, so the documented guarantee that concurrent
+  `collect_events()` calls are safe is true rather than aspirational. Callers
+  running a single collector at a time were never affected. Anyone who wrapped
+  concurrent boundary calls — a harness driven from several tasks, or a test
+  helper collecting per-request — was.
+
+### Security
+- Detection surface widens in three places above. Each was measured against
+  the available benign corpus with no new false positives, but that corpus is
+  English-only: **the sixteen new languages have no benign coverage**, so
+  their false-positive behaviour is argued from pattern construction rather
+  than measured. Deployments handling significant non-English traffic should
+  watch block rates after upgrading.
+
 ## [0.6.0] — 2026-07-31
 
 ### Added
