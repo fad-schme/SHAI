@@ -367,3 +367,42 @@ patterns:
     functions:
       - obfuscation_score
       - invisible_text
+
+  # ----------------------------------------------------------------------
+  # Role-boundary forgery — chat-template control tokens in untrusted text
+  # ----------------------------------------------------------------------
+  # Distinct from delimiter_smuggling above, which covers invisible
+  # characters. This rule covers visible markup that forges a privileged
+  # turn boundary by emitting the model's own transcript control tokens.
+  #
+  # Categorical rather than cumulative: a chat-template control token in
+  # content the model did not generate — a user turn, a tool result, an
+  # uploaded document — has no legitimate meaning, because these tokens
+  # exist only to frame the transcript itself. That is why a single match
+  # fires at high rather than contributing to a score.
+  #
+  # Deliberately limited to reserved control tokens. Generic role markup
+  # (<system>, </document>, <s>) was tried and removed: those are ordinary
+  # XML, config, and HTML-strikethrough elements, and matching them blocked
+  # legitimate documents. The categorical argument covers reserved tokens
+  # only; it does not extend to markup that has an everyday meaning.
+  #
+  # Patterns are lowercase because _normalize lowercases before matching.
+  # Language-independent by construction — the tokens are literal byte
+  # sequences — so the .l10n.yaml sibling needs no locale variants.
+  - name: role_boundary_forgery
+    meta:
+      description: "Chat-template control tokens appearing in untrusted content"
+      threat_level: 5
+      severity: high
+      category: system_spoofing
+    match: any
+    strings:
+      # ChatML / OpenAI-family turn markers.
+      chatml_tokens:    '<\|(?:im_start|im_end|im_sep|system|user|assistant|endoftext)\|>'
+      # Llama-family reserved markers. Lowercase: text is folded before match.
+      llama_tokens:     '(?:<<\s*/?\s*sys\s*>>|\[/?inst\])'
+      # Other vendors' reserved turn tokens.
+      vendor_tokens:    '(?:<\|(?:start|end)_header_id\|>|<\|eot_id\|>|\[/?SYSTEM_PROMPT\]|<end_of_turn>|<start_of_turn>)'
+    functions:
+      - structure_score

@@ -612,3 +612,241 @@ patterns:
       escalate_privileges_zh:     "(\u5982\u4f55|\u600e\u4e48).{0,20}(\u63d0\u5347|\u83b7\u53d6|\u5347\u7ea7).{0,10}(\u6743\u9650|\u7279\u6743|\u8d85\u7ea7\u6743\u9650)"
       root_access_zh:             "(root|\u8d85\u7ea7|\u7ba1\u7406\u5458).{0,5}\u6743\u9650.{0,15}(\u6a21\u62df|\u4eff\u771f|\u83b7\u53d6)"
       bypass_role_zh:             "(\u7ed5\u8fc7|\u7a81\u7834).{0,10}(\u89d2\u8272|\u6743\u9650).{0,5}(\u9650\u5236|\u7ea6\u675f)"
+
+  # ── Extended language coverage — instruction override ────────────────────
+  #
+  # One concept across many languages: an override verb (ignore, forget,
+  # disregard) applied to an instructions noun. The semantic set is closed,
+  # which is why it carries to phrasings the author never saw; only the
+  # language axis was incomplete. These mirror the fr/es/de/zh rule shape.
+  #
+  # Every string requires BOTH the verb and the noun inside a bounded window.
+  # A bare override verb is ordinary language in all of these locales — the
+  # pairing is what makes a single match sufficient for high severity.
+  #
+  # Scriptless (ja, ko) and non-Latin (ar, hi, ru, el) patterns carry no
+  # word-boundary anchors: those are meaningless where words are not
+  # space-delimited, exactly as zh.instruction_override already does.
+  #
+  # Scope: only instruction_override is extended. The other nine rule kinds
+  # carried by fr/es/de/zh are deliberately not replicated here — that would
+  # be roughly 150 more rules, with no benign corpus in these languages to
+  # measure false positives against.
+
+
+  - name: it.instruction_override
+    meta:
+      description: "Italian — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_it: '(?i)\b(ignora|ignorate|ignori)\b.{0,40}\b(tutte\s+le\s+|le\s+)?(istruzioni|regole|direttive|indicazioni)\b'
+      forget_instructions_it: '(?i)\b(dimentica|dimenticate|scorda)\b.{0,40}\b(le\s+tue\s+|tutte\s+le\s+|le\s+)?(istruzioni|regole|direttive)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: pt.instruction_override
+    meta:
+      description: "Portuguese — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_pt: '(?i)\b(ignore|ignora|ignorem)\b.{0,40}\b(todas\s+as\s+|as\s+)?(instruções|regras|diretrizes|orientações)\b'
+      forget_instructions_pt: '(?i)\b(esqueça|esquece|desconsidere)\b.{0,40}\b(todas\s+as\s+|as\s+|suas\s+)?(instruções|regras|diretrizes)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: ja.instruction_override
+    meta:
+      description: "Japanese — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_ja: '(指示|命令|ルール|制約).{0,10}を?.{0,5}無視'
+      forget_instructions_ja: '(指示|命令|ルール|設定).{0,10}を?.{0,5}(忘れ|破棄)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: ko.instruction_override
+    meta:
+      description: "Korean — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_ko: '(지시|명령|규칙|지침).{0,10}무시'
+      forget_instructions_ko: '(지시|명령|규칙|설정).{0,10}(잊어|무시해)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: ar.instruction_override
+    meta:
+      description: "Arabic — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_ar: '(تجاهل|أهمل).{0,40}(التعليمات|القواعد|الإرشادات)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: hi.instruction_override
+    meta:
+      description: "Hindi — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_hi: '(अनदेखा|नज़रअंदाज़|नजरअंदाज|भूल).{0,40}(निर्देश|नियम|आदेश)'
+      instructions_ignore_hi: '(निर्देश|नियम|आदेश).{0,30}(अनदेखा|भूल|नजरअंदाज)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: ru.instruction_override
+    meta:
+      description: "Russian — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_ru: '(?i)(игнорируй|игнорируйте|проигнорируй).{0,40}(инструкци|правил|указани)'
+      forget_instructions_ru: '(?i)(забудь|забудьте|отмени).{0,40}(инструкци|правил|настройк)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: tr.instruction_override
+    meta:
+      description: "Turkish — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      # Turkish is verb-final: the instructions noun precedes the override
+      # verb, so this direction is matched as well.
+      instructions_ignore_tr: '(?i)(talimat|kural|yönerge)\w*.{0,40}(yoksay|yok\s+say|görmezden\s+gel|unut)\w*'
+      ignore_instructions_tr: '(?i)\b(yoksay|yok\s+say|görmezden\s+gel|unut)\w*.{0,40}(talimat|kural|yönerge)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: pl.instruction_override
+    meta:
+      description: "Polish — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_pl: '(?i)\b(zignoruj|ignoruj|pomiń|zapomnij)\b.{0,40}(instrukcj|zasad|polecen|reguł)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: nl.instruction_override
+    meta:
+      description: "Dutch — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_nl: '(?i)\b(negeer|vergeet)\b.{0,40}\b(alle\s+|je\s+|de\s+)?(instructies|regels|richtlijnen)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: no.instruction_override
+    meta:
+      description: "Norwegian — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_no: '(?i)\b(ignorer|se\s+bort\s+fra|glem)\b.{0,40}\b(alle\s+)?(instruksjoner|regler|retningslinjer)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: sv.instruction_override
+    meta:
+      description: "Swedish — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_sv: '(?i)\b(ignorera|bortse\s+från|glöm)\b.{0,40}\b(alla\s+)?(instruktioner|regler|riktlinjer)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: da.instruction_override
+    meta:
+      description: "Danish — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_da: '(?i)\b(ignorer|se\s+bort\s+fra|glem)\b.{0,40}\b(alle\s+)?(instruktioner|regler|retningslinjer)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: fi.instruction_override
+    meta:
+      description: "Finnish — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_fi: '(?i)\b(jätä\s+huomiotta|unohda|sivuuta)\b.{0,40}\b(kaikki\s+)?(ohjeet|säännöt|määräykset)\b'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: el.instruction_override
+    meta:
+      description: "Greek — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_el: '(αγνόησε|αγνοήστε|ξέχνα|ξεχάστε).{0,40}(οδηγίες|κανόνες|εντολές)'
+    functions:
+      - intent_score
+      - structure_score
+
+  - name: vi.instruction_override
+    meta:
+      description: "Vietnamese — direct instruction override attempts"
+      threat_level: 5
+      severity: high
+      category: prompt_injection
+    match: any
+    strings:
+      ignore_instructions_vi: '(?i)\b(bỏ\s+qua|quên|không\s+tuân\s+theo)\b.{0,40}\b(tất\s+cả\s+)?(hướng\s+dẫn|quy\s+tắc|chỉ\s+dẫn)\b'
+    functions:
+      - intent_score
+      - structure_score
