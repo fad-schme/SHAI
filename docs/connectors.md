@@ -78,7 +78,7 @@ policy_rules:
     action: allow
 ```
 
-Agent rules run before harness rules. Agent `allow` beats manifest `deny` at the policy layer — but the tool's `sensitive` tag from the manifest still triggers argument scanning, and if `push_files` is also marked `IRREVERSIBLE`, you still need `human_approved=True` on the context. Layered defence.
+Agent rules run before harness rules. Agent `allow` beats manifest `deny` at the policy layer — but the tool's `sensitive` tag from the manifest still triggers argument scanning, and if `push_files` is also marked `IRREVERSIBLE`, you still need a quorum of signed approval grants on the context. Layered defence.
 
 ## Dispatch tokens and `ShaiTransport`
 

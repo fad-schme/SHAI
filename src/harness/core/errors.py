@@ -105,7 +105,8 @@ class ArgumentViolationError(HarnessError):
 
 
 class IrreversibleActionError(HarnessError):
-    """A SENSITIVE or IRREVERSIBLE tool was called without human_approved=True.
+    """A SENSITIVE or IRREVERSIBLE tool was called without a quorum of valid
+    approval grants (see harness.core.approval).
 
     check_tool_call converts this to GateDecision(allowed=False).
     """

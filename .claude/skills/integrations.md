@@ -264,3 +264,26 @@ yourself without threading `gate.dispatch_token` into `MCPSource.call()`
 leaves the request untokened: refused under `no_token_policy: strict`, and
 uncorrelatable in the audit trail under `permissive`.
 
+
+---
+
+## Composed system prompts — no boundary, by design
+
+There is no `scan_system_prompt`. A system prompt is authored by the party that
+configures SHAI, so scanning it means scanning trusted text for attacks by its
+own author.
+
+What needs scanning is what gets assembled *into* it. RAG context, retrieved
+memory, DB-stored instructions, and MCP-served prompt templates are untrusted
+content landing in the most privileged position in the request. Scan each at
+the boundary it actually crossed — `scan_tool_result`, `scan_file`,
+`scan_input`; an MCP prompt template is tool output and takes
+`scan_tool_result`. Scanning the assembled prompt does not work: by then the
+untrusted fragment is indistinguishable from the operator's own instructions.
+
+**Known limit:** content that crossed `scan_tool_result` and was allowed can
+still be promoted into the system position, where it stops being data and
+becomes instructions. The gate has no notion of trust elevation — text carries
+no label saying where it may be placed. Keep retrieved content in user or
+tool-result positions and treat promotion to instructions as an application
+decision.

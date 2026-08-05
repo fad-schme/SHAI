@@ -29,9 +29,13 @@ class AgentContext(BaseModel, frozen=True):
     # SessionBudget both key on `conversation_id or agent_id`.
     conversation_id: str | None = None
 
-    # Set to True by the agent after obtaining explicit human confirmation
-    # for the current action. Required by SENSITIVE and IRREVERSIBLE tools.
-    human_approved:  bool = False
+    # Encoded ApprovalGrants for the call about to be gated — see
+    # harness.core.approval. Required by SENSITIVE and IRREVERSIBLE tools, which
+    # the gate denies without a quorum of valid, bound grants. Carrying signed
+    # grants rather than a boolean is deliberate: AgentContext is
+    # caller-constructible, so a flag would be set by assignment and would bind
+    # to no tool, no arguments, and no approver.
+    approvals:       tuple[str, ...] = ()
 
     # Per-turn signal bus. Mutable — stored as PrivateAttr because Pydantic
     # frozen models block public-field writes. Attached by SHAI.scan_input
@@ -62,7 +66,9 @@ class AgentContext(BaseModel, frozen=True):
             fresh step budget and splits accumulated threat evidence in two.
 
         Note: turn_signals is NOT propagated to subagents. Subagent invocations
-        are separate turns from the parent's perspective.
+        are separate turns from the parent's perspective. Neither are approvals:
+        a grant is bound to one tool call, so carrying the parent's grants down
+        would authorise a call nobody approved.
         """
         return AgentContext(
             agent_id=self.agent_id,

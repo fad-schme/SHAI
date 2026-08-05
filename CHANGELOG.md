@@ -12,6 +12,36 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **BREAKING — `AgentContext.human_approved` is removed, replaced by
+  `AgentContext.approvals`.** The old field was a plain bool on a
+  caller-constructible context: any caller set it by assignment, one `True`
+  covered every tool and every argument for a whole turn, and the allow path
+  recorded no approver, no scope, and no expiry. Layer 3 gated on nothing.
+
+  `approvals` carries encoded `ApprovalGrant`s (new module
+  `harness.core.approval`), each HMAC-SHA256 signed and bound to one
+  `(agent_id, tenant_id, tool_name, args_digest, approver_id, expiry)`. The gate
+  verifies signature **and** binding offline — a grant for one tool cannot be
+  replayed against another, and approving a $5 refund does not authorise a
+  $50,000 one. SHAI never calls an authorization server; where the grant came
+  from (CIBA, Auth0, WorkOS, a Slack button) is the integrator's choice.
+
+  New `check_tool_call.approvals` config block with `secret`,
+  `sensitive_quorum` (default 1) and `irreversible_quorum` (default 2). Quorum
+  counts **distinct** `approver_id`s, so N-of-M approval is N grants from N
+  people. **With no `secret` configured, every `SENSITIVE` and `IRREVERSIBLE`
+  tool is denied** — there is deliberately no fallback to a weaker check.
+
+  Approvers are recorded on the gate's allow event as `extra.approvers`, so the
+  audit trail can answer who authorised an irreversible action. Grants are not
+  propagated to subagents: a grant authorises one call, not what it delegates.
+
+  *Migration:* set `check_tool_call.approvals.secret`, then issue grants with
+  `sign_grant()` / `encode_grant()` and pass them on `ctx.approvals`. Callers
+  that never used `human_approved` and register no `SENSITIVE`/`IRREVERSIBLE`
+  tools are unaffected.
+
 ### Added
 - **`command_injection_scan`** — new built-in scanner detecting shell command
   *composition* via `bashlex` AST shapes: a pipeline whose sink is an

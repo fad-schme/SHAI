@@ -138,7 +138,22 @@ check_tool_call:
     - name: regex_pii           # scanners run on tool arguments
   scan_args_for_tags:
     - sensitive                 # only scan args for tools tagged with these
+  approvals:
+    secret: "secret://SHAI_APPROVAL_KEY"   # HMAC key for ApprovalGrants
+    sensitive_quorum: 1                    # distinct approvers for SENSITIVE
+    irreversible_quorum: 2                 # distinct approvers for IRREVERSIBLE
 ```
+
+**`approvals` governs layer 3.** SENSITIVE/IRREVERSIBLE tools require a quorum
+of signed `ApprovalGrant`s on `ctx.approvals`. **An empty `secret` denies every
+such tool** — there is no fallback, because an unverifiable approval is what
+grants replaced.
+
+Issue grants with `harness.core.approval.sign_grant` / `encode_grant`. Each is
+bound to `(agent_id, tenant_id, tool_name, args_digest, approver_id, expiry)`
+and verified offline at the gate — SHAI checks a signature, it never calls an
+authorization server. Quorum counts **distinct** `approver_id`s. Grants do not
+propagate to subagents. Approvers land on the allow event as `extra.approvers`.
 
 ---
 

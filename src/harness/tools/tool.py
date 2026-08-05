@@ -114,8 +114,8 @@ class Tool(BaseModel, frozen=True):
     # engine. First violation denies the call regardless of injection context.
     argument_rules: list[ArgumentRule] = Field(default_factory=list)
 
-    # Blast-radius classification. SENSITIVE and IRREVERSIBLE require
-    # ctx.human_approved=True before the gate will pass.
+    # Blast-radius classification. SENSITIVE and IRREVERSIBLE require a quorum
+    # of signed ApprovalGrants on ctx.approvals before the gate will pass.
     irreversibility: Irreversibility = Irreversibility.REVERSIBLE
 
     @field_validator("name")

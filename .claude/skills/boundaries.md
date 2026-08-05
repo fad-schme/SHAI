@@ -72,7 +72,7 @@ result = await my_dispatch(tool_name, args)
 | Pre-gate | Rate limit + session execution budget + agent registered? | No |
 | L1 | `tool_name` in `allowed_tool_names`? | No |
 | L2 | Argument rules (deterministic parameter constraints) | No |
-| L3 | Irreversibility gate (destructive tools require `human_approved`) | No |
+| L3 | Irreversibility gate (SENSITIVE/IRREVERSIBLE require a quorum of signed `ApprovalGrant`s) | No |
 | L4 | `tool.tags ⊆ allowed_tags`? (the agent's own, narrowed by subagent) | No |
 | L5 | Intersection policy (subagent → parent → global) | By design |
 | L6 | Signal correlation — reads `TurnSignals` from earlier boundaries | No |

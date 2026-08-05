@@ -102,8 +102,11 @@ class Irreversibility(StrEnum):
     """Blast-radius classification for a tool.
 
     REVERSIBLE   — default; no extra gate.
-    SENSITIVE    — denied unless ctx.human_approved is True.
-    IRREVERSIBLE — denied unless ctx.human_approved is True.
+    SENSITIVE    — denied without `approvals.sensitive_quorum` distinct approvers.
+    IRREVERSIBLE — denied without `approvals.irreversible_quorum` distinct approvers.
+
+    Approvers come from signed ApprovalGrants on ctx.approvals, verified at
+    gate layer 3. The two tiers differ only in the quorum they require.
     """
     REVERSIBLE   = "reversible"
     SENSITIVE    = "sensitive"

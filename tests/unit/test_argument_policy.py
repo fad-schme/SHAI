@@ -16,6 +16,7 @@ from harness.agents.agent_config import AgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
 from harness.boundaries.argument_policy import check_argument_rules, check_irreversibility
+from harness.core.approval import ApprovalPolicy, encode_grant, sign_grant
 from harness.core.context import AgentContext
 from harness.core.errors import ArgumentViolationError, IrreversibleActionError
 from harness.core.types import Decision, Irreversibility
@@ -33,10 +34,26 @@ def make_agent(tool_name: str = "pay_invoice") -> AgentConfig:
     )
 
 
+_SECRET = b"approval-test-secret"
+_POLICY = ApprovalPolicy(secret=_SECRET, sensitive_quorum=1, irreversible_quorum=2)
+
+
+def _grants(tool_name: str, args: dict[str, Any], *approvers: str,
+            agent_id: str = "test_agent", tenant_id: str = "test") -> tuple[str, ...]:
+    return tuple(
+        encode_grant(sign_grant(
+            agent_id=agent_id, tenant_id=tenant_id, tool_name=tool_name,
+            args=args, approver_id=a, secret=_SECRET,
+        ))
+        for a in approvers
+    )
+
+
 async def _gate(
     tool: Tool,
     args: dict[str, Any],
     ctx: AgentContext | None = None,
+    approvals: ApprovalPolicy | None = None,
 ) -> tuple:
     if ctx is None:
         ctx = AgentContext(agent_id="test_agent")
@@ -51,6 +68,7 @@ async def _gate(
         arg_scanners=[],
         emitter=emitter,
         tenant_id="test",
+        approvals=approvals,
     )
     return gate, sink
 
@@ -143,34 +161,119 @@ def test_error_carries_agent_id():
 
 # ── Section 3: check_irreversibility() ───────────────────────────────────
 
+def _check(tool: Tool, ctx: AgentContext, args: dict[str, Any] | None = None,
+           approvals: ApprovalPolicy = _POLICY) -> list[str]:
+    return check_irreversibility(
+        tool, ctx, args=args or {}, tenant_id="test", approvals=approvals
+    )
+
+
 def test_reversible_always_passes():
     tool = Tool(name="t", tags=["read"], irreversibility=Irreversibility.REVERSIBLE)
-    ctx = AgentContext(agent_id="a1", human_approved=False)
-    check_irreversibility(tool, ctx)  # must not raise
+    assert _check(tool, AgentContext(agent_id="a1")) == []
 
 def test_sensitive_blocked_without_approval():
     tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.SENSITIVE)
     with pytest.raises(IrreversibleActionError):
-        check_irreversibility(tool, AgentContext(agent_id="a1"))
+        _check(tool, AgentContext(agent_id="a1"))
 
-def test_sensitive_passes_with_approval():
+def test_sensitive_passes_with_one_grant():
     tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.SENSITIVE)
-    check_irreversibility(tool, AgentContext(agent_id="a1", human_approved=True))
+    ctx = AgentContext(agent_id="a1", approvals=_grants("t", {}, "alex", agent_id="a1"))
+    assert _check(tool, ctx) == ["alex"]
 
 def test_irreversible_blocked_without_approval():
     tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.IRREVERSIBLE)
     with pytest.raises(IrreversibleActionError):
-        check_irreversibility(tool, AgentContext(agent_id="a1"))
+        _check(tool, AgentContext(agent_id="a1"))
 
-def test_irreversible_passes_with_approval():
+def test_irreversible_requires_two_distinct_approvers():
     tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.IRREVERSIBLE)
-    check_irreversibility(tool, AgentContext(agent_id="a1", human_approved=True))
+    one = AgentContext(agent_id="a1", approvals=_grants("t", {}, "alex", agent_id="a1"))
+    with pytest.raises(IrreversibleActionError, match="1 distinct approver"):
+        _check(tool, one)
+
+    two = AgentContext(agent_id="a1",
+                       approvals=_grants("t", {}, "alex", "sam", agent_id="a1"))
+    assert _check(tool, two) == ["alex", "sam"]
+
+def test_two_grants_from_one_approver_are_not_a_quorum():
+    tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.IRREVERSIBLE)
+    ctx = AgentContext(agent_id="a1",
+                       approvals=_grants("t", {}, "alex", "alex", agent_id="a1"))
+    with pytest.raises(IrreversibleActionError, match="1 distinct approver"):
+        _check(tool, ctx)
+
+def test_unconfigured_approvals_deny_rather_than_fall_back():
+    tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.SENSITIVE)
+    ctx = AgentContext(agent_id="a1", approvals=_grants("t", {}, "alex", agent_id="a1"))
+    with pytest.raises(IrreversibleActionError, match="not configured"):
+        _check(tool, ctx, approvals=ApprovalPolicy())
 
 def test_error_carries_agent_id():
     tool = Tool(name="delete_record", tags=["write"], irreversibility=Irreversibility.IRREVERSIBLE)
     with pytest.raises(IrreversibleActionError) as exc_info:
-        check_irreversibility(tool, AgentContext(agent_id="my_agent"))
+        _check(tool, AgentContext(agent_id="my_agent"))
     assert exc_info.value.agent_id == "my_agent"
+
+
+# ── Grant binding: a signature is not enough on its own ──────────────────
+
+@pytest.mark.parametrize("kwargs,expected", [
+    ({"tool_name": "other_tool"},                "different tool"),
+    ({"agent_id": "other_agent"},                "different agent"),
+    ({"tenant_id": "other_tenant"},              "different tenant"),
+])
+def test_grant_bound_elsewhere_is_rejected(kwargs, expected):
+    tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.SENSITIVE)
+    defaults = {"agent_id": "a1", "tenant_id": "test", "tool_name": "t"}
+    grant = encode_grant(sign_grant(
+        **{**defaults, **kwargs}, args={}, approver_id="alex", secret=_SECRET,
+    ))
+    ctx = AgentContext(agent_id="a1", approvals=(grant,))
+    with pytest.raises(IrreversibleActionError, match=expected):
+        _check(tool, ctx)
+
+
+def test_grant_does_not_authorise_different_arguments():
+    """Approving a $5 refund must not authorise a $50,000 one."""
+    tool = Tool(name="refund", tags=["financial"],
+                irreversibility=Irreversibility.SENSITIVE)
+    ctx = AgentContext(
+        agent_id="a1",
+        approvals=_grants("refund", {"amount": 5}, "alex", agent_id="a1"),
+    )
+    assert _check(tool, ctx, {"amount": 5}) == ["alex"]
+    with pytest.raises(IrreversibleActionError, match="different arguments"):
+        _check(tool, ctx, {"amount": 50_000})
+
+
+def test_grant_signed_with_another_key_is_rejected():
+    tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.SENSITIVE)
+    forged = encode_grant(sign_grant(
+        agent_id="a1", tenant_id="test", tool_name="t", args={},
+        approver_id="alex", secret=b"not-the-key",
+    ))
+    ctx = AgentContext(agent_id="a1", approvals=(forged,))
+    with pytest.raises(IrreversibleActionError, match="signature mismatch"):
+        _check(tool, ctx)
+
+
+def test_expired_grant_is_rejected():
+    tool = Tool(name="t", tags=["write"], irreversibility=Irreversibility.SENSITIVE)
+    stale = encode_grant(sign_grant(
+        agent_id="a1", tenant_id="test", tool_name="t", args={},
+        approver_id="alex", secret=_SECRET, ttl_seconds=-1,
+    ))
+    ctx = AgentContext(agent_id="a1", approvals=(stale,))
+    with pytest.raises(IrreversibleActionError, match="expired"):
+        _check(tool, ctx)
+
+
+def test_approvals_do_not_reach_subagents():
+    """A grant authorises one call by the parent, not whatever it delegates."""
+    ctx = AgentContext(agent_id="a1", approvals=_grants("t", {}, "alex", agent_id="a1"))
+    assert ctx.scope_subagent("child", allowed_tags=["read"]).approvals == ()
 
 
 # ── Section 4: Integration through check_tool_call.run() ─────────────────
@@ -194,17 +297,36 @@ async def test_argument_violation_emits_exactly_one_event():
 async def test_irreversibility_denies_without_approval():
     tool = Tool(name="pay_invoice", tags=["financial"],
                 irreversibility=Irreversibility.IRREVERSIBLE)
-    gate, sink = await _gate(tool, {})
+    gate, sink = await _gate(tool, {}, approvals=_POLICY)
     assert not gate.allowed
-    assert "human_approved" in gate.deny_reason
+    assert "irreversible" in gate.deny_reason
     assert sink.events[0].decision == Decision.DENY
 
-async def test_irreversibility_passes_with_approval():
+async def test_irreversibility_passes_with_quorum():
     tool = Tool(name="pay_invoice", tags=["financial"],
                 irreversibility=Irreversibility.IRREVERSIBLE)
-    ctx = AgentContext(agent_id="test_agent", human_approved=True)
-    gate, sink = await _gate(tool, {}, ctx=ctx)
+    ctx = AgentContext(
+        agent_id="test_agent",
+        approvals=_grants("pay_invoice", {}, "alex", "sam"),
+    )
+    gate, sink = await _gate(tool, {}, ctx=ctx, approvals=_POLICY)
     assert gate.allowed
+
+async def test_approvers_are_recorded_on_the_allow_event():
+    """The audit trail must answer who authorised an irreversible action."""
+    tool = Tool(name="pay_invoice", tags=["financial"],
+                irreversibility=Irreversibility.IRREVERSIBLE)
+    ctx = AgentContext(
+        agent_id="test_agent",
+        approvals=_grants("pay_invoice", {}, "alex", "sam"),
+    )
+    _, sink = await _gate(tool, {}, ctx=ctx, approvals=_POLICY)
+    assert sink.events[0].extra["approvers"] == ["alex", "sam"]
+
+async def test_reversible_tool_records_no_approvers():
+    tool = Tool(name="search", tags=["read"])
+    _, sink = await _gate(tool, {}, approvals=_POLICY)
+    assert "approvers" not in sink.events[0].extra
 
 async def test_argument_rules_checked_before_irreversibility():
     """Argument violation fires first — irreversibility not reached."""
@@ -226,8 +348,12 @@ async def test_all_rules_pass_irreversible_approved_allows():
         argument_rules=[ArgumentRule(arg="amount", max_value=50_000)],
         irreversibility=Irreversibility.IRREVERSIBLE,
     )
-    ctx = AgentContext(agent_id="test_agent", human_approved=True)
-    gate, _ = await _gate(tool, {"amount": 100}, ctx=ctx)
+    args = {"amount": 100}
+    ctx = AgentContext(
+        agent_id="test_agent",
+        approvals=_grants("pay_invoice", args, "alex", "sam"),
+    )
+    gate, _ = await _gate(tool, args, ctx=ctx, approvals=_POLICY)
     assert gate.allowed
 
 async def test_reversible_tool_with_no_rules_unaffected():

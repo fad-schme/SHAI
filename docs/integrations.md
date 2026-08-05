@@ -228,6 +228,37 @@ async def run_loop(llm, messages, harness, ctx):
 
 This is what the higher-level integrations do internally — you're just doing it yourself.
 
+## Composed system prompts
+
+SHAI has no `scan_system_prompt` boundary, and deliberately so: a system prompt
+you wrote is authored by the same party that configures SHAI, and scanning it
+would mean scanning trusted text for attacks by its own author.
+
+What matters is everything you *assemble into* it. RAG context, retrieved
+memory, notes from an earlier turn, instructions pulled from a database, and
+prompt templates served by an MCP server are not system prompts — they are
+untrusted content that ends up in the most privileged position in the request.
+
+**Scan content before assembly, at the boundary it actually crossed:**
+
+| Where the text came from | Boundary it must cross first |
+|---|---|
+| A tool call's return value | `scan_tool_result` |
+| An uploaded or retrieved file | `scan_file` |
+| The end user | `scan_input` |
+| An MCP server's prompt template | `scan_tool_result` — treat it as tool output, because that is what it is |
+
+Assembling first and scanning the finished prompt does not work: by then the
+untrusted fragment is indistinguishable from your own instructions.
+
+One case the boundaries do not catch today, worth knowing about. Content that
+crossed `scan_tool_result` and was *allowed* — no finding, or a finding below
+`block_at` — can still be promoted into the system position, where it stops
+being data and starts being instructions. Nothing in the gate knows that
+happened. Keep retrieved content in user or tool-result positions rather than
+the system block, and treat "this text may be promoted to instructions" as a
+decision you own.
+
 ## What next
 
 - [connectors.md](connectors.md) — MCP sources, connector manifests, dispatch tokens

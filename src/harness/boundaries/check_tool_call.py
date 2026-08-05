@@ -8,7 +8,7 @@ No registry lookups on the hot path.
 
 Layer 1: tool.name in agent's allowed_tool_names?  (hard pre-policy gate)
 Layer 2: argument rules — deterministic parameter constraints
-Layer 3: irreversibility — blast-radius gate, requires human_approved
+Layer 3: irreversibility — blast-radius gate, requires signed approval grants
 Layer 4: tool.tags ⊆ ctx.allowed_tags?             (subagent capability gate)
 Layer 5: intersection policy (subagent ∩ parent ∩ global rules)
 Layer 6: signal correlation — deny high-risk tools when input scan flagged
@@ -25,6 +25,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from harness.boundaries.argument_policy import check_argument_rules, check_irreversibility
+from harness.core.approval import ApprovalPolicy
 from harness.core.errors import (
     ArgumentViolationError,
     IrreversibleActionError,
@@ -68,6 +69,7 @@ async def run(
     turn_signals: TurnSignals | None = None,
     source_name: str = "local",
     issue_token: Callable[[], tuple[str, str]] | None = None,
+    approvals: ApprovalPolicy | None = None,
 ) -> GateDecision:
     """Gate one tool call.
 
@@ -80,6 +82,9 @@ async def run(
                   only when the gate allows, and before the audit event is built
                   so token_id joins the event to the NetworkAuditEvent the
                   dispatch produces. None when connectivity is disabled.
+    approvals:    resolved approval policy for layer 3. None means unconfigured,
+                  which denies every SENSITIVE and IRREVERSIBLE tool — there is
+                  no weaker check to fall back to.
     """
     start = now_ms()
 
@@ -119,7 +124,12 @@ async def run(
 
     # ── Layer 3: irreversibility gate ─────────────────────────────────────
     try:
-        check_irreversibility(tool, ctx)
+        approvers = check_irreversibility(
+            tool, ctx,
+            args=args,
+            tenant_id=tenant_id,
+            approvals=approvals or ApprovalPolicy(),
+        )
     except IrreversibleActionError as e:
         return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
                            audit_tags=agent_config.audit_tags)
@@ -241,6 +251,10 @@ async def run(
         token_id=token[1] if token is not None else None,
         adapters=[policy.name],
         audit_tags=agent_config.audit_tags,
+        # Who authorised a SENSITIVE/IRREVERSIBLE call. Identifiers only — the
+        # audit trail must be able to answer "who approved this" without ever
+        # carrying the approval prompt or the arguments it covered.
+        extra={"approvers": approvers} if approvers else None,
     )
     await emitter.emit(event)
     return GateDecision(

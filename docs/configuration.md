@@ -135,6 +135,42 @@ check_tool_call:
 
 You don't declare which tools are allowed here — that's per-agent. The gate config only sets rate limits and which tags trigger argument scanning.
 
+#### Human approval for `SENSITIVE` / `IRREVERSIBLE` tools
+
+Layer 3 admits a tool classified `SENSITIVE` or `IRREVERSIBLE` only against a quorum of **signed approval grants**:
+
+```yaml
+check_tool_call:
+  approvals:
+    secret: "secret://SHAI_APPROVAL_KEY"   # HMAC-SHA256, required
+    sensitive_quorum: 1                    # one approver
+    irreversible_quorum: 2                 # two-person rule
+```
+
+**With no `secret`, every `SENSITIVE` and `IRREVERSIBLE` tool is denied.** There is no weaker check to fall back to: a tool classified as needing verified approval, in a deployment that cannot verify one, is a tool that cannot run.
+
+Your application obtains approval however it likes — a CIBA flow, Auth0, WorkOS, a Slack button, a terminal prompt — then issues a grant and attaches it to the context:
+
+```python
+from harness.core.approval import encode_grant, sign_grant
+
+grant = sign_grant(
+    agent_id=ctx.agent_id,
+    tenant_id="acme",
+    tool_name="pay_invoice",
+    args=args,                 # the same args you will pass to check_tool_call
+    approver_id="alex@acme.com",
+    secret=APPROVAL_KEY,
+    ttl_seconds=300,
+)
+ctx = ctx.model_copy(update={"approvals": (encode_grant(grant),)})
+gate = await harness.check_tool_call("pay_invoice", args, ctx)
+```
+
+SHAI verifies the signature and the binding offline — it never calls out. Each grant is bound to one agent, tenant, tool, and **argument set**, so approving a $5 refund does not authorise a $50,000 one, and a grant for one tool cannot be replayed against another. Quorum counts *distinct* `approver_id`s, so two grants from one person is still one approver.
+
+Two things to know: grants are **not** propagated to subagents (a grant authorises one call, not what that call delegates), and the approvers land on the gate's allow event as `extra.approvers`, so the audit trail can answer who authorised an irreversible action.
+
 ### Policy
 
 Two forms — inline or external file:

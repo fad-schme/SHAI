@@ -57,7 +57,10 @@ boundaries SHAI is designed to enforce:
 - **Argument rule bypass** — a crafted argument that passes `ArgumentRule`
   evaluation when it should be denied
 - **Irreversibility gate bypass** — a way to execute an `IRREVERSIBLE` or
-  `SENSITIVE` tool without `human_approved=True`
+  `SENSITIVE` tool without a quorum of valid, bound `ApprovalGrant`s
+- **Approval grant forgery** — producing a grant that verifies without access
+  to the signing secret, or reusing one bound to a different agent, tenant,
+  tool, or argument set
 - **Audit event suppression** — any boundary path that returns without
   emitting an `AuditEvent`
 - **Audit event tampering** — forging or mutating signed audit events

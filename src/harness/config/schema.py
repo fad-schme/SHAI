@@ -219,6 +219,26 @@ class ExecutionBudgetConfig(BaseModel, frozen=True, extra="forbid"):
         return v
 
 
+class ApprovalsConfig(BaseModel, frozen=True, extra="forbid"):
+    """Human-approval enforcement for SENSITIVE and IRREVERSIBLE tools.
+
+    secret:
+        HMAC-SHA256 key that signs ApprovalGrants. Resolved via secret:// at
+        from_yaml() time. **Empty means approvals are unconfigured, and every
+        SENSITIVE and IRREVERSIBLE tool is denied.** There is no weaker check to
+        fall back to: a tool classified as needing verified approval in a
+        deployment that cannot verify one is a tool that cannot run.
+
+    sensitive_quorum / irreversible_quorum:
+        Distinct approvers required. Quorum counts distinct `approver_id`s
+        across the grants on AgentContext.approvals, so 2 means two people
+        signed independently — two grants from one approver is still one.
+    """
+    secret:              str = ""
+    sensitive_quorum:    int = Field(default=1, ge=1)
+    irreversible_quorum: int = Field(default=2, ge=1)
+
+
 class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     """No enabled flag — the gate is mandatory."""
     # Named `scanners` like every scan_* boundary. These run over the tool's
@@ -228,6 +248,7 @@ class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     scan_args_for_tags: list[str]             = Field(default_factory=lambda: ["sensitive"])
     rate_limit:         RateLimitConfig       = Field(default_factory=RateLimitConfig)
     execution_budget:   ExecutionBudgetConfig = Field(default_factory=ExecutionBudgetConfig)
+    approvals:          ApprovalsConfig       = Field(default_factory=ApprovalsConfig)
 
 
 

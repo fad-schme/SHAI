@@ -72,7 +72,7 @@ def _format_event(raw: str, *, boundary_filter: str | None, decision_filter: str
     # Surface argument rule and irreversibility violations distinctly
     if reason and "argument rule violation" in reason:
         mid = mid.replace(f"  reason={reason!r}", f"  [argument_violation] reason={reason!r}")
-    elif reason and "irreversible" in reason.lower() and "human_approved" in reason:
+    elif reason and "irreversible" in reason.lower() and "approv" in reason.lower():
         mid = mid.replace(f"  reason={reason!r}", f"  [irreversibility_blocked] reason={reason!r}")
 
     dur = ev.get("duration_ms", "")

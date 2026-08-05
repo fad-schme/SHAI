@@ -46,7 +46,7 @@ Treating tool results as untrusted content — the same way you'd treat user inp
 | Pre-gate | Rate limit + session execution budget + agent registered? |
 | L1 | `tool_name ∈ allowed_tool_names`? |
 | L2 | Argument rules — `max_value`, `min_value`, `allowlist`, `pattern`, `required` |
-| L3 | Irreversibility gate — `SENSITIVE` / `IRREVERSIBLE` tools need `human_approved=True` |
+| L3 | Irreversibility gate — `SENSITIVE` / `IRREVERSIBLE` tools need a quorum of signed approval grants |
 | L4 | For subagents: `tool.tags ⊆ ctx.allowed_tags`? |
 | L5 | Intersection policy: subagent → parent → global |
 | L6 | Signal correlation — reads what earlier boundaries found this turn |
@@ -125,7 +125,7 @@ Key fields on `AgentContext`:
 - `sub_agent_id` — set when this call is on behalf of a subagent
 - `allowed_tags` — narrowed capability scope for subagents
 - `conversation_id` — session key for all session-scoped state: the cross-turn threat accumulator and the execution budget. Falls back to `agent_id` when unset, which collapses every conversation onto one budget. Propagated to subagents.
-- `human_approved` — set to `True` by the agent after explicit human confirmation, required by `SENSITIVE` / `IRREVERSIBLE` tools
+- `approvals` — signed `ApprovalGrant`s for the call about to be gated, required by `SENSITIVE` / `IRREVERSIBLE` tools. Not propagated to subagents: a grant authorises one call, not whatever that call delegates
 
 Subagents can only be narrower than their parent, never wider. When you scope a context for a subagent:
 

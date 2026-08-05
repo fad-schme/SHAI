@@ -29,6 +29,7 @@ from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import load_yaml
 from harness.config.schema import HarnessConfig, SourceConfig
 from harness.connectors import resolve_source_config
+from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
@@ -94,6 +95,14 @@ class SHAI:
         self._file_scanners       = file_scanners
         self._policy              = policy
         self._scan_args_for_tags        = frozenset(config.check_tool_call.scan_args_for_tags)
+        # Layer 3 approval policy. An empty secret leaves it None, which denies
+        # every SENSITIVE/IRREVERSIBLE tool rather than admitting one unverified.
+        _approvals_cfg = config.check_tool_call.approvals
+        self._approvals = ApprovalPolicy(
+            secret=_approvals_cfg.secret.encode() if _approvals_cfg.secret else None,
+            sensitive_quorum=_approvals_cfg.sensitive_quorum,
+            irreversible_quorum=_approvals_cfg.irreversible_quorum,
+        )
         self._rate_limiter              = rate_limiter
         self._session_budget            = SessionBudget()
         self._threat_accumulator: ThreatAccumulator | None = (
@@ -669,6 +678,7 @@ class SHAI:
                 if self._connectivity.enabled and self._connectivity_secret
                 else None
             ),
+            approvals=self._approvals,
         )
 
         # Record gate outcome to TurnSignals for downstream boundaries
