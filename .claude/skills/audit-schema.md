@@ -42,6 +42,29 @@ Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output
 
 ---
 
+## Startup attestation
+
+`SHAI.from_yaml()` emits one `boundary=system`, `decision=startup` event before
+returning, with `agent_id="__harness__"` (no agent is loaded yet). It records
+what the process wired, so a SIEM can tie later events to a known component set.
+It is signed like any other event when `audit_signing.enabled`.
+
+`extra` carries:
+
+| Key | Meaning |
+|---|---|
+| `shai_version` | Installed package version |
+| `adapters` | One entry per wired scanner, sink and policy engine: `group`, `name`, `module`, `sha256` of the defining source file. Installed-but-unconfigured adapters are absent by design |
+| `connectors` | `id` and content digest of each connector manifest backing a source |
+| `patterns_db` | `path`, `rule_count`, `digest` — `null` when `patterns_db.enabled` is false |
+| `policy` | `rule_count` and digest of the global rule list |
+| `sources` | Per declared source: `name`, `transport`, `tags`, `connector`, and `url` stripped of userinfo, query and fragment |
+
+Unlike the degrade event, this emission is not best-effort: if every sink fails,
+`from_yaml()` raises `AuditEmissionError` rather than starting unaudited.
+
+---
+
 ## Example events
 
 **Input blocked (PII detected):**

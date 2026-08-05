@@ -87,7 +87,7 @@ Fix in your process manager or `.env` file. SHAI does not fall back to defaults 
 ## Errors you should almost never see
 
 - `PolicyEvaluationError` — the policy engine failed internally. This is a bug, not a configuration issue. File it.
-- `AuditEmissionError` — every audit sink failed simultaneously. If a single sink fails, SHAI keeps trying the others; this only fires when all of them are dead. File it, and check the sinks in the meantime.
+- `AuditEmissionError` — every audit sink failed simultaneously. If a single sink fails, SHAI keeps trying the others; this only fires when all of them are dead. File it, and check the sinks in the meantime. It can also surface from `from_yaml()`, which emits a startup attestation event before returning: a harness that cannot write its first audit record does not start.
 - `AdapterDiscoveryError` — the entry-point machinery couldn't resolve a plugin. Usually a broken install.
 
 ## Boundary errors are audit events, not exceptions

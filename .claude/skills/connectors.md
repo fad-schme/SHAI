@@ -62,7 +62,7 @@ manifest fields (url, allowed_urls, tags, tool_specs)
     → MCPSource with per-tool tags wired in
 ```
 
-**Operator fields always override manifest defaults.**
+**Fields the operator declares override the manifest; fields left out keep the manifest's value.** A source naming only `connector:` and `credentials:` is resolved to the manifest's transport, url, tags, allow-lists, and per-tool specs.
 
 ---
 

@@ -29,6 +29,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from harness.config.schema import SourceConfig
+
 log = logging.getLogger(__name__)
 
 
@@ -118,3 +120,41 @@ def manifest_to_source_config_fields(
     # Operator overrides take precedence
     fields.update({k: v for k, v in overrides.items() if v is not None})
     return fields
+
+
+def resolve_source_config(src_cfg: SourceConfig) -> SourceConfig:
+    """Return the source config the harness runs with, manifest merged in.
+
+    A source without `connector:` is returned unchanged. This is the one place
+    manifest resolution happens — from_yaml() and the offline `shai harness`
+    commands must see identical url, tags and per-tool specs, or the CLI would
+    describe a topology the harness does not run.
+
+    Raises ConfigError for an unknown connector id.
+    """
+    if not src_cfg.connector:
+        return src_cfg
+
+    from harness.core.errors import ConfigError
+
+    try:
+        manifest = load_manifest(src_cfg.connector)
+    except ValueError as e:
+        raise ConfigError(str(e), op="load_connector") from e
+
+    # Only fields the operator actually wrote may override the manifest.
+    # Dumping every field instead would let SourceConfig's own defaults —
+    # transport=local, empty allowed_urls/allowed_methods/tags — silently
+    # replace the manifest's values, which is the manifest's whole purpose.
+    declared = src_cfg.model_dump(exclude_none=True)
+    overrides = {
+        k: v for k, v in declared.items()
+        if k in src_cfg.model_fields_set and k not in ("connector", "name")
+    }
+    merged = manifest_to_source_config_fields(manifest, overrides)
+    merged["name"] = src_cfg.name
+    merged["connector"] = src_cfg.connector
+    merged["credentials"] = dict(src_cfg.credentials)
+    log.info("connector manifest resolved",
+             extra={"connector": manifest.id, "source": src_cfg.name})
+    return SourceConfig.model_validate(merged)

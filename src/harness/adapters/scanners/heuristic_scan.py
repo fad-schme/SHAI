@@ -294,16 +294,38 @@ def _match_fuzzy_class(
                 strong = True
                 fuzzy_targets.add(token)
             continue
-        for target in targets:
+        # A token can fuzzy-match several targets. Two rules decide which one
+        # is recorded, and both matter:
+        #
+        # Order — `targets` is a frozenset, and set iteration order for strings
+        # varies with PYTHONHASHSEED, so taking whichever match appeared first
+        # made the classification differ between processes on byte-identical
+        # input. Sorting fixes the order; the cost is trivial on vocabularies
+        # this size.
+        #
+        # Strength — a weak (same-length substitution) match found first used
+        # to suppress a strong match on another target, which was arbitrary
+        # rather than a judgement. Strong wins wherever it appears, and is
+        # still short-circuited because nothing beats it.
+        best_target: str | None = None
+        best_kind: str | None = None
+        for target in sorted(targets):
             if abs(len(token) - len(target)) > 2:
                 continue
             match_kind = _typoglycemia_match_kind(token, target)
-            if match_kind is not None:
-                matched.add(target)
-                fuzzy = True
-                strong = strong or match_kind == "strong"
-                fuzzy_targets.add(target)
+            if match_kind is None:
+                continue
+            if match_kind == "strong":
+                best_target, best_kind = target, "strong"
                 break
+            if best_target is None:
+                best_target, best_kind = target, match_kind
+
+        if best_target is not None:
+            matched.add(best_target)
+            fuzzy = True
+            strong = strong or best_kind == "strong"
+            fuzzy_targets.add(best_target)
     return frozenset(matched), fuzzy, strong, len(fuzzy_targets)
 
 

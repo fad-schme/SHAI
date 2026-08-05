@@ -36,6 +36,43 @@ Tool(
 
 ---
 
+## Where tools live
+
+There is **one** tool registry. It holds every tool regardless of transport —
+local Python callables and tools discovered from an MCP server sit in the same
+store, keyed by name. There is no separate MCP registry, and connector
+manifests are not a registry: they are static config, read once at
+`from_yaml()`.
+
+Three distinct things, easy to conflate:
+
+| | What it is | Populated by |
+|---|---|---|
+| Tool registry | The canonical store of `Tool` descriptors, name-unique across all transports | `register_tools()` and `load_agent()` |
+| Per-agent tool set | `{tool_name: (source_name, Tool)}`, filtered to the agent's `allowed_tool_names` — what the gate reads | `load_agent()` |
+| `SourceRegistry` | The sources that *produce* tools | `from_yaml()` |
+
+How an MCP tool arrives:
+
+1. `MCPSource.load()` calls `tools/list`, scans each entry's metadata, and
+   builds a `Tool` whose tags are the union of the source's tags, the connector
+   manifest's per-tool tags, and `mcp`. This is the only point where manifest
+   metadata enters — a remote server's own tool listing carries no security
+   metadata SHAI would trust.
+2. `load_agent()` registers those tools in the same registry as local ones.
+   When a tool name already exists with different tags, the enriched variant is
+   kept as a per-agent override instead, so one agent's source tags never
+   rewrite another agent's canonical definition.
+3. The per-agent set is resolved once, with overrides applied last. The gate
+   therefore knows each tool's owning source without a lookup.
+
+**Consequence for offline tooling:** tool names for a hand-configured MCP
+source exist only after a live `tools/list`, and local tool names only after
+the application calls `register_tools()`. `shai harness graph` can draw the
+tool layer only for connector-backed sources and agent `allowed_tool_names`.
+
+---
+
 ## register_tools()
 
 Registers tools with the harness. Must be called before `load_agent()` for

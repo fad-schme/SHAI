@@ -29,6 +29,7 @@ src/harness/
 │   ├── types.py                       enums: BoundaryName, Decision, Severity, Transport
 │   ├── normalize.py                   NFKC + obfuscation-resistant text views
 │   ├── turn_signals.py                TurnSignals — cross-boundary signal bus, one per turn
+│   ├── attestation.py                 startup attestation payload (SYSTEM/STARTUP event)
 │   └── errors.py                      HarnessError hierarchy
 ├── boundaries/
 │   ├── check_tool_call.py             seven-layer tool gate (L1–L7)

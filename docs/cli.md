@@ -24,13 +24,14 @@ and does not run the selected command.
 shai --help
 shai validate --help
 shai agents list --help
+shai harness inspect --help
 shai audit tail --help
 shai patterns --help
 shai patterns verify --help
 ```
 
 Running `shai` without arguments prints the same top-level help. For nested
-command groups such as `agents`, `audit`, and `patterns`, run the group with
+command groups such as `agents`, `harness`, `audit`, and `patterns`, run the group with
 `--help` to see its available subcommands.
 
 ## Validate options
@@ -94,6 +95,49 @@ shai agents list --agents-dir agents/
 
 Agents that fail to load emit a `Warning: could not load ...` line to stderr but don't fail the command — `agents list` surfaces partial breakage, it doesn't gate on it. Use `validate` when you want a hard fail.
 
+## `shai harness inspect`
+
+Offline listing of what a config declares — boundaries and their scanners,
+audit sinks, policy rule count and digest, pattern-DB state, connector
+manifests, resolved sources, and (with `--agents-dir`) every agent.
+
+```bash
+shai harness inspect --config prod.yaml --agents-dir config/agents
+# SHAI 0.7.0  |  tenant: acme-prod
+# ...
+# sources:
+#   slack_primary    mcp    https://mcp.slack.com/sse    connector=slack  tags=external,messaging
+```
+
+Sources are shown **after** connector-manifest resolution, so the url, tags
+and allow-lists are the ones the harness would run with. URLs are printed
+without userinfo, query string, or fragment — credentials never reach the
+terminal.
+
+Nothing is built and nothing is connected to. For the identity of the adapter
+code a *running* process loaded, read the `system` / `startup` audit event it
+emits at construction.
+
+## `shai harness graph`
+
+The dependency graph behind that listing: agent -> source -> tool -> tag, plus
+policy rules and subagents. `--format dot` (default) pipes into Graphviz;
+`--format json` gives `{nodes, edges, warnings}`.
+
+```bash
+shai harness graph --config prod.yaml --agents-dir config/agents | dot -Tsvg -o topology.svg
+shai harness graph --config prod.yaml --format json | jq '.warnings'
+```
+
+Tool nodes come from connector manifests and agent allow-lists — the only tool
+names knowable without connecting to an MCP server.
+
+**Shadow MCP detection:** two sources whose URLs match once credentials and
+query strings are stripped are reported in `warnings` and on stderr. Fronting
+one endpoint with two configs is legal — the second config's tags and
+allow-lists simply also apply to that server — so this is a warning, never an
+error.
+
 ## `shai audit tail`
 
 Human-readable view of an audit JSONL file, with decision-level filtering. Reads from a file, from stdin, or follows a file live like `tail -f`.
@@ -134,7 +178,7 @@ Filter flags:
 | Flag | Values |
 |---|---|
 | `--boundary` / `-b` | `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `narrow_scan`, `system` |
-| `--decision` / `-d` | `allow`, `warn`, `blocked`, `deny`, `redact`, `degraded` |
+| `--decision` / `-d` | `allow`, `warn`, `blocked`, `deny`, `redact`, `degraded`, `startup` |
 | `--last` / `-n` | N lines (default 20) |
 | `--follow` / `-F` | Follow the file |
 | `--file` / `-f` | Path, or `-` for stdin |

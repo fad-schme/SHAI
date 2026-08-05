@@ -33,7 +33,7 @@ sources:
       token: "secret://SLACK_BOT_TOKEN"
 ```
 
-The manifest supplies `url`, `allowed_urls`, `allowed_methods`, source-level tags, and per-tool tags. Operator fields in your config always override manifest defaults, so you can tighten anything you disagree with.
+The manifest supplies `url`, `allowed_urls`, `allowed_methods`, source-level tags, and per-tool tags. Fields you declare in your config override the manifest, so you can tighten anything you disagree with. Fields you leave out keep the manifest's value — a source that names only `connector:` and `credentials:` gets the manifest's transport, url, tags, and allow-lists intact.
 
 ### Available Tier A connectors
 

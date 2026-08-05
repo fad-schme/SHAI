@@ -147,7 +147,7 @@ class AuditEvent:
 | `file_scan` | `scan_file()` |
 | `mcp_metadata_scan` | MCP tool-registration metadata scan |
 | `narrow_scan` | `scan_pii()` / `scan_injection()` — one named scanner |
-| `system` | Scanner degrade / circuit-breaker events — no direct call, emitted alongside a scan boundary when a scanner fails |
+| `system` | Scanner degrade / circuit-breaker events, and the startup attestation emitted once by `from_yaml()` — no direct call |
 
 ### Decision values
 
@@ -159,6 +159,7 @@ class AuditEvent:
 | `deny` | Gate denied | `tool_call_gate` only |
 | `redact` | Content redacted | Scan boundaries |
 | `degraded` | Scanner failure per `on_error: degrade`, or circuit-breaker trip | `system` (paired with the affected scan) |
+| `startup` | Startup attestation — emitted once when `from_yaml()` completes | `system` (not paired with a call) |
 
 ### The `extra` dict
 

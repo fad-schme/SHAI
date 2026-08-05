@@ -26,6 +26,9 @@ class Decision(StrEnum):
     BLOCKED  = "blocked"
     WARN     = "warn"
     DEGRADED = "degraded"
+    # Not a verdict: emitted once on boundary=SYSTEM when from_yaml() completes,
+    # recording which components the process wired. See core/attestation.py.
+    STARTUP  = "startup"
 
 
 class OnError(StrEnum):

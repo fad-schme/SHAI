@@ -7,7 +7,7 @@ SHAI sits between your agent and its tools. It:
 - Gates every tool call through a policy engine
 - Scans tool results before they re-enter the LLM context
 - Scans the LLM response before it reaches the user
-- Emits one structured audit event per boundary call, always
+- Emits one structured audit event per boundary call, always, plus a startup attestation event at `from_yaml()`
 
 ```
 user text → Ingress Scan → LLM → Tool Governance → tool → Tool Stream Control → LLM → Egress Scan → response
@@ -183,6 +183,11 @@ await harness.close()   # flushes audit sinks, closes MCP connections
 
 Every call to any boundary method emits exactly one `AuditEvent`.
 No raw text ever appears in the event — only metadata.
+
+`from_yaml()` also emits one `boundary: system`, `decision: startup` event
+before returning — the attestation of what this process wired. It is the first
+line in the log, and `from_yaml()` fails rather than start if no sink accepts
+it. `shai harness inspect` shows the same topology offline.
 
 ```json
 {

@@ -34,6 +34,7 @@ shai
 # SHAI developer tools
 #   validate   Validate config and agent files
 #   agents     Agent management commands
+#   harness    Inspect what a config wires up
 #   audit      Audit log commands
 #   patterns   Manage the signed pattern database
 ```
@@ -50,6 +51,9 @@ shai --help
 shai validate --help
 shai agents --help
 shai agents list --help
+shai harness --help
+shai harness inspect --help
+shai harness graph --help
 shai audit --help
 shai audit tail --help
 shai patterns --help
@@ -140,6 +144,51 @@ when you want a hard fail.
 
 ---
 
+## `shai harness inspect`
+
+Offline listing of what a config declares — boundaries and their scanners,
+audit sinks, policy rule count and digest, pattern-DB state, connector
+manifests, resolved sources, and (with `--agents-dir`) every agent.
+
+```bash
+shai harness inspect --config prod.yaml --agents-dir config/agents
+# SHAI 0.7.0  |  tenant: acme-prod
+# ...
+# sources:
+#   slack_primary    mcp    https://mcp.slack.com/sse    connector=slack  tags=external,messaging
+```
+
+Sources are shown **after** connector-manifest resolution, so the url, tags
+and allow-lists are the ones the harness would run with. URLs are printed
+without userinfo, query string, or fragment — credentials never reach the
+terminal.
+
+Nothing is built and nothing is connected to. For the identity of the adapter
+code a *running* process loaded, read the `system` / `startup` audit event it
+emits at construction.
+
+## `shai harness graph`
+
+The dependency graph behind that listing: agent -> source -> tool -> tag, plus
+policy rules and subagents. `--format dot` (default) pipes into Graphviz;
+`--format json` gives `{nodes, edges, warnings}`.
+
+```bash
+shai harness graph --config prod.yaml --agents-dir config/agents | dot -Tsvg -o topology.svg
+shai harness graph --config prod.yaml --format json | jq '.warnings'
+```
+
+Tool nodes come from connector manifests and agent allow-lists — the only tool
+names knowable without connecting to an MCP server.
+
+**Shadow MCP detection:** two sources whose URLs match once credentials and
+query strings are stripped are reported in `warnings` and on stderr. Fronting
+one endpoint with two configs is legal — the second config's tags and
+allow-lists simply also apply to that server — so this is a warning, never an
+error.
+
+---
+
 ## `shai audit tail`
 
 Reads an audit JSONL file with human-readable formatting and decision-level
@@ -171,7 +220,7 @@ docker logs shai | shai audit tail --file - --decision blocked
 | `--follow` / `-F` | off | Follow the file — new lines print as they arrive. |
 | `--last` / `-n N` | `20` | Number of lines to show before following. |
 | `--boundary` / `-b NAME` | — | Filter: `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `narrow_scan`, `system`. |
-| `--decision` / `-d NAME` | — | Filter: `allow`, `warn`, `blocked`, `deny`, `redact`, `degraded`. |
+| `--decision` / `-d NAME` | — | Filter: `allow`, `warn`, `blocked`, `deny`, `redact`, `degraded`, `startup`. |
 
 **Output surfaces the signals that would otherwise take a JSON pretty-printer
 to find:**

@@ -4,6 +4,9 @@ Commands:
   shai validate           Validate harness.yaml and optional agent files.
                           Shows: boundaries, execution budget, session config.
   shai agents list        List all registered agents and subagents.
+  shai harness inspect    List the components a config declares.
+  shai harness graph      Emit the agent → source → tool → policy graph
+                          as DOT or JSON, warning on colliding MCP endpoints.
   shai audit tail         Tail an audit JSONL log file with decision filtering.
                           Surfaces: argument violations, irreversibility blocks,
                           session escalations, and de-obfuscation signals.
@@ -13,6 +16,8 @@ Usage:
   shai COMMAND --help
   shai validate [--config PATH] [--agents-dir DIR]
   shai agents list --agents-dir DIR
+  shai harness inspect [--config PATH] [--agents-dir DIR]
+  shai harness graph [--config PATH] [--agents-dir DIR] [--format dot|json]
   shai audit tail [--file PATH] [--follow] [--boundary NAME] [--decision DECISION]
 
 Audit tail examples:
@@ -27,6 +32,7 @@ import sys
 
 from harness_cli.commands.agents import cmd_agents_list
 from harness_cli.commands.audit import cmd_audit_tail
+from harness_cli.commands.harness import cmd_harness_graph, cmd_harness_inspect
 from harness_cli.commands.patterns import (
     cmd_candidates_list,
     cmd_candidates_update,
@@ -46,7 +52,7 @@ _BOUNDARIES = (
     "narrow_scan",
     "system",
 )
-_DECISIONS = ("allow", "warn", "blocked", "deny", "redact", "degraded")
+_DECISIONS = ("allow", "warn", "blocked", "deny", "redact", "degraded", "startup")
 
 
 def _non_negative_int(value: str) -> int:
@@ -115,6 +121,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing agent YAML files",
     )
     agents_list.set_defaults(handler=cmd_agents_list)
+
+    # harness
+    harness_p = sub.add_parser(
+        "harness",
+        help="Inspect what a config wires up",
+        description=(
+            "Offline view of a harness config: which adapters, sources, "
+            "connectors and policy rules it declares, and how agents connect "
+            "to them. Builds nothing and connects to nothing."
+        ),
+    )
+    harness_sub = harness_p.add_subparsers(
+        dest="harness_command",
+        metavar="COMMAND",
+        title="commands",
+        required=True,
+    )
+    for name, help_text, handler in (
+        ("inspect", "List the components a config declares", cmd_harness_inspect),
+        ("graph", "Emit the agent → source → tool → policy graph", cmd_harness_graph),
+    ):
+        cmd_p = harness_sub.add_parser(name, help=help_text, description=help_text + ".")
+        cmd_p.add_argument("--config", "-c", default="config/harness.yaml", metavar="PATH",
+                           help="Path to harness.yaml (default: config/harness.yaml)")
+        cmd_p.add_argument("--agents-dir", "-a", default=None, metavar="DIR",
+                           help="Include agent YAML files from this directory")
+        if name == "graph":
+            cmd_p.add_argument("--format", choices=("dot", "json"), default="dot",
+                               help="Output format (default: dot)")
+        cmd_p.set_defaults(handler=handler)
 
     # audit
     audit_p = sub.add_parser(

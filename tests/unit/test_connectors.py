@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+from harness.config.schema import SourceConfig
 from harness.connectors import (
     ConnectorManifest,
     list_connectors,
     load_manifest,
     manifest_to_source_config_fields,
+    resolve_source_config,
 )
 
 # ── Registry ───────────────────────────────────────────────────────────────
@@ -195,3 +197,48 @@ def test_write_tool_specs_have_block_action():
         assert not violations, (
             f"{cid}: external_write tools with action=allow: {violations}"
         )
+
+
+# ── resolve_source_config ─────────────────────────────────────────────────
+
+def test_resolve_keeps_manifest_values_the_operator_did_not_declare():
+    """SourceConfig defaults must not silently replace manifest values.
+
+    A source declaring only `connector:` and credentials previously came back
+    with transport=local and empty tags / allow-lists, because every default was
+    dumped as an override — the manifest's security metadata was discarded.
+    """
+    src = SourceConfig(name="slack_primary", connector="slack",
+                       credentials={"token": "t"})
+    resolved = resolve_source_config(src)
+    manifest = load_manifest("slack")
+
+    assert resolved.transport == "mcp"
+    assert resolved.url == manifest.url
+    assert resolved.tags == manifest.tags
+    assert resolved.allowed_urls == manifest.allowed_urls
+    assert resolved.allowed_methods == manifest.allowed_methods
+    assert resolved.connector == "slack"
+    assert resolved.connector_tool_specs
+    assert resolved.credentials == {"token": "t"}
+
+
+def test_resolve_honours_explicit_operator_overrides():
+    src = SourceConfig(name="slack_primary", connector="slack",
+                       tags=["internal"], allowed_methods=["GET"])
+    resolved = resolve_source_config(src)
+
+    assert resolved.tags == ["internal"]
+    assert resolved.allowed_methods == ["GET"]
+
+
+def test_resolve_passes_through_sources_without_a_connector():
+    src = SourceConfig(name="local_tools", tool_names=["a"])
+    assert resolve_source_config(src) is src
+
+
+def test_resolve_rejects_an_unknown_connector():
+    from harness.core.errors import ConfigError
+
+    with pytest.raises(ConfigError):
+        resolve_source_config(SourceConfig(name="x", connector="not_a_connector"))

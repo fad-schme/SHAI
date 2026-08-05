@@ -49,6 +49,8 @@ user input → [scan] → LLM → [gate] → tool → [scan result] → LLM → 
 
 Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block, or degraded. No raw user text, LLM response, or matched substring ever appears in the log.
 
+On top of those, `SHAI.from_yaml()` emits one `system`/`startup` attestation event recording what the process actually wired: adapter identities and source-file digests, connector manifest digests, pattern-DB and policy digests, and every declared source with its URL stripped of credentials. `shai harness inspect` and `shai harness graph` show the same topology offline, straight from the config.
+
 ---
 
 ## Quick start

@@ -38,7 +38,7 @@ sources:
 
 Available: `slack`, `github`, `notion`, `jira`, `gmail`, `postgresql`, `stripe`, `google_drive`.
 
-Operator-declared fields override manifest defaults. Credentials are always operator-supplied — never from the manifest.
+Fields you declare override the manifest; fields you leave out keep the manifest's value, so a source naming only `connector:` and `credentials:` still gets its transport, url, tags, allow-lists, and per-tool specs. Credentials are always operator-supplied — never from the manifest. The manifest is config, not a tool registry: its per-tool tags are stamped onto `Tool` objects at `tools/list` time — see `tools-sources.md`.
 
 ---
 

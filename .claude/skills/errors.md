@@ -159,6 +159,8 @@ logged and treated as empty findings.
 
 The only exception is `AuditEmissionError` — raised when ALL configured
 audit sinks fail simultaneously. Individual sink failures are swallowed.
+`from_yaml()` raises the same error when the startup attestation cannot be
+written.
 
 ---
 
@@ -167,5 +169,6 @@ audit sinks fail simultaneously. Individual sink failures are swallowed.
 | Error | When | Meaning |
 |---|---|---|
 | `ConfigError` at `from_yaml()` | Parse/validate | YAML is malformed, unknown connector, bad schema |
+| `AuditEmissionError` at `from_yaml()` | Startup attestation | Every sink rejected the `system`/`startup` event — construction fails rather than running unaudited |
 | `ConfigError` at `load_agent()` | Source connect | Required MCP source failed to connect |
 | `AgentNotRegisteredError` | Per-turn | `check_tool_call` called before `load_agent()` |

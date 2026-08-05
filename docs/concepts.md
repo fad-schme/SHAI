@@ -101,7 +101,7 @@ safe_text = verdict.redacted_text or user_text
 **AuditEvent** carries only metadata:
 
 - `boundary` — which boundary emitted this
-- `decision` — allow / warn / blocked / deny / degraded
+- `decision` — allow / warn / blocked / deny / degraded / startup
 - `finding_count` and `max_severity`
 - `agent_id`, `tenant_id`, `tool_name`, `timestamp_ms`
 - `deny_reason` — structured string, SIEM-parseable

@@ -27,10 +27,12 @@ from harness.boundaries.check_tool_call import run as run_gate
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import load_yaml
-from harness.config.schema import HarnessConfig
+from harness.config.schema import HarnessConfig, SourceConfig
+from harness.connectors import resolve_source_config
+from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
-from harness.core.events import now_ms
+from harness.core.events import AuditEvent, now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.types import BoundaryName, Decision, ScanStatus
 from harness.core.verdicts import GateDecision, ScanVerdict
@@ -136,6 +138,13 @@ class SHAI:
         Secret resolution:
           Resolves ${ENV_VAR} then secret:// URIs using EnvVarProvider.
           All secret:// references must be present as environment variables.
+
+        Startup attestation:
+          Emits one SYSTEM/STARTUP AuditEvent recording the wired components
+          (see core/attestation.py) before returning. Unlike the SYSTEM/DEGRADED
+          event, this emission is not best-effort: if every sink fails,
+          AuditEmissionError propagates and construction fails. A harness that
+          cannot write its first audit record cannot write the rest either.
         """
         # Always use EnvVarProvider for secret:// resolution.
         # Enterprise providers can be swapped by subclassing or patching before
@@ -233,29 +242,13 @@ class SHAI:
         tool_registry   = ToolRegistry()
         agent_registry  = AgentRegistry()
 
-        # Build SourceRegistry and register all declared sources
+        # Build SourceRegistry and register all declared sources.
+        # resolved_sources holds the post-connector-merge configs — the startup
+        # attestation records what the harness runs with, not what was declared.
         source_registry = SourceRegistry(policy)
-        for src_cfg in config.sources:
-            # Resolve connector manifest if specified
-            if src_cfg.connector:
-                from harness.config.schema import SourceConfig as _SC
-                from harness.connectors import load_manifest, manifest_to_source_config_fields
-                try:
-                    manifest = load_manifest(src_cfg.connector)
-                except ValueError as e:
-                    from harness.core.errors import ConfigError as _CE
-                    raise _CE(str(e), op="load_connector") from e
-                # Merge manifest fields with operator overrides
-                # Operator fields take precedence (non-None values in src_cfg)
-                overrides = src_cfg.model_dump(exclude_none=True)
-                overrides.pop("connector", None)
-                overrides.pop("name", None)
-                merged = manifest_to_source_config_fields(manifest, overrides)
-                merged["name"] = src_cfg.name
-                merged["credentials"] = dict(src_cfg.credentials)
-                src_cfg = _SC.model_validate(merged)
-                log.info("connector manifest loaded",
-                         extra={"connector": manifest.id, "source": src_cfg.name})
+        resolved_sources: list[SourceConfig] = []
+        for declared in config.sources:
+            src_cfg = resolve_source_config(declared)
 
             if src_cfg.transport == "mcp":
                 # Credential values were resolved by the loader pass.
@@ -274,6 +267,7 @@ class SHAI:
                 # LOCAL — backed by the shared tool registry
                 source = LocalSource(src_cfg, registry=tool_registry)
             await source_registry.register(source)
+            resolved_sources.append(src_cfg)
 
         rl_cfg = config.check_tool_call.rate_limit
         rate_limiter = (
@@ -285,7 +279,7 @@ class SHAI:
             if rl_cfg.enabled else None
         )
 
-        return cls(
+        instance = cls(
             config=config,
             agent_registry=agent_registry,
             tool_registry=tool_registry,
@@ -300,6 +294,34 @@ class SHAI:
             source_registry=source_registry,
             connectivity_secret=connectivity_secret,
         )
+
+        await emitter.emit(AuditEvent.build(
+            boundary=BoundaryName.SYSTEM,
+            decision=Decision.STARTUP,
+            # No agent exists yet — this event describes the process, not a call.
+            ctx=AgentContext(agent_id=STARTUP_AGENT_ID),
+            tenant_id=config.tenant_id,
+            duration_ms=0,
+            extra=build_attestation(
+                config=config,
+                # Scanner instances actually wired, across every boundary.
+                scanners=[
+                    *[c.scanner for c in input_scanners],
+                    *[c.scanner for c in output_scanners],
+                    *arg_scanners,
+                    *[c.scanner for c in file_scanners],
+                    *[c.scanner for c in tool_result_scanners],
+                    *mcp_metadata_scanners,
+                ],
+                sinks=sinks,
+                policy=policy,
+                sources=resolved_sources,
+            ),
+        ))
+        log.info("harness startup attested",
+                 extra={"op": "from_yaml", "tenant_id": config.tenant_id,
+                        "sources": len(resolved_sources)})
+        return instance
 
     # ── Startup ───────────────────────────────────────────────────────────
 

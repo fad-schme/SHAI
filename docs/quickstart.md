@@ -161,7 +161,10 @@ asyncio.run(main())
 
 ## 5 — Look at the audit trail
 
-`./logs/audit.jsonl` now has one JSON object per boundary call:
+`./logs/audit.jsonl` now has one JSON object per boundary call, preceded by a
+single `"boundary": "system"`, `"decision": "startup"` line written when
+`from_yaml()` completed — the attestation of which adapters, sources, and rules
+this process wired. See [cli.md](cli.md) for the offline view of the same thing.
 
 ```json
 {

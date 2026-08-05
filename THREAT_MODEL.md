@@ -265,10 +265,29 @@ poisoned pattern catalog ships to users.
 - The signed pattern-DB feature lets operators verify catalog updates against
   a public key before applying.
 - Connector manifests are YAML in-tree and reviewed like code.
+- `from_yaml()` emits a `system`/`startup` attestation event — signed like every
+  other event when `audit_signing.enabled` — recording
+  the component set the process wired: each scanner, sink, and policy adapter
+  with the SHA256 of its defining source file, connector manifest digests, the
+  pattern-DB rule count and digest, the policy digest, and every declared
+  source. This is a **record**, not a check — SHAI compares it against nothing.
+  Its value is that a SIEM holding these events can answer "what was this
+  process running when it made that decision", and can diff one startup against
+  the next. `shai harness inspect` shows the same component set offline.
 
-**Tests:** CI configuration (`.github/workflows/ci.yml`).
+**Tests:** CI configuration (`.github/workflows/ci.yml`),
+`tests/integration/test_startup_attestation.py`.
 
 **Residual risk:**
+- The attestation records what was loaded; it does not verify it. An adapter
+  replaced before the process started is attested faithfully under its new
+  digest, and nothing rejects it. Detecting that requires an expected-digest
+  baseline held outside the process — SHAI does not ship one.
+- Adapter digests cover the file a class was defined in, not its transitive
+  imports. A compromised library a scanner calls into does not change the
+  attested digest.
+- Entry points that are installed but not referenced by `harness.yaml` are not
+  attested — deliberately, since enumerating them would import them.
 - We do not yet ship an SBOM with releases. Planned.
 - We do not yet sign PyPI releases (planned — Sigstore). Verify checksums
   from the GitHub release page for now.

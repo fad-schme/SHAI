@@ -44,7 +44,7 @@ the trust envelope every other skill assumes.
 
 - SHAI enforces **five** boundaries: `scan_input`, `check_tool_call`,
   `scan_tool_result`, `scan_output`, `scan_file`. Plus `SYSTEM` for
-  degraded events (not a real boundary).
+  degraded and startup-attestation events (not a real boundary).
 - Every boundary emits **exactly one** `AuditEvent` on every code path.
 - Boundaries **never raise** — they return a verdict.
 - The tool-call gate is **deterministic code**, not an LLM judgement.

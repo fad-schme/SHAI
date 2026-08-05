@@ -10,6 +10,55 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [0.7.0] — 2026-08-05
+
+### Added
+- **Startup attestation** — `SHAI.from_yaml()` emits one `boundary=system`,
+  `decision=startup` `AuditEvent` before returning, recording what the process
+  actually wired: SHAI version, every scanner/sink/policy adapter with its
+  module path and source-file SHA256, connector manifest digests, pattern-DB
+  rule count and digest, policy rule count and digest, and each declared source
+  with its URL stripped of userinfo, query, and fragment. Signed like any other
+  event when `audit_signing.enabled`. Adapters that are installed but not
+  referenced by `harness.yaml` are deliberately absent — the event attests what
+  runs, not what is available.
+
+- **`startup` decision value** — new `Decision` member, accepted by
+  `shai audit tail --decision startup`.
+
+- **`shai harness inspect`** — offline listing of what a config declares:
+  boundaries and scanners, sinks, policy digest, pattern-DB state, connector
+  manifests, resolved sources, and agents from `--agents-dir`. Builds no
+  adapters, opens no connections, emits no audit event.
+
+- **`shai harness graph`** — the same topology as a graph: agent → source →
+  tool → tag, with policy rules and subagents. `--format dot` (default) or
+  `--format json`. Two sources whose URLs match once credentials and query
+  strings are stripped are reported as a shadow-endpoint warning on stderr and
+  in the JSON `warnings` list.
+
+### Fixed
+- **Manifest resolution no longer discards the manifest.** Resolving a source
+  that names `connector:` treated every unset `SourceConfig` field as an
+  operator override, so the model's own defaults — `transport: local`, empty
+  `tags`, `allowed_urls`, `allowed_methods` — replaced the manifest's values.
+  Only `url` and the per-tool specs survived, and the source was built as a
+  local source rather than an MCP one. Overrides are now taken from the fields
+  the operator actually wrote. A source with no `connector:` is unaffected and
+  never touches the manifest registry.
+
+### Changed
+- **Every SHAI process now writes an audit event at construction.** Deployments
+  with a `stdout` sink will see one additional JSON line per start; file and
+  SIEM sinks gain one row per process.
+
+### Security
+- **`from_yaml()` fails when the startup event cannot be written.** If every
+  configured sink rejects the emission, `AuditEmissionError` propagates and no
+  harness is returned — a process that cannot record its own startup cannot
+  record the decisions that follow. This is stricter than the best-effort
+  `system`/`degraded` path.
+
 ## [0.6.1] — 2026-08-04
 
 ### Added
@@ -53,6 +102,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   run of printable ASCII and would decode ordinary prose into noise.
 
 ### Fixed
+- **The heuristic scanner now returns the same verdict for the same input.**
+  `_match_fuzzy_class` iterated its target vocabulary — a `frozenset` — and took
+  whichever fuzzy match appeared first. Set iteration order for strings varies
+  with Python's per-process hash randomisation, so byte-identical input could be
+  classified differently between processes: a request blocked before a restart
+  and allowed after it, and a signed audit event that could not be reproduced.
+  Targets are now iterated in a fixed order.
+
+  The same loop also let a weak (same-length substitution) match suppress a
+  strong one found later, which was arbitrary rather than a judgement. A strong
+  match now wins wherever it appears. **This raises detection slightly**:
+  tokens that fuzzy-match several vocabulary entries are now credited to the
+  strongest, so some inputs that previously scored medium reach high. Measured
+  on a third-party direct-injection corpus, blocks rose from a 27–29 spread to a
+  stable 32 out of 1,040.
+
 - **`collect_events()` no longer unsubscribes the wrong collector.** The
   context manager registered a list and removed it on exit with
   `list.remove()`, which compares by `==`. Two buckets holding the same events
