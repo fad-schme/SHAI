@@ -25,6 +25,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     console.write(f"  tenant_id:    {config.tenant_id}")
     console.write(f"  policy_rules: {len(policy_rules)}")
+    for combo in config.policy.forbidden_tag_combinations:
+        console.write(f"  forbidden_tags: {sorted(set(combo))}")
     console.write(f"  audit_sinks:  {[s.name for s in config.audit_sinks]}")
 
     norm = config.normalization
@@ -85,7 +87,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
     console.write(f"\nValidating agents in {agents_dir}:")
 
     async def _validate_agents() -> tuple[int, int]:
-        reg = AgentRegistry()
+        reg = AgentRegistry(
+            forbidden_tag_combinations=config.policy.forbidden_tag_sets(),
+        )
         ok = fail = 0
         for path in agent_files:
             console.write(f"  {path.name} ...", end=" ")

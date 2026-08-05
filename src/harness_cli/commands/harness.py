@@ -44,10 +44,16 @@ def _load(args: argparse.Namespace) -> tuple[HarnessConfig, list[SourceConfig], 
     except (HarnessError, ValueError) as e:
         console.error(f"Error: {e}")
         return None
-    return config, sources, _load_agents(getattr(args, "agents_dir", None))
+    return config, sources, _load_agents(
+        getattr(args, "agents_dir", None),
+        config.policy.forbidden_tag_sets(),
+    )
 
 
-def _load_agents(agents_dir: str | None) -> list[AgentConfig]:
+def _load_agents(
+    agents_dir: str | None,
+    forbidden_tags: list[frozenset[str]],
+) -> list[AgentConfig]:
     if not agents_dir:
         return []
     directory = Path(agents_dir)
@@ -57,7 +63,7 @@ def _load_agents(agents_dir: str | None) -> list[AgentConfig]:
 
     async def _read() -> list[AgentConfig]:
         from harness.agents.registry import AgentRegistry
-        registry = AgentRegistry()
+        registry = AgentRegistry(forbidden_tag_combinations=forbidden_tags)
         loaded: list[AgentConfig] = []
         for path in sorted(directory.glob("*.yaml")):
             try:

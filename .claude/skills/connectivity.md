@@ -49,6 +49,15 @@ gate.dispatch_token  # str | None — encoded token, pass to source.call()
 - `expires_at` — short TTL (default 15 seconds)
 - `token_id` — UUID, consumed as a one-time nonce
 
+**Containment property.** Tokens are minted only on the gate's allow path, are
+single-use, and expire in `token_ttl_seconds`. Stopping issuance for an agent —
+`deregister_agent()`, a denying policy, any deny path — stops that agent's
+outbound MCP traffic within one TTL, without the agent loop's cooperation
+(enforcement is in `ShaiTransport`) and without affecting other agents (tokens
+carry `agent_id`). `token_ttl_seconds` is therefore the containment latency.
+Applies only when `connectivity.enabled` is true — it defaults to false — and
+only to calls that dispatch through `ShaiTransport`.
+
 **Passing the token to MCP dispatch:**
 ```python
 if gate.allowed:

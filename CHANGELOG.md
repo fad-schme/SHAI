@@ -10,6 +10,38 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **MINOR**: new config fields with defaults, new boundaries, new integrations
 - **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
 
+## [Unreleased]
+
+### Added
+- **`command_injection_scan`** — new built-in scanner detecting shell command
+  *composition* via `bashlex` AST shapes: a pipeline whose sink is an
+  interpreter, a `/dev/tcp` redirect, fetch-then-execute chains, and inline
+  interpreter code carrying an opaque payload. Declarable at every boundary
+  (`scan_input`, `scan_output`, `scan_tool_result`, `scan_file`,
+  `check_tool_call`) — a command can arrive in user input, a tool result, or a
+  file body, and each boundary's own `block_at` decides what a severity means
+  there. Findings are demoted one level when a statement reads as prose rather
+  than an invocation, so text discussing a command reports MEDIUM while a line
+  issuing it reports HIGH; padding a payload with prose lowers severity but
+  never erases the finding. Carries `method_family: structural_command`, so it
+  corroborates with `heuristic_scan` rather than collapsing into it.
+  Requires the new **`shell` extra** (`pip install 'shai[shell]'`); declaring
+  the scanner without it raises `ConfigError` at `SHAI.from_yaml()` rather than
+  degrading silently.
+- **`policy.forbidden_tag_combinations`** — tag sets no single agent may declare
+  together, enforced when the agent is loaded rather than when it calls a tool.
+  An agent whose `allowed_tags` is a superset of any configured entry raises
+  `ConfigError` from `AgentRegistry.load()`, `register()`, and `reload()`, and is
+  never registered. Each entry requires at least two distinct tags. Subagents are
+  not checked separately — their tags are always a subset of their parent's.
+  `shai validate` and `shai harness inspect` apply the same check. Defaults to
+  empty, so existing configs are unaffected.
+
+### Changed
+- **Startup attestation** now records `policy.forbidden_tag_combinations`. The
+  control is enforced at agent load rather than by a policy rule, so the
+  existing `policy.digest` would not have moved if an operator dropped it.
+
 ## [0.7.0] — 2026-08-05
 
 ### Added

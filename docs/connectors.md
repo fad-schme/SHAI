@@ -137,6 +137,38 @@ Anything that fails validation is refused at the transport layer — the request
 - A replay attack that captures a valid token and reuses it — refused at step 6, nonce spent.
 - A token that survives past the tool's return — refused at step 5 in most cases and at step 6 in others; the 15s TTL is a defence in depth.
 
+### Containment: stopping an agent's outbound traffic
+
+The short TTL is not only replay defence — it is the containment property of the
+connectivity layer, and worth understanding before you need it.
+
+Every outbound MCP call requires a token minted by `check_tool_call` on the
+allow path. Tokens expire in `token_ttl_seconds` (default 15) and each is
+single-use. So **the moment the gate stops issuing tokens for an agent, that
+agent's outbound MCP traffic stops within one TTL** — `deregister_agent()`, a
+policy change that denies, or any other deny path all have the same effect.
+
+Two properties make this worth relying on:
+
+- **It does not need the agent's cooperation.** Enforcement is in
+  `ShaiTransport`, on the request path, not in the agent loop. An agent that
+  ignores a denial and dispatches anyway is refused at the transport.
+- **It is per-agent.** Tokens carry `agent_id`; containing one agent leaves
+  every other agent in the process running.
+
+Two limits, equally worth knowing:
+
+- **Only tools that dispatch through `ShaiTransport` are covered** — the same
+  boundary as everything else on this page. A code-execution tool shelling out
+  to `curl` is outside it.
+- **`connectivity.enabled` defaults to `false`.** With it off, no tokens are
+  issued, `ShaiTransport` is not installed, and none of this applies. It is
+  opt-in, and this is the reason to opt in.
+
+The TTL is the containment latency. Raising `token_ttl_seconds` to reduce
+re-issuance overhead raises the window during which an already-issued token
+still works.
+
 ### What it does not protect
 
 - Non-MCP outbound calls that don't go through `ShaiTransport`. `subprocess.run("curl ...")` in a code-execution tool is invisible. Network egress control at the infrastructure layer is the right place for that.

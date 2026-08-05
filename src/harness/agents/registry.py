@@ -36,14 +36,21 @@ class AgentRegistry:
     get() is sync — hot path requirement for scope_context_for_subagent.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        forbidden_tag_combinations: list[frozenset[str]] | None = None,
+    ) -> None:
         self._agents: dict[str, AgentConfig] = {}
         self._lock = threading.Lock()
+        self._forbidden_tags = list(forbidden_tag_combinations or [])
 
     async def register(self, item: AgentConfig) -> bool:
         """True = newly registered. False = identical already existed.
         Raises AgentConflictError if same id registered with different content.
+        Raises ConfigError if allowed_tags contains a forbidden combination.
         """
+        self._check_forbidden_tags(item)
         with self._lock:
             existing = self._agents.get(item.id)
             if existing is None:
@@ -108,6 +115,9 @@ class AgentRegistry:
         Raises ConfigError on invalid file — old definition kept intact.
         """
         config = await asyncio.to_thread(self._parse, Path(path))
+        # reload() replaces in place and does not go through register(), so the
+        # forbidden-combination check has to be repeated here.
+        self._check_forbidden_tags(config)
         with self._lock:
             if config.id not in self._agents:
                 raise AgentNotRegisteredError(
@@ -120,6 +130,26 @@ class AgentRegistry:
         return config
 
     # ── Internal ──────────────────────────────────────────────────────────
+
+    def _check_forbidden_tags(self, item: AgentConfig) -> None:
+        """Reject an agent whose declared capability set is a toxic combination.
+
+        Checked in register() rather than in AgentConfig — the combinations come
+        from harness.yaml, which the model validator cannot see, and register()
+        is the single choke point every load path goes through.
+
+        Only the agent's own allowed_tags are checked: a subagent's tags are a
+        subset of its parent's (Invariant 4), so a combination the parent does
+        not hold is unreachable below it.
+        """
+        declared = set(item.allowed_tags)
+        for combo in self._forbidden_tags:
+            if combo <= declared:
+                raise ConfigError(
+                    f"agent '{item.id}': allowed_tags declares the forbidden "
+                    f"combination {sorted(combo)}",
+                    op="load_agent",
+                )
 
     @staticmethod
     def _parse(path: Path) -> AgentConfig:

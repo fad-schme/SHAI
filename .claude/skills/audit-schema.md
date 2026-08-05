@@ -57,7 +57,7 @@ It is signed like any other event when `audit_signing.enabled`.
 | `adapters` | One entry per wired scanner, sink and policy engine: `group`, `name`, `module`, `sha256` of the defining source file. Installed-but-unconfigured adapters are absent by design |
 | `connectors` | `id` and content digest of each connector manifest backing a source |
 | `patterns_db` | `path`, `rule_count`, `digest` — `null` when `patterns_db.enabled` is false |
-| `policy` | `rule_count` and digest of the global rule list |
+| `policy` | `rule_count` and digest of the global rule list, plus `forbidden_tag_combinations` — enforced at agent load, so the rule digest does not move when it changes |
 | `sources` | Per declared source: `name`, `transport`, `tags`, `connector`, and `url` stripped of userinfo, query and fragment |
 
 Unlike the degrade event, this emission is not best-effort: if every sink fails,

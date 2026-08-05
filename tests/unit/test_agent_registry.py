@@ -112,3 +112,52 @@ async def test_concurrent_get_safe(registry, orchestrator_yaml):
 
     results = await asyncio.gather(*[_get() for _ in range(50)])
     assert all(r.id == "orchestrator_agent" for r in results)
+
+
+# ── Forbidden tag combinations (harness.yaml policy) ──────────────────────
+
+def _agent_yaml(tmp_path, name: str, tags: str) -> object:
+    path = tmp_path / f"{name}.yaml"
+    path.write_text(
+        f"id: {name}\n"
+        "allowed_tool_names: [search_docs]\n"
+        f"allowed_tags: {tags}\n"
+    )
+    return path
+
+
+async def test_forbidden_combination_rejected_at_load(tmp_path):
+    reg = AgentRegistry(forbidden_tag_combinations=[frozenset({"sensitive", "external_write"})])
+    path = _agent_yaml(tmp_path, "toxic_agent", "[read, sensitive, external_write]")
+    with pytest.raises(ConfigError, match="forbidden combination"):
+        await reg.load(path)
+    with pytest.raises(AgentNotRegisteredError):
+        reg.get("toxic_agent")
+
+
+async def test_partial_overlap_allowed(tmp_path):
+    reg = AgentRegistry(forbidden_tag_combinations=[frozenset({"sensitive", "external_write"})])
+    path = _agent_yaml(tmp_path, "safe_agent", "[read, sensitive]")
+    cfg = await reg.load(path)
+    assert cfg.id == "safe_agent"
+
+
+async def test_no_combinations_configured_allows_anything(tmp_path):
+    reg = AgentRegistry()
+    path = _agent_yaml(tmp_path, "wide_agent", "[sensitive, external_write]")
+    assert (await reg.load(path)).id == "wide_agent"
+
+
+async def test_forbidden_combination_rejected_on_reload(tmp_path):
+    reg = AgentRegistry(forbidden_tag_combinations=[frozenset({"sensitive", "external_write"})])
+    good = _agent_yaml(tmp_path, "drift_agent", "[sensitive]")
+    await reg.load(good)
+    good.write_text(
+        "id: drift_agent\n"
+        "allowed_tool_names: [search_docs]\n"
+        "allowed_tags: [sensitive, external_write]\n"
+    )
+    with pytest.raises(ConfigError, match="forbidden combination"):
+        await reg.reload(good)
+    # old definition kept intact
+    assert reg.get("drift_agent").allowed_tags == ["sensitive"]

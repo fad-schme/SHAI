@@ -340,13 +340,42 @@ class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
     rules:  global policy rules evaluated after agent-scoped rules.
             Defined inline in harness.yaml — no separate rules file needed.
             Same schema as agent-level policy_rules.
+
+    forbidden_tag_combinations:
+            Tag sets no single agent may declare together. Each entry is a list
+            of two or more tags; an agent whose `allowed_tags` is a superset of
+            any entry is rejected at load, before it can be registered.
+
+            The list lives here rather than in the agent file on purpose: an
+            agent declaring the combinations it may not hold would be declaring
+            its own limits.
+
+                policy:
+                  forbidden_tag_combinations:
+                    - [sensitive, external_write]
     """
     rules: list[dict[str, Any]] = Field(default_factory=list)
+    forbidden_tag_combinations: list[list[str]] = Field(default_factory=list)
+
+    @field_validator("forbidden_tag_combinations")
+    @classmethod
+    def _valid_combinations(cls, v: list[list[str]]) -> list[list[str]]:
+        for combo in v:
+            if len(set(combo)) < 2:
+                raise ValueError(
+                    f"forbidden_tag_combinations entry must name at least two "
+                    f"distinct tags, got: {combo!r}"
+                )
+        return v
 
     def parsed_rules(self) -> list:
         """Return rules parsed as RuleConfig objects. Called by from_yaml()."""
         from harness.agents.agent_config import RuleConfig
         return [RuleConfig.model_validate(r) for r in self.rules]
+
+    def forbidden_tag_sets(self) -> list[frozenset[str]]:
+        """Combinations as sets, for AgentRegistry. Called by from_yaml()."""
+        return [frozenset(c) for c in self.forbidden_tag_combinations]
 
 
 class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):

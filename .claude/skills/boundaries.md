@@ -273,12 +273,13 @@ boundary list both adapters, `file_scanner` and `file_content_scan`.
 | `HeuristicScanner` | `harness.adapters.scanners.heuristic_scan` | Not YAML-driven. 5 sub-scores: entropy, instruction density, coherence, structural markers, **typoglycemia** (Damerau-Levenshtein-1 against an intent-space keyword list, with anagram-scramble fast path and prefix-relationship rejection so morphology like `ignored`, `filters`, `systems` is not scored) | Always on |
 | `FileScanner` | `harness.adapters.scanners.file_scanner` | Not YAML-driven. Structural only — MIME, extension, size, filename, PDF markers, SVG, archives, EXIF, Office macros | `scan_file` |
 | `FileContentScanner` | `harness.adapters.scanners.file_scanner` | Not YAML-driven. Runs the configured `scan_file.scanners` chain over extracted text and the image EXIF/XMP blob | `scan_file` |
+| `CommandInjectionScanner` | `harness.adapters.scanners.command_injection_scan` | Not YAML-driven and **no l10n sibling** — shell syntax is language-independent. `bashlex` AST shapes: pipeline into an interpreter, `/dev/tcp` redirect, fetch-then-exec chain, inline interpreter code with an opaque payload | Any boundary, including `check_tool_call`. Requires the `shell` extra |
 | `MCPMetadataScanner` | `harness.adapters.scanners.mcp_metadata_scanner` | `mcp_metadata_patterns.yaml` | MCP `tools/list` registration |
 | `RateLimiter` | `harness.adapters.scanners.rate_limiter` | — (config-driven) | `check_tool_call` pre-gate |
 
 **Method-family attribution.** Every scanner declares `method_family` — one of
-`regex_catalog`, `structural_heuristic`, `regex_pii`, `ml_classifier`,
-`unknown`. `run_scan` stamps it onto every finding the scanner produces, and
+`regex_catalog`, `structural_heuristic`, `structural_file`,
+`structural_command`, `regex_pii`, `ml_classifier`, `unknown`. `run_scan` stamps it onto every finding the scanner produces, and
 both corroboration consumers count distinct families: `TurnSignals` for the
 risk-score bonus, and `ensemble.py` for severity promotion. Two `regex_catalog`
 scanners agreeing count as **one** family (no bonus, no promotion), while

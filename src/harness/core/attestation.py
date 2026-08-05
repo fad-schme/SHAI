@@ -148,6 +148,11 @@ def build_config_attestation(
         "policy": {
             "rule_count": len(policy_rules),
             "digest":     _digest_of([r.model_dump(mode="json") for r in policy_rules]),
+            # Enforced at agent load, not by a rule, so the rule digest above
+            # would not move if an operator dropped it.
+            "forbidden_tag_combinations": sorted(
+                sorted(set(c)) for c in config.policy.forbidden_tag_combinations
+            ),
         },
         "sources": [
             {

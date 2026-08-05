@@ -240,7 +240,9 @@ class SHAI:
 
         # Build shared registries first — source_registry needs tool_registry
         tool_registry   = ToolRegistry()
-        agent_registry  = AgentRegistry()
+        agent_registry  = AgentRegistry(
+            forbidden_tag_combinations=config.policy.forbidden_tag_sets(),
+        )
 
         # Build SourceRegistry and register all declared sources.
         # resolved_sources holds the post-connector-merge configs — the startup
@@ -1132,6 +1134,10 @@ _SCANNER_FACTORIES: dict[str, Any] = {
     "identity_spoof_scan": lambda cfg: __import__(
         "harness.adapters.scanners.identity_spoof_scan", fromlist=["IdentitySpoofScanner"]
     ).IdentitySpoofScanner(**cfg),
+    "command_injection_scan": lambda cfg: __import__(
+        "harness.adapters.scanners.command_injection_scan",
+        fromlist=["CommandInjectionScanner"],
+    ).CommandInjectionScanner(**cfg),
 }
 
 

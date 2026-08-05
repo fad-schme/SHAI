@@ -23,7 +23,13 @@ Homepage   = "https://shai.aibestlabs.com"
 Repository = "https://github.com/fad-schme/SHAI"
 
 [project.optional-dependencies]
+shell = [
+    # bashlex backs command_injection_scan. Optional because the scanner is
+    # only useful where the deployment registers shell-executing tools.
+    "bashlex>=0.18",
+]
 dev = [
+    "bashlex>=0.18",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "bandit",

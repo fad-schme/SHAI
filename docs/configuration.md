@@ -60,7 +60,7 @@ scanners:
   - name: injection_scan        # inherits boundary action (block)
 ```
 
-The five built-in scanners:
+The six built-in scanners:
 
 | Scanner | Catches |
 |---|---|
@@ -69,6 +69,38 @@ The five built-in scanners:
 | `identity_spoof_scan` | Claimed orchestrator/system authority, peer privilege escalation (4 rules, plus fr/es/de/zh overlays) |
 | `regex_pii` | 7 PII categories with Luhn-validated credit cards and SSN structural rules — supports redaction |
 | `heuristic_scan` | Structural anomalies: entropy, instruction density, coherence, structural markers. Always on (not configurable). |
+| `command_injection_scan` | Shell command composition — a pipeline into an interpreter, a `/dev/tcp` redirect, fetch-then-execute, inline interpreter code. Requires the `shell` extra. |
+
+#### `command_injection_scan`
+
+A user can plant a command in input, a tool can return one in its result, and a
+file can carry one in its body — so this scanner is declarable at every
+boundary, including `check_tool_call`:
+
+```yaml
+scan_input:
+  scanners:
+    - name: command_injection_scan
+```
+
+Install it with `pip install 'shai[shell]'` — it needs `bashlex`. Declaring the
+scanner without the extra fails at `SHAI.from_yaml()` rather than degrading
+quietly.
+
+It matches AST **shapes**, not command names: `curl … | sh`, `wget … && chmod
++x … && ./x`, `bash -i >& /dev/tcp/…`, `python -c` with an opaque payload. That
+is why an unlisted fetcher piped into `sh` is still caught — the sink is the
+signal.
+
+**Findings are demoted, not suppressed, when the statement reads as prose**
+rather than an invocation (its leading word is not a program). Text discussing
+`curl … | sh` reports MEDIUM; a line that issues it reports HIGH. Padding a
+payload with prose therefore lowers severity but never erases the finding, and
+the evidence still reaches the audit trail and the turn-risk block.
+
+One consequence worth planning for: at `scan_output` an agent explaining an
+install command and an agent emitting one are the same text. The demotion rule
+plus the default `block_at: high` is what keeps that from blocking answers.
 
 For tool-result scanning, configure the normal injection scanner:
 
@@ -123,6 +155,20 @@ before these.
 Rules are evaluated in declaration order. **First match wins.** No match → implicit `allow`.
 
 For the full match-field vocabulary (`tool_names`, `tool_tags`, `transport`, `agent_ids`, `sub_agent_ids`, `source_tags`, and the `any`/`all`/`not` combinators), see [`.claude/skills/policy.md`](../.claude/skills/policy.md).
+
+#### Forbidden tag combinations
+
+Tag sets no single agent may hold at once — checked when the agent is loaded, not when it calls a tool:
+
+```yaml
+policy:
+  forbidden_tag_combinations:
+    - [sensitive, external_write]
+```
+
+An agent whose `allowed_tags` contains every tag in an entry is rejected with a `ConfigError` and is never registered. Each entry needs at least two distinct tags. Subagents are not checked separately — their tags are always a subset of their parent's.
+
+The list belongs in `harness.yaml` rather than in the agent file: an agent declaring the combinations it may not hold would be declaring its own limits. `shai validate` prints each configured combination and fails on any agent that violates one.
 
 ### Audit sinks
 

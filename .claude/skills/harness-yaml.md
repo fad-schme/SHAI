@@ -45,6 +45,7 @@ scan_input:           # or scan_output, scan_tool_result, scan_file
 | `identity_spoof_scan` | `identity_spoof_patterns.yaml` — messages that claim privileged agent identity or fabricate approval. | High value at `scan_tool_result` — catches authority-completion in poisoned tool results. |
 | `heuristic_scan` | Not YAML-driven. 5 sub-scores: entropy, instruction density, coherence, structural markers, typoglycemia. | Always-on backstop. Catches novel patterns the regex catalogs miss. |
 | `mcp_metadata_scan` | `mcp_metadata_patterns.yaml`. | `scan_mcp_metadata` only. |
+| `command_injection_scan` | Not YAML-driven, and has **no `.l10n.yaml` sibling** — shell syntax is language-independent, so it is the one detector with a single copy. `bashlex` AST shapes: pipeline into an interpreter, `/dev/tcp` redirect, fetch-then-exec, inline interpreter code. | Any boundary, including `check_tool_call`. Requires the `shell` extra; declaring it without `bashlex` raises `ConfigError` at `from_yaml()`. Findings are demoted one level when the statement's leading word is not a program — discussion reports MEDIUM, invocation reports HIGH. `method_family: structural_command`, distinct from `structural_heuristic` so the two corroborate. |
 
 **`on_error`** — how a boundary handles a scanner failure:
 - `fail_closed` (default) — treat as if the scanner blocked; boundary returns BLOCK, emits a SYSTEM/DEGRADED audit event alongside the block.
@@ -159,6 +160,16 @@ policy:
       action: deny
       reason: "MCP requires explicit agent-level allow"
 ```
+
+`forbidden_tag_combinations` is a separate mechanism in the same block — tag sets no single agent may declare together, enforced at agent load rather than at gate time:
+
+```yaml
+policy:
+  forbidden_tag_combinations:
+    - [sensitive, external_write]
+```
+
+An agent whose `allowed_tags` is a superset of any entry raises `ConfigError` from `load()`/`register()`/`reload()` and is never registered. Entries need ≥2 distinct tags. Subagents are not checked separately (their tags are a subset of the parent's — Invariant 4).
 
 → See `07-policy.md` for the full rule grammar.
 

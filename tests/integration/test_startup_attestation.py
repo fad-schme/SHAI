@@ -75,6 +75,8 @@ async def test_attestation_payload_shape(tmp_path: Path):
     extra = _events(log_path)[0]["extra"]
     assert extra["shai_version"]
     assert extra["policy"]["rule_count"] == 1
+    # Enforced at agent load, so it must be attested separately from the rule digest
+    assert extra["policy"]["forbidden_tag_combinations"] == []
     assert extra["patterns_db"] is None          # disabled in this config
     assert extra["connectors"] == []             # no connector-backed source
 

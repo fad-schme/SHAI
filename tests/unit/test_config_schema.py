@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from harness.config.schema import (
     BoundaryConfig,
     HarnessConfig,
+    PolicyConfig,
     ToolResultScanConfig,
 )
 
@@ -69,3 +70,14 @@ def test_tool_result_scan_accepts_scanners():
         "injection_scan",
         "identity_spoof_scan",
     ]
+
+
+def test_forbidden_tag_combinations_parsed_as_sets():
+    cfg = PolicyConfig(forbidden_tag_combinations=[["sensitive", "external_write"]])
+    assert cfg.forbidden_tag_sets() == [frozenset({"sensitive", "external_write"})]
+
+
+def test_forbidden_tag_combination_needs_two_distinct_tags():
+    for bad in ([["sensitive"]], [["sensitive", "sensitive"]], [[]]):
+        with pytest.raises(ValidationError, match="at least two distinct tags"):
+            PolicyConfig(forbidden_tag_combinations=bad)
