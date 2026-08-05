@@ -31,7 +31,8 @@ _CONTROL_TOKENS = frozenset({
 })
 
 _MAX_SKELETON_LEN = 200
-_LSH_K = 64  # number of hash functions for MinHash
+_LSH_K = 64      # number of hash functions for MinHash
+_LSH_WIDTH = 8   # hex chars per minimum — md5 digest is sliced to 8
 
 
 def _bucket(score: float) -> str:
@@ -45,38 +46,41 @@ def _bucket(score: float) -> str:
 
 
 def _minhash_lsh(text: str) -> str:
-    """MinHash LSH over character bigrams. Returns hex string."""
-    bigrams = [text[i:i+2] for i in range(len(text) - 1)] if len(text) > 1 else [text]
-    if not bigrams:
-        return "0" * 16
+    """MinHash signature over character bigrams.
 
-    mins = []
-    for seed in range(_LSH_K):
-        min_h = None
-        for bg in bigrams:
-            h = int(hashlib.md5(f"{seed}:{bg}".encode(), usedforsecurity=False).hexdigest()[:8], 16)
-            if min_h is None or h < min_h:
-                min_h = h
-        mins.append(min_h)
+    Returns the _LSH_K minima concatenated as fixed-width hex — the whole
+    signature, not a digest of it. The estimator only works because minima
+    survive independently: two texts sharing most bigrams share most minima.
+    Hashing the signature down to one value destroys exactly that, since an
+    avalanche hash turns a single differing minimum into an unrelated digest,
+    and every non-identical pair then scored ~0 through lsh_jaccard.
+    """
+    bigrams = {text[i:i+2] for i in range(len(text) - 1)} if len(text) > 1 else {text}
 
-    # Compress to a short hex string: hash the signature itself
-    sig = ":".join(str(m) for m in mins)
-    return hashlib.sha256(sig.encode()).hexdigest()[:16]
+    mins = [
+        min(
+            int(hashlib.md5(f"{seed}:{bg}".encode(), usedforsecurity=False).hexdigest()[:8], 16)
+            for bg in bigrams
+        )
+        for seed in range(_LSH_K)
+    ]
+    return "".join(f"{m:0{_LSH_WIDTH}x}" for m in mins)
 
 
 def lsh_jaccard(lsh_a: str, lsh_b: str) -> float:
-    """Approximate Jaccard similarity from two LSH hex strings.
+    """Estimated Jaccard similarity: the fraction of MinHash minima that agree.
 
-    Since we compressed the full MinHash into a single hash, we use
-    character-level comparison as a fast proxy. For exact similarity,
-    store the full MinHash vector. This is sufficient for candidate
-    deduplication where we need ~0.7 threshold, not exact values.
+    Signatures of unequal length do not correspond position-for-position, so
+    they share nothing — a stale candidate written under an older signature
+    format scores 0.0 and is superseded rather than matched.
     """
-    if lsh_a == lsh_b:
-        return 1.0
-    # Nibble-level comparison
-    matches = sum(a == b for a, b in zip(lsh_a, lsh_b))
-    return matches / max(len(lsh_a), len(lsh_b))
+    if not lsh_a or len(lsh_a) != len(lsh_b):
+        return 0.0
+    agree = sum(
+        lsh_a[i:i + _LSH_WIDTH] == lsh_b[i:i + _LSH_WIDTH]
+        for i in range(0, len(lsh_a), _LSH_WIDTH)
+    )
+    return agree / (len(lsh_a) / _LSH_WIDTH)
 
 
 def extract_fingerprint(
