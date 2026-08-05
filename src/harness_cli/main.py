@@ -4,6 +4,9 @@ Commands:
   shai validate           Validate harness.yaml and optional agent files.
                           Shows: boundaries, execution budget, session config.
   shai agents list        List all registered agents and subagents.
+  shai agents revoke      Kill switch — stop one agent from calling tools.
+  shai agents restore     Lift a revocation.
+  shai agents revocations List revoked agents.
   shai harness inspect    List the components a config declares.
   shai harness graph      Emit the agent → source → tool → policy graph
                           as DOT or JSON, warning on colliding MCP endpoints.
@@ -16,6 +19,9 @@ Usage:
   shai COMMAND --help
   shai validate [--config PATH] [--agents-dir DIR]
   shai agents list --agents-dir DIR
+  shai agents revoke AGENT_ID [--config PATH] [--reason TEXT]
+  shai agents restore AGENT_ID [--config PATH]
+  shai agents revocations [--config PATH]
   shai harness inspect [--config PATH] [--agents-dir DIR]
   shai harness graph [--config PATH] [--agents-dir DIR] [--format dot|json]
   shai audit tail [--file PATH] [--follow] [--boundary NAME] [--decision DECISION]
@@ -30,7 +36,12 @@ from __future__ import annotations
 import argparse
 import sys
 
-from harness_cli.commands.agents import cmd_agents_list
+from harness_cli.commands.agents import (
+    cmd_agent_restore,
+    cmd_agent_revocations,
+    cmd_agent_revoke,
+    cmd_agents_list,
+)
 from harness_cli.commands.audit import cmd_audit_tail
 from harness_cli.commands.harness import cmd_harness_graph, cmd_harness_inspect
 from harness_cli.commands.patterns import (
@@ -121,6 +132,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing agent YAML files",
     )
     agents_list.set_defaults(handler=cmd_agents_list)
+
+    # agents revoke / restore / revocations — the kill switch.
+    # These reach a *running* harness through the revocation file named in
+    # harness.yaml; the CLI cannot touch another process's memory.
+    for name, handler, help_text in (
+        ("revoke",  cmd_agent_revoke,  "Stop an agent from calling tools"),
+        ("restore", cmd_agent_restore, "Lift a revocation"),
+    ):
+        kill_p = agents_sub.add_parser(name, help=help_text, description=help_text + ".")
+        kill_p.add_argument("agent_id", metavar="AGENT_ID")
+        kill_p.add_argument("--config", "-c", default="config/harness.yaml", metavar="PATH",
+                            help="Path to harness.yaml (default: config/harness.yaml)")
+        if name == "revoke":
+            kill_p.add_argument("--reason", default=None, metavar="TEXT",
+                                help="Recorded in the revocation file")
+        kill_p.set_defaults(handler=handler)
+
+    agents_revocations = agents_sub.add_parser(
+        "revocations",
+        help="List revoked agents",
+        description="List the agents currently revoked.",
+    )
+    agents_revocations.add_argument(
+        "--config", "-c", default="config/harness.yaml", metavar="PATH",
+        help="Path to harness.yaml (default: config/harness.yaml)",
+    )
+    agents_revocations.set_defaults(handler=cmd_agent_revocations)
 
     # harness
     harness_p = sub.add_parser(

@@ -80,3 +80,65 @@ def cmd_agents_list(args: argparse.Namespace) -> int:
 
     console.write(f"\n{len(agents)} agent(s)")
     return 0
+
+
+# ── Kill switch ───────────────────────────────────────────────────────────
+
+def _store(args: argparse.Namespace):
+    """Open the revocation store named by harness.yaml, or None on error."""
+    from harness.agents.revocation import RevocationStore
+    from harness.config.loader import load_yaml
+
+    try:
+        config = load_yaml(Path(args.config))
+    except (HarnessError, ValueError) as e:
+        console.error(f"Error: {e}")
+        return None
+    if not config.revocation.path:
+        console.error(
+            "Revocation is not configured. Set revocation.path in "
+            f"{args.config} before using the kill switch."
+        )
+        return None
+    return RevocationStore(
+        config.revocation.path,
+        cache_ttl_seconds=config.revocation.cache_ttl_seconds,
+    )
+
+
+def cmd_agent_revoke(args: argparse.Namespace) -> int:
+    store = _store(args)
+    if store is None:
+        return 1
+    store.revoke(args.agent_id, reason=args.reason)
+    console.write(f"Revoked {args.agent_id}.")
+    console.write(
+        "A running harness stops allowing its tool calls within "
+        "revocation.cache_ttl_seconds. Other agents are unaffected."
+    )
+    return 0
+
+
+def cmd_agent_restore(args: argparse.Namespace) -> int:
+    store = _store(args)
+    if store is None:
+        return 1
+    if not store.restore(args.agent_id):
+        console.write(f"{args.agent_id} was not revoked.")
+        return 0
+    console.write(f"Restored {args.agent_id}.")
+    return 0
+
+
+def cmd_agent_revocations(args: argparse.Namespace) -> int:
+    store = _store(args)
+    if store is None:
+        return 1
+    revoked = sorted(store.revoked_agents())
+    if not revoked:
+        console.write("No agents revoked.")
+        return 0
+    for agent_id in revoked:
+        console.write(agent_id)
+    console.write(f"\n{len(revoked)} agent(s) revoked")
+    return 0

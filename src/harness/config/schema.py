@@ -219,6 +219,30 @@ class ExecutionBudgetConfig(BaseModel, frozen=True, extra="forbid"):
         return v
 
 
+class RevocationConfig(BaseModel, frozen=True, extra="forbid"):
+    """Agent kill switch — out-of-band revocation the gate enforces.
+
+    path:
+        JSON file holding the revoked agent ids. Written by
+        `SHAI.revoke_agent()` and by `shai agent revoke`, read by the gate.
+        A file is the medium because the CLI runs in its own process and cannot
+        reach the harness's memory. Empty (default) disables revocation.
+
+    cache_ttl_seconds:
+        How long a read is cached on the gate's hot path. **This is the kill
+        latency** — a revocation written by another process takes effect within
+        one TTL. Named here rather than left as an implementation accident.
+        0 disables caching: every gate call reads the file, which is the fastest
+        possible response at the cost of a read per call.
+
+    Revocation denies at the tool-call gate, the same place `deregister_agent()`
+    does: it stops actions, not conversation. It is agent-scoped only —
+    tool- and source-level denial belongs to policy rules.
+    """
+    path:              str   = ""
+    cache_ttl_seconds: float = Field(default=5.0, ge=0, le=300)
+
+
 class ApprovalsConfig(BaseModel, frozen=True, extra="forbid"):
     """Human-approval enforcement for SENSITIVE and IRREVERSIBLE tools.
 
@@ -452,3 +476,4 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
     patterns_db:     PatternsDBConfig    = Field(default_factory=PatternsDBConfig)
     connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
+    revocation:      RevocationConfig     = Field(default_factory=RevocationConfig)

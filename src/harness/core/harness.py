@@ -20,6 +20,7 @@ from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.adapters.secrets.env import EnvVarProvider
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
+from harness.agents.revocation import RevocationStore
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import emit_deny as emit_gate_deny
@@ -95,6 +96,10 @@ class SHAI:
         self._file_scanners       = file_scanners
         self._policy              = policy
         self._scan_args_for_tags        = frozenset(config.check_tool_call.scan_args_for_tags)
+        self._revocations = RevocationStore(
+            config.revocation.path or None,
+            cache_ttl_seconds=config.revocation.cache_ttl_seconds,
+        )
         # Layer 3 approval policy. An empty secret leaves it None, which denies
         # every SENSITIVE/IRREVERSIBLE tool rather than admitting one unverified.
         _approvals_cfg = config.check_tool_call.approvals
@@ -442,6 +447,44 @@ class SHAI:
     async def list_agents(self) -> list[AgentConfig]:
         return await self._agent_registry.list()
 
+    # ── Kill switch ───────────────────────────────────────────────────────
+
+    def revoke_agent(self, agent_id: str, *, reason: str | None = None) -> None:
+        """Stop this agent from calling tools. Takes effect immediately here.
+
+        Denies at the gate's pre-gate on the next call, leaving every other
+        agent in the process running. The revocation is written to
+        `revocation.path`, so it survives a restart and is visible to any other
+        process reading the same file — including `shai agent revoke`, which is
+        the same switch from the other side.
+
+        The agent stays registered: this stops actions, not conversation, and
+        `restore_agent()` reverses it without reloading anything. Use
+        `deregister_agent()` to remove it entirely.
+
+        Raises ConfigError when `revocation.path` is not configured — a kill
+        switch that silently did nothing would be worse than none.
+        """
+        if not self._revocations.enabled:
+            raise ConfigError(
+                "revocation is not configured; set revocation.path in harness.yaml",
+                op="revoke_agent",
+            )
+        self._revocations.revoke(agent_id, reason=reason)
+
+    def restore_agent(self, agent_id: str) -> bool:
+        """Lift a revocation. False if the agent was not revoked."""
+        if not self._revocations.enabled:
+            raise ConfigError(
+                "revocation is not configured; set revocation.path in harness.yaml",
+                op="restore_agent",
+            )
+        return self._revocations.restore(agent_id)
+
+    def revoked_agents(self) -> frozenset[str]:
+        """Currently revoked agent ids. Empty when revocation is unconfigured."""
+        return self._revocations.revoked_agents()
+
     # ── Subagent scoping (sync, pure) ─────────────────────────────────────
 
     def scope_context_for_subagent(
@@ -618,6 +661,13 @@ class SHAI:
     async def check_tool_call(
         self, name: str, args: dict[str, Any], ctx: AgentContext
     ) -> GateDecision:
+        # R0: revocation — the kill switch. First, so a revoked agent consumes
+        # no rate-limit or budget state on its way to being denied.
+        if self._revocations.is_revoked(ctx.agent_id):
+            return await self._deny_pre_gate(
+                f"agent '{ctx.agent_id}' is revoked", name, ctx
+            )
+
         # R1: rate limit check before the gate runs
         if self._rate_limiter is not None:
             allowed, reason = self._rate_limiter.check(ctx.agent_id, name)

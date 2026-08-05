@@ -365,6 +365,33 @@ dev/demo contexts where no token is available.
 
 ---
 
+## Agent revocation (kill switch)
+
+```yaml
+revocation:
+  path: state/revoked.json    # empty (default) disables revocation
+  cache_ttl_seconds: 5        # 0 = read every call
+```
+
+Denies a revoked agent at the gate's **pre-gate**, before the rate limiter, so a
+revoked agent consumes no budget on its way to being denied. Other agents in the
+process are unaffected. One `AuditEvent` per denied call, reason
+`agent '<id>' is revoked`.
+
+Two surfaces write the same file — `SHAI.revoke_agent()` / `restore_agent()` and
+`shai agents revoke|restore|revocations`. A file is the medium because the CLI
+runs in its own process. **`cache_ttl_seconds` is the kill latency**; the
+in-process API sees its own write immediately.
+
+- Persistent: survives a restart.
+- A read error keeps the last known set (never resurrects, never denies everyone).
+- Stops actions, not conversation — the agent stays registered, scan boundaries
+  still run. `deregister_agent()` is the full removal.
+- Agent-scoped only; tool/source denial belongs to policy rules.
+- `revoke_agent()` with no `revocation.path` raises `ConfigError`.
+
+---
+
 ## Connectivity
 
 ```yaml

@@ -206,6 +206,39 @@ An agent whose `allowed_tags` contains every tag in an entry is rejected with a 
 
 The list belongs in `harness.yaml` rather than in the agent file: an agent declaring the combinations it may not hold would be declaring its own limits. `shai validate` prints each configured combination and fails on any agent that violates one.
 
+### Agent kill switch
+
+```yaml
+revocation:
+  path: state/revoked.json      # empty (default) disables revocation
+  cache_ttl_seconds: 5          # 0 = read every call
+```
+
+Revoking an agent stops it calling tools — it is denied at the gate's pre-gate on the next call, and every other agent in the process keeps running. Two surfaces, one file:
+
+```python
+harness.revoke_agent("billing_agent", reason="anomalous spend")
+harness.restore_agent("billing_agent")
+harness.revoked_agents()          # frozenset of ids
+```
+
+```bash
+shai agents revoke billing_agent --reason "anomalous spend"
+```
+
+The CLI runs in its own process and cannot reach a running harness's memory, so the file at `revocation.path` is the medium between them. **`cache_ttl_seconds` is the kill latency** — a revocation written by another process takes effect within one TTL. The in-process API sees its own revocation immediately.
+
+Four behaviours worth knowing before you need them:
+
+- **It survives a restart.** A restart must not un-kill a killed agent.
+- **A read error never resurrects a revoked agent.** If the file becomes unreadable, the last known set stays enforced and the error is logged. Failing open would be a kill switch that silently stopped working; failing closed on an unreadable file would deny every agent in the process.
+- **It stops actions, not conversation.** The agent stays registered and the scan boundaries still run — use `deregister_agent()` to remove it entirely.
+- **It is agent-scoped only.** Denying a specific tool or source is what policy rules are for.
+
+Calling `revoke_agent()` with no `revocation.path` configured raises `ConfigError` rather than doing nothing quietly.
+
+If `connectivity.enabled` is on, revocation also stops the agent's outbound MCP traffic within `token_ttl_seconds` — no new tokens are minted for a denied call. See [connectors.md](connectors.md).
+
 ### Audit sinks
 
 ```yaml

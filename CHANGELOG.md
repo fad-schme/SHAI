@@ -43,6 +43,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tools are unaffected.
 
 ### Added
+- **Agent kill switch** — `SHAI.revoke_agent()` / `restore_agent()` /
+  `revoked_agents()`, plus `shai agents revoke|restore|revocations`. A revoked
+  agent is denied at the gate's pre-gate, before the rate limiter, while every
+  other agent in the process keeps running; the denial emits one `AuditEvent`
+  like any other. New top-level `revocation` config block with `path` and
+  `cache_ttl_seconds` (default 5, 0 = read every call). Empty `path` (the
+  default) disables the feature, and calling `revoke_agent()` without it raises
+  `ConfigError` rather than quietly doing nothing.
+
+  Both surfaces write the same JSON file, because `shai` runs in its own
+  process and cannot reach a running harness's memory — **`cache_ttl_seconds`
+  is therefore the kill latency**, while the in-process API applies immediately.
+  Revocations persist across restarts, and a read error keeps the last known
+  set rather than resurrecting a revoked agent or denying every agent at once.
+  Revocation stops actions, not conversation: the agent stays registered and the
+  scan boundaries still run — `deregister_agent()` remains the full removal.
+
 - **`command_injection_scan`** — new built-in scanner detecting shell command
   *composition* via `bashlex` AST shapes: a pipeline whose sink is an
   interpreter, a `/dev/tcp` redirect, fetch-then-execute chains, and inline
