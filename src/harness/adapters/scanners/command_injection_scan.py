@@ -71,7 +71,8 @@ _DESTRUCTIVE = re.compile(
 _TRIGGER = re.compile(
     r"(?:\b(?:" + "|".join(sorted(_INTERPRETERS | _FETCHERS)) + r")\b)"
     r"|/dev/(?:tcp|udp)/"
-    r"|\bchmod\b|\bnc\b|\bncat\b|\bnetcat\b|\bmkfs\b|\bsudo\b|\bdd\b",
+    r"|\bchmod\b|\bchown\b|\bnc\b|\bncat\b|\bnetcat\b|\bmkfs\b|\bsudo\b|\bdoas\b"
+    r"|\bdd\b|\brm\b|\bshred\b|\bkillall\b",
     re.IGNORECASE,
 )
 
@@ -82,6 +83,23 @@ _MAX_LINE_CHARS = 2000
 # Markdown scaffolding that would break the parse without changing the command.
 _FENCE_RE = re.compile(r"^\s*```+\w*\s*$")
 _PROMPT_RE = re.compile(r"^\s*(?:[$#>]\s+|\d+\.\s+|[-*]\s+)")
+
+# An agent does not emit a bare shell line — it emits a *tool call* whose
+# argument is the command: `run_shell('curl x | sh')`, `{"command": "wget …"}`.
+# Parsing the enclosing line as shell sees only a quoted word, so the pipeline
+# inside is invisible. These two shapes lift the quoted payload out as its own
+# candidate.
+#
+# Both are structural: an identifier immediately followed by `(`, and a
+# command-ish key bound to a string. Bare quotes in prose are deliberately not
+# extracted — "the docs say 'curl x | sh'" is discussion, and the line-level
+# candidate already covers it at the demoted severity.
+_CALL_ARG_RE = re.compile(r"""\w+\s*\(\s*(['"])(?P<cmd>.+?)\1""")
+_CMD_KEY_RE = re.compile(
+    r"""["']?(?:command|cmd|script|shell|exec|run|entrypoint)["']?\s*[:=]\s*"""
+    r"""(['"])(?P<cmd>.+?)\1""",
+    re.IGNORECASE,
+)
 
 # A statement whose leading word is a program is an invocation; one that starts
 # in prose is text discussing a command. Findings from the latter are demoted,
@@ -233,9 +251,15 @@ def _candidates(text: str) -> list[str]:
         if not line or not _TRIGGER.search(line):
             continue
         out.append(line)
+        # The line itself may be a tool call wrapping the real command.
+        for pattern in (_CALL_ARG_RE, _CMD_KEY_RE):
+            for m in pattern.finditer(line):
+                inner = m.group("cmd").strip()
+                if inner and inner != line and _TRIGGER.search(inner):
+                    out.append(inner)
         if len(out) >= _MAX_CANDIDATES:
             break
-    return out
+    return out[:_MAX_CANDIDATES]
 
 
 class CommandInjectionScanner:

@@ -60,9 +60,18 @@ class SHAI:
         agent = await harness.load_agent("config/agents/my_agent.yaml")
 
     Per-turn:
-        verdict = await harness.scan_input(text, agent)
-        gate    = await harness.check_tool_call(name, args, agent)
-        verdict = await harness.scan_output(text, agent)
+        ctx     = agent.for_conversation(conversation_id)
+        verdict = await harness.scan_input(text, ctx)
+        gate    = await harness.check_tool_call(name, args, ctx)
+        verdict = await harness.scan_output(text, ctx)
+
+    One instance serves many concurrent turns. Instance state — resolved tools,
+    rate limiter, session budget, audit emitter — is keyed and safe to share.
+    The *context* is not: it carries the turn's signal bus, so concurrent turns
+    need one context each. `for_conversation()` derives them, and doing so also
+    separates the execution budget and the cross-turn threat score, which key
+    on `conversation_id or agent_id`. Reusing one context across concurrent
+    turns merges all three.
     """
 
     def __init__(
@@ -512,6 +521,22 @@ class SHAI:
 
         # Attach fresh TurnSignals at turn start. scan_input is always the
         # first boundary in a turn; downstream boundaries read/write this.
+        #
+        # A bus already attached means the previous turn on this context never
+        # reached scan_output. Two causes, and the caller cannot be told apart
+        # from here: an abandoned turn (the application raised mid-turn), or two
+        # turns running concurrently through one shared context — which silently
+        # merges their evidence. Replacing keeps Invariant 7 (per-turn signal
+        # isolation) intact for the turn starting now; the log is what makes the
+        # sharing case findable, since nothing else about it is observable.
+        if ctx.turn_signals is not None:
+            log.warning(
+                "turn signals were still attached at scan_input — previous turn "
+                "did not reach scan_output; if two turns share this "
+                "AgentContext concurrently, derive one per conversation with "
+                "ctx.for_conversation(id)",
+                extra={"session_id": session_id, **ctx.to_log_fields()},
+            )
         ctx._attach_signals(TurnSignals())
 
         # Accumulator pre-check: escalated sessions blocked before scanners run.

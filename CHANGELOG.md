@@ -43,6 +43,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tools are unaffected.
 
 ### Added
+- **`AgentContext.for_conversation(id)`** — derives a context scoped to one
+  conversation, preserving `agent_id`, `sub_agent_id`, `allowed_tags` and
+  `approvals`. `load_agent()` returns the template to derive from; there was
+  previously no supported way to set `conversation_id`, so callers either
+  constructed `AgentContext` field-by-field — which the docs told them not to
+  do — or left every conversation sharing one execution budget and one
+  cross-turn threat score.
+
+  This is also the fix for a **per-turn signal isolation** defect. A context
+  carries the turn's `TurnSignals`: `scan_input` attaches it, `scan_output`
+  clears it. Two turns running concurrently through the *same* context shared
+  one bus — the second `scan_input` replaced the first turn's evidence, and
+  whichever `scan_output` ran first cleared it for both. The first turn then
+  reached its own `scan_output` with nothing recorded: its injection signal was
+  gone, so gate layer 6 correlated against nothing and the consolidated
+  turn-risk block could not fire. The documentation pointed both ways at once,
+  telling callers not to share a context between turns and, three lines later,
+  to hold the one from `load_agent()` for the agent's lifetime.
+
+  Two turns presenting the same context are indistinguishable, so the harness
+  cannot resolve this alone — `for_conversation()` is how a caller keeps them
+  apart. `scan_input` now logs a warning when it finds a bus already attached,
+  which is either a shared context or a turn that never reached `scan_output`.
+  Sequential reuse of one context is unchanged and silent.
+
 - **Agent kill switch** — `SHAI.revoke_agent()` / `restore_agent()` /
   `revoked_agents()`, plus `shai agents revoke|restore|revocations`. A revoked
   agent is denied at the gate's pre-gate, before the rate limiter, while every

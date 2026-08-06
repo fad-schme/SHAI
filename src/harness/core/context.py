@@ -8,8 +8,20 @@ Contains exactly what is needed to identify an agent call:
 tenant_id is read from harness.yaml by the Harness instance and stamped
 on AuditEvents directly — agents do not supply it.
 
-Obtained by calling harness.load_agent() — never constructed directly
-in agent code.
+Obtained by calling harness.load_agent(), then narrowed with for_conversation()
+and scope_subagent() — never constructed field-by-field in agent code.
+
+**One context per concurrent turn.** A context carries the turn's signal bus
+(see turn_signals.py): scan_input attaches it, scan_output clears it. Two turns
+running concurrently through the *same* context object therefore write to one
+bus — the second scan_input replaces the first turn's evidence, and the first
+scan_output clears the second turn's. Derive one per conversation with
+for_conversation(); the object returned by load_agent() is the template to
+derive from, not a handle to share across live turns.
+
+Sequential reuse is fine: a turn ends at scan_output, and the next may reuse
+the same context. It is concurrency that needs distinct contexts, because
+nothing in the context distinguishes two turns that present identically.
 """
 from __future__ import annotations
 
@@ -48,6 +60,29 @@ class AgentContext(BaseModel, frozen=True):
         if not v.strip():
             raise ValueError("agent_id must be non-empty")
         return v
+
+    def for_conversation(self, conversation_id: str) -> AgentContext:
+        """Return a context scoped to one conversation.
+
+        This is how a caller gets a context per concurrent turn. `load_agent()`
+        returns one context with no `conversation_id`, which collapses every
+        session onto `agent_id`: one execution budget, one accumulated threat
+        score, and — because a context carries the turn's signal bus — one bus
+        shared by every turn running through it. Derive one of these per
+        conversation and the three become independent.
+
+        Everything else is preserved; only `conversation_id` changes. The new
+        context starts with no signals attached, whatever the receiver's state.
+        """
+        if not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty")
+        return AgentContext(
+            agent_id=self.agent_id,
+            sub_agent_id=self.sub_agent_id,
+            allowed_tags=self.allowed_tags,
+            conversation_id=conversation_id,
+            approvals=self.approvals,
+        )
 
     def scope_subagent(self, sub_agent_id: str, *, allowed_tags: list[str]) -> AgentContext:
         """Return a new AgentContext scoped to a declared subagent.

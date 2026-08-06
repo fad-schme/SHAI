@@ -116,15 +116,22 @@ For every field on every verdict and event, see [`.claude/skills/verdicts-events
 Every boundary call carries an `AgentContext`. It identifies who is making the call and what they're allowed to do.
 
 ```python
-ctx = await harness.load_agent("config/agents/my_agent.yaml")
+agent = await harness.load_agent("config/agents/my_agent.yaml")   # once, at startup
+ctx   = agent.for_conversation(conversation_id)                   # per conversation
 ```
+
+`load_agent()` returns the template. Derive a context per conversation from it:
+concurrent turns need one context each, because a context carries the turn's
+signal bus and two turns sharing it overwrite each other's evidence. Deriving
+also separates the execution budget and the cross-turn threat score, which key
+on `conversation_id`. Sequential reuse after `scan_output` is fine.
 
 Key fields on `AgentContext`:
 
 - `agent_id` — required
 - `sub_agent_id` — set when this call is on behalf of a subagent
 - `allowed_tags` — narrowed capability scope for subagents
-- `conversation_id` — session key for all session-scoped state: the cross-turn threat accumulator and the execution budget. Falls back to `agent_id` when unset, which collapses every conversation onto one budget. Propagated to subagents.
+- `conversation_id` — session key for all session-scoped state: the cross-turn threat accumulator and the execution budget. Set it with `for_conversation()`. Falls back to `agent_id` when unset, which collapses every conversation onto one budget. Propagated to subagents.
 - `approvals` — signed `ApprovalGrant`s for the call about to be gated, required by `SENSITIVE` / `IRREVERSIBLE` tools. Not propagated to subagents: a grant authorises one call, not whatever that call delegates
 
 Subagents can only be narrower than their parent, never wider. When you scope a context for a subagent:

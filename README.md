@@ -79,7 +79,10 @@ from harness import SHAI, Tool
 
 harness = await SHAI.from_yaml("config/harness.yaml")
 await harness.register_tools([Tool("search_docs", tags=["read"])])
-ctx = await harness.load_agent("config/agents/my_agent.yaml")
+agent = await harness.load_agent("config/agents/my_agent.yaml")
+
+# Per conversation — concurrent turns need one context each
+ctx = agent.for_conversation(conversation_id)
 
 # Per turn
 verdict = await harness.scan_input(user_text, ctx)
