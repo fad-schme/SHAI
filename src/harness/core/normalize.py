@@ -74,6 +74,19 @@ _FRAGMENT_SEP = re.compile(r"[\s\-/_.|~*]+")
 # Ordinary hyphenation ("state-of-the-art") is a single punct char with no
 # flanking spaces, so it does not match.
 _ODD_DELIM = re.compile(r"(?:\s[\-/_.|~*]+\s|[\-/_.|~*]{2,})")
+# Consecutive single-character tokens needed before a run counts as
+# per-character fragmentation. Four is short enough to catch a fragmented
+# trigger word and long enough that initials, table cells, and "a b c" in prose
+# do not qualify.
+_MIN_CHAR_RUN = 4
+# Transitions that reveal a word glued to what precedes it with no separator.
+# Deliberately not letter → digit: "UK12345678901234567890" splits into noise
+# and no bypass needs it.
+_GLUED_BOUNDARY = re.compile(
+    r"(?<=[a-z0-9])(?=[A-Z])"      # fooBar, 10001Ignore
+    r"|(?<=[A-Z])(?=[A-Z][a-z])"   # USAIgnore
+    r"|(?<=[0-9])(?=[A-Za-z])"     # 10001ignore
+)
 # base64 candidate: a long run of the base64 alphabet, optionally padded.
 _B64_CANDIDATE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
 # hex candidate: a long run of hex digits with even length.
@@ -138,20 +151,89 @@ def _shannon_entropy(s: str) -> float:
     return -sum((c / n) * math.log2(c / n) for c in counts.values())
 
 
+def _split_glued(text: str) -> str:
+    """Insert a boundary where a word was glued to what precedes it.
+
+    An indirect payload is concatenated onto the document that carries it, and
+    if no separator lands between them the trigger word loses its left word
+    boundary: "…New York, NY 10001 USAIgnore your previous instructions". Most
+    catalog patterns lead with a ``\\b``-anchored token, and there is no ``\\b``
+    between ``usa`` and ``ignore`` — both are word characters — so the payload
+    passes while the identical text one space later blocks.
+
+    Splits at the three transitions that survive: lower/digit → upper,
+    acronym → capitalised word ("USAIgnore"), and digit → letter
+    ("10001Ignore"). **Glue between two lowercase words is not recoverable
+    here** — "regardsignore" has no transition to split on, and separating it
+    needs a dictionary rather than a character rule.
+
+    Returns "" when nothing was split, so the caller adds no view.
+    """
+    split = _GLUED_BOUNDARY.sub(" ", text)
+    return split if split != text else ""
+
+
+def _longest_char_run(tokens: list[str]) -> int:
+    """Length of the longest run of consecutive single-character tokens."""
+    longest = run = 0
+    for token in tokens:
+        run = run + 1 if len(token) == 1 else 0
+        longest = max(longest, run)
+    return longest
+
+
+def _join_char_runs(tokens: list[str]) -> str:
+    """Join runs of single-character tokens, leaving whole words spaced.
+
+    "i g n o r e your previous" -> "ignore your previous".
+
+    This is the view the catalogs can actually match. Removing every separator
+    instead yields "ignoreyourprevious", where the word boundaries are gone —
+    and most catalog patterns lead with a ``\\b``-anchored token, so they match
+    neither the fragmented text nor that repair of it.
+    """
+    out: list[str] = []
+    joined = False
+    i = 0
+    while i < len(tokens):
+        if len(tokens[i]) > 1:
+            out.append(tokens[i])
+            i += 1
+            continue
+        j = i
+        while j < len(tokens) and len(tokens[j]) == 1:
+            j += 1
+        if j - i >= _MIN_CHAR_RUN:
+            out.append("".join(tokens[i:j]))
+            joined = True
+        else:
+            out.extend(tokens[i:j])
+        i = j
+    return " ".join(out) if joined else ""
+
+
 def _reassemble(text: str) -> list[tuple[str, str]]:
     """Return reassembled views when ``text`` looks fragmented.
 
-    Two fragmentation styles need two different repairs, so this may yield two
-    views:
+    Three fragmentation styles need three different repairs, so this may yield
+    three views:
 
     - separators collapsed to single spaces — repairs word-level fragmentation
       ("ignore -/- previous" -> "ignore previous"), preserving word boundaries
       that space-delimited signatures rely on;
+    - single-character runs joined in place — repairs per-character
+      fragmentation while keeping the surrounding words separate
+      ("i g n o r e your previous" -> "ignore your previous");
     - separators removed entirely — repairs per-character fragmentation
       ("i g n o r e" -> "ignore").
 
-    Fires only when the text looks fragmented: many short tokens once split on
-    separators, or separators appearing between the majority of characters.
+    Fires when the text looks fragmented anywhere: a long enough run of
+    single-character tokens, many short tokens once split on separators, or
+    separators appearing between the majority of characters. The run test is
+    what makes this local — the ratio tests are computed over the whole string,
+    so fragmenting three words inside an ordinary paragraph dilutes both below
+    threshold and the repair would never fire on ratios alone.
+
     Returns an empty list for ordinary prose so it is never destructured.
     """
     tokens = [t for t in _FRAGMENT_SEP.split(text) if t]
@@ -165,13 +247,19 @@ def _reassemble(text: str) -> list[tuple[str, str]]:
     # words are a strong fragmentation tell — they effectively never occur two
     # or more times in ordinary prose.
     odd_delims = len(_ODD_DELIM.findall(text)) >= 2
-    if short_ratio < 0.6 and not dense and not odd_delims:
+    # Local tell: an unbroken run of single-character tokens. Dilution-proof,
+    # because it does not average over the rest of the document.
+    char_run = _longest_char_run(tokens) >= _MIN_CHAR_RUN
+    if not char_run and short_ratio < 0.6 and not dense and not odd_delims:
         return []
 
     views: list[tuple[str, str]] = []
     spaced = _FRAGMENT_SEP.sub(" ", text).strip()
     if spaced and spaced != text:
         views.append(("reassemble_fragments", spaced))
+    rejoined = _join_char_runs(tokens)
+    if rejoined and rejoined != text and rejoined != spaced:
+        views.append(("reassemble_fragments", rejoined))
     stripped = _FRAGMENT_SEP.sub("", text)
     if stripped and stripped != text and stripped != spaced:
         views.append(("reassemble_fragments", stripped))
@@ -351,7 +439,20 @@ def canonicalize(
             if name not in transforms:
                 transforms.append(name)
 
-    if decode and len(folded.encode("utf-8", "ignore")) <= max_bytes:
+    within_budget = len(folded.encode("utf-8", "ignore")) <= max_bytes
+
+    # Bounded by max_bytes for the same reason decoding is: this is a full-size
+    # substitution producing a full-size extra view, and every scanner runs over
+    # every view. A glued payload hidden inside an oversized document is
+    # therefore still missed — the same residual the decode bound already has.
+    if within_budget:
+        unglued = _split_glued(folded)
+        if unglued and unglued not in seen:
+            views.append(unglued)
+            seen.add(unglued)
+            transforms.append("split_glued")
+
+    if decode and within_budget:
         frontier = list(views)
         depth = 0
         while frontier and depth < max_depth:

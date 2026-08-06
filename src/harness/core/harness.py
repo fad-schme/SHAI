@@ -785,7 +785,13 @@ class SHAI:
             enabled=self._config.scan_file.enabled,
             block_at=self._config.scan_file.block_at,
             state=self._scan_state,
-            normalization=self._config.normalization,
+            # No normalization: the text this boundary carries is a *path*, not
+            # content. De-obfuscating it produces views that are different paths
+            # — a split on "AppData", a decoded base64-looking directory — and
+            # FileScanner reports HIGH `file.not_found` for every one of them,
+            # while both file scanners re-open the file once per view. File
+            # content is normalized where it is extracted, not here.
+            normalization=None,
             audit_tags=self._audit_tags_for(ctx),
             on_error=self._config.scan_file.on_error,
         )

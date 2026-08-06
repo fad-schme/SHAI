@@ -100,7 +100,10 @@ async def test_obfuscated_payload_is_blocked(name, obfuscate):
 @pytest.mark.asyncio
 async def test_transforms_recorded_in_audit_extra_without_raw_text():
     _, event = await _scan(_b64(MARKER), normalization=NormalizationConfig())
-    assert event.extra.get("normalization") == ["base64"]
+    # `in`, not equality: a base64 blob is mixed-case, so split_glued
+    # legitimately fires on it too. What this test pins is that transforms
+    # are recorded and the payload is not.
+    assert "base64" in event.extra.get("normalization", [])
     # audit must not carry the payload in any form
     assert MARKER not in str(event.extra)
 

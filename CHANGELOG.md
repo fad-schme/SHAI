@@ -140,6 +140,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   control is enforced at agent load rather than by a policy rule, so the
   existing `policy.digest` would not have moved if an operator dropped it.
 
+### Fixed
+- **Per-character fragmentation is now detected.** A payload written
+  `i g n o r e your previous instructions` passed every boundary. Two separate
+  causes, both in the normalization layer that produces the views scanners
+  match against.
+
+  The repair fired on whole-text ratios — the proportion of short tokens and
+  the density of separators — so padding a fragmented trigger phrase with
+  ordinary prose drove both below threshold and switched the repair off
+  entirely. Fragmenting three words inside a paragraph was enough. A run of
+  four or more single-character tokens now fires it regardless of what
+  surrounds them.
+
+  And where the repair did fire, the view it produced for this shape had every
+  separator stripped — `ignoreyourpreviousinstructions` — which no pattern
+  anchored on a word boundary can match, and most patterns are. Runs of single
+  characters are now joined in place, leaving surrounding words separate, so
+  the recovered text reads `ignore your previous instructions`.
+
+  Affects `scan_input`, `scan_output`, `scan_tool_result`, `scan_file`, and
+  argument scanning at the gate — anywhere normalization runs. No config or API
+  change; text already detected stays detected.
+
 ## [0.7.0] — 2026-08-05
 
 ### Added
