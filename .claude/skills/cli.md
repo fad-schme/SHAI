@@ -56,6 +56,7 @@ shai harness inspect --help
 shai harness graph --help
 shai audit --help
 shai audit tail --help
+shai audit verify --help
 shai patterns --help
 shai patterns apply --help
 ```
@@ -234,6 +235,41 @@ to find:**
 Decisions are colorised only when stdout is an interactive terminal: red =
 deny/blocked, yellow = warn/redact, and green = allow. Redirected and piped
 output is plain text. Set `NO_COLOR=1` to disable color explicitly.
+
+---
+
+## `shai audit verify`
+
+Recomputes the HMAC-SHA256 signature on every record in a trail written with
+`audit_signing.enabled`. This is the read side of Invariant 5 — the command an
+operator runs to establish that a log has not been altered since it was written.
+
+```bash
+shai audit verify --file logs/audit.jsonl --secret SHAI_AUDIT_SIGNING_KEY
+cat shipped.jsonl | shai audit verify --secret SHAI_AUDIT_SIGNING_KEY
+```
+
+`--secret` names the environment variable holding the key, not the key — the
+same convention as `shai patterns`, keeping it out of shell history and the
+process list.
+
+Each record lands in one of four buckets, and the summary reports all four:
+
+| Bucket | Meaning |
+|---|---|
+| verified | Signature recomputed and matched |
+| mismatched | Record altered after signing, or the wrong key was supplied |
+| unsigned | No `signature` field — a gap in a trail that should have none |
+| malformed | Not parsable as a JSON object |
+
+**Exit 0 only when every record verified.** Unsigned and malformed records fail
+the run alongside mismatched ones: a trail with a hole in it does not answer the
+question signing was enabled to answer. An empty file is also a failure — zero
+records verified is not a verified trail. Failing line numbers are printed, up
+to 20, then a count of the rest.
+
+Verification canonicalises before hashing, so a record that a log shipper
+reserialized with different key order still verifies.
 
 ---
 

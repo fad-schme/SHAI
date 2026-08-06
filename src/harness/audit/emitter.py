@@ -14,9 +14,10 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import json
 import logging
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from harness.core.errors import AuditEmissionError
 from harness.core.events import canonical_json
@@ -53,6 +54,31 @@ def _sign_event(event: AnyAuditEvent, secret: bytes) -> str:
     """
     body = canonical_json(event, exclude={"signature"}).encode()
     return hmac.new(secret, body, hashlib.sha256).hexdigest()
+
+
+def verify_line(line: dict[str, Any], secret: bytes) -> bool:
+    """Verify one written audit line against the signature it carries.
+
+    Takes the parsed JSONL object rather than an `AuditEvent`, because that is
+    what a verifier actually has: reconstructing the model first would verify a
+    re-serialization of the line instead of the line, and would fail on any
+    record written by a version whose schema has since moved on.
+
+    Lifting out `signature` and re-encoding the remainder reproduces exactly
+    what `_sign_event` covered — `canonical_json` writes nulls out and sorts
+    keys, so the bytes are a function of the record alone. An unsigned or
+    malformed line is not verifiable and returns False; deciding whether that
+    is acceptable belongs to the caller, which knows if signing was on.
+    """
+    claimed = line.get("signature")
+    if not isinstance(claimed, str) or not claimed:
+        return False
+    body = json.dumps(
+        {k: v for k, v in line.items() if k != "signature"}, sort_keys=True
+    ).encode()
+    return hmac.compare_digest(
+        hmac.new(secret, body, hashlib.sha256).hexdigest(), claimed
+    )
 
 
 class AuditEmitter:

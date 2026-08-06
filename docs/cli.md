@@ -1,6 +1,6 @@
 # CLI
 
-The `shai` command is a developer tool: validate config, tail audit logs, and manage the signed pattern database. It does **not** enforce anything at runtime — that's the SDK's job. Think of it as your build-time and on-call companion.
+The `shai` command is a developer tool: validate config, tail and verify audit logs, and manage the signed pattern database. It does **not** enforce anything at runtime — that's the SDK's job. Think of it as your build-time and on-call companion.
 
 Installed as a `console_scripts` entry point along with the package:
 
@@ -26,6 +26,7 @@ shai validate --help
 shai agents list --help
 shai harness inspect --help
 shai audit tail --help
+shai audit verify --help
 shai patterns --help
 shai patterns verify --help
 ```
@@ -182,6 +183,35 @@ Filter flags:
 | `--last` / `-n` | N lines (default 20) |
 | `--follow` / `-F` | Follow the file |
 | `--file` / `-f` | Path, or `-` for stdin |
+
+### Verify a signed trail
+
+When `audit_signing.enabled` is set, every record carries an HMAC-SHA256
+signature. `verify` recomputes each one and tells you whether the file still
+says what it said when it was written:
+
+```bash
+shai audit verify --file logs/audit.jsonl --secret SHAI_AUDIT_SIGNING_KEY
+```
+
+`--secret` names the **environment variable** holding the key, never the key
+itself — the same convention as `shai patterns`, so the key stays out of shell
+history and the process list.
+
+```
+failures:
+  line 4812: SIGNATURE MISMATCH - record altered or wrong key
+  line 5210: no signature
+9,043 records: 9,041 verified, 1 mismatched, 1 unsigned, 0 malformed
+```
+
+Exit status is 0 only when every record verified. Mismatched, unsigned, and
+malformed records all fail the run: a trail with a hole in it does not answer
+the question signing was turned on to answer. An empty file fails too — zero
+records verified is not a verified trail.
+
+Reads stdin with `-f -`, so a shipped log can be checked in a pipeline without
+landing on disk.
 
 ## `shai patterns` — the signed pattern database
 

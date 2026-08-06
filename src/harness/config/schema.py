@@ -282,7 +282,7 @@ class AuditSigningConfig(BaseModel, frozen=True, extra="forbid"):
 
     The signing key is resolved via SecretsProvider (secret:// URI).
     When enabled, every AuditEvent gets a `signature` field before emission.
-    Verification: harness audit verify --file logs/audit.jsonl
+    Verification: shai audit verify --file logs/audit.jsonl --secret ENV_VAR
     """
     enabled: bool = False
     secret:  str  = ""    # secret://ENV_VAR resolved at startup

@@ -1,4 +1,8 @@
-"""harness audit tail — tail and filter an audit JSONL log."""
+"""shai audit — inspect and verify audit JSONL logs.
+
+  shai audit tail   --file <path> [--follow] [--boundary NAME] [--decision D]
+  shai audit verify --file <path> --secret <env_var>
+"""
 from __future__ import annotations
 
 import argparse
@@ -95,6 +99,105 @@ def _read_tail(file: Path, n: int) -> list[str]:
         return []
     with file.open(encoding="utf-8") as fh:
         return [line.rstrip("\r\n") for line in deque(fh, maxlen=n)]
+
+
+_MAX_REPORTED = 20
+
+
+def cmd_audit_verify(args: argparse.Namespace) -> int:
+    """Verify every signed line in an audit log against `audit_signing.secret`.
+
+    Exit 0 only when every line verified. A tampered, unsigned, or unparsable
+    line all fail the run: a signed trail with a hole in it does not answer the
+    question signing was enabled to answer, and reporting a gap as success
+    would be worse than not checking.
+    """
+    from harness.audit.emitter import verify_line
+
+    secret = _signing_secret(args.secret)
+    if secret is None:
+        return 1
+
+    use_stdin = args.file == "-"
+    path = None if use_stdin else Path(args.file)
+    if path is not None and not path.is_file():
+        console.error(f"error: file not found: {path}")
+        return 1
+
+    try:
+        if use_stdin:
+            counts, failures = _verify_lines(sys.stdin, secret, verify_line)
+        else:
+            with path.open(encoding="utf-8") as fh:
+                counts, failures = _verify_lines(fh, secret, verify_line)
+    except (OSError, UnicodeDecodeError) as e:
+        console.error(f"error: {e}")
+        return 1
+
+    ok, tampered, unsigned, malformed = counts
+    bad = tampered + unsigned + malformed
+    if failures:
+        console.write("failures:")
+        for line in failures:
+            console.write(line)
+        if bad > len(failures):
+            console.write(f"  ... and {bad - len(failures)} more")
+
+    total = ok + bad
+    console.write(
+        f"{total} records: {ok} verified, {tampered} mismatched, "
+        f"{unsigned} unsigned, {malformed} malformed"
+    )
+    if total == 0:
+        console.error("error: no records found")
+        return 1
+    return 0 if bad == 0 else 1
+
+
+def _verify_lines(lines, secret: bytes, verify) -> tuple[tuple[int, int, int, int], list[str]]:
+    """Classify every record as verified / mismatched / unsigned / malformed."""
+    ok = tampered = unsigned = malformed = 0
+    failures: list[str] = []
+
+    def record(lineno: int, kind: str) -> None:
+        if len(failures) < _MAX_REPORTED:
+            failures.append(f"  line {lineno}: {kind}")
+
+    for lineno, raw in enumerate(lines, start=1):
+        if not raw.strip():
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            malformed += 1
+            record(lineno, "not valid JSON")
+            continue
+        if not isinstance(event, dict):
+            malformed += 1
+            record(lineno, "not a JSON object")
+        elif not event.get("signature"):
+            unsigned += 1
+            record(lineno, "no signature")
+        elif verify(event, secret):
+            ok += 1
+        else:
+            tampered += 1
+            record(lineno, "SIGNATURE MISMATCH - record altered or wrong key")
+
+    return (ok, tampered, unsigned, malformed), failures
+
+
+def _signing_secret(env_var: str) -> bytes | None:
+    """Resolve the signing key from an environment variable name.
+
+    Same contract as `shai patterns` — the key is never a command-line
+    argument, which would put it in the shell history and the process list.
+    """
+    value = os.environ.get(env_var)
+    if not value:
+        console.error(f"error: environment variable {env_var!r} not set")
+        return None
+    return value.encode()
 
 
 def cmd_audit_tail(args: argparse.Namespace) -> int:

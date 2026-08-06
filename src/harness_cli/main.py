@@ -13,6 +13,9 @@ Commands:
   shai audit tail         Tail an audit JSONL log file with decision filtering.
                           Surfaces: argument violations, irreversibility blocks,
                           session escalations, and de-obfuscation signals.
+  shai audit verify       Verify every record against the audit signing key.
+                          Non-zero exit on any mismatched, unsigned, or
+                          malformed record.
 
 Usage:
   shai --help
@@ -25,11 +28,15 @@ Usage:
   shai harness inspect [--config PATH] [--agents-dir DIR]
   shai harness graph [--config PATH] [--agents-dir DIR] [--format dot|json]
   shai audit tail [--file PATH] [--follow] [--boundary NAME] [--decision DECISION]
+  shai audit verify --file PATH --secret ENV_VAR
 
 Audit tail examples:
   shai audit tail --file logs/audit.jsonl --follow
   shai audit tail --file logs/audit.jsonl --boundary tool_call_gate --decision deny
   shai audit tail --file logs/audit.jsonl --decision deny --last 50
+
+Audit verify example:
+  shai audit verify --file logs/audit.jsonl --secret SHAI_AUDIT_SIGNING_KEY
 """
 from __future__ import annotations
 
@@ -42,7 +49,7 @@ from harness_cli.commands.agents import (
     cmd_agent_revoke,
     cmd_agents_list,
 )
-from harness_cli.commands.audit import cmd_audit_tail
+from harness_cli.commands.audit import cmd_audit_tail, cmd_audit_verify
 from harness_cli.commands.harness import cmd_harness_graph, cmd_harness_inspect
 from harness_cli.commands.patterns import (
     cmd_candidates_list,
@@ -218,6 +225,20 @@ def build_parser() -> argparse.ArgumentParser:
     tail_p.add_argument("--decision", "-d", choices=_DECISIONS, default=None,
                         help="Filter by decision")
     tail_p.set_defaults(handler=cmd_audit_tail)
+
+    verify_p = audit_sub.add_parser(
+        "verify",
+        help="Verify signatures on an audit JSONL file",
+        description=(
+            "Verify every record against the audit_signing secret. "
+            "Exits non-zero if any record is mismatched, unsigned, or malformed."
+        ),
+    )
+    verify_p.add_argument("--file", "-f", default="-", metavar="PATH",
+                          help="Audit log path or '-' for stdin (default: stdin)")
+    verify_p.add_argument("--secret", required=True, metavar="ENV_VAR",
+                          help="Environment variable holding the audit signing key")
+    verify_p.set_defaults(handler=cmd_audit_verify)
 
     # patterns
     pat_p = sub.add_parser(

@@ -92,11 +92,18 @@ It matches AST **shapes**, not command names: `curl … | sh`, `wget … && chmo
 is why an unlisted fetcher piped into `sh` is still caught — the sink is the
 signal.
 
+Commands wrapped in a tool call are lifted out and parsed on their own, because
+that is the shape an agent actually emits — `run_shell('curl … | sh')`,
+`{"command": "wget …"}`. Parsing only the enclosing line would see a quoted word
+and miss the pipeline inside it.
+
 **Findings are demoted, not suppressed, when the statement reads as prose**
-rather than an invocation (its leading word is not a program). Text discussing
-`curl … | sh` reports MEDIUM; a line that issues it reports HIGH. Padding a
-payload with prose therefore lowers severity but never erases the finding, and
-the evidence still reaches the audit trail and the turn-risk block.
+rather than an invocation (its leading word is not a program). An unquoted
+`curl … | sh` inside a sentence reports MEDIUM; a line that issues it reports
+HIGH. Padding a payload with prose therefore lowers severity but never erases
+the finding, and the evidence still reaches the audit trail and the turn-risk
+block. A command merely *quoted* in prose — no call wrapper, no `command:` key —
+is not lifted out at all, so documentation that cites one stays quiet.
 
 One consequence worth planning for: at `scan_output` an agent explaining an
 install command and an agent emitting one are the same text. The demotion rule

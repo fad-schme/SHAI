@@ -43,6 +43,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tools are unaffected.
 
 ### Added
+- **`shai audit verify --file PATH --secret ENV_VAR`** — verifies the
+  HMAC-SHA256 signature on every record in a trail written with
+  `audit_signing.enabled`. This closes the read side of signed auditing: the
+  feature could sign a trail but shipped no supported way to check one, and
+  `AuditSigningConfig` documented a `harness audit verify` command that had
+  never existed — wrong binary name and a subcommand that was not implemented.
+  Operators following it were left hand-rolling HMAC verification.
+
+  Records are classified as verified, mismatched, unsigned, or malformed, and
+  failing line numbers are reported. **Exit 0 only when every record verified**
+  — unsigned and malformed records fail the run alongside mismatched ones,
+  because a trail with a hole in it does not answer the question signing was
+  enabled to answer. An empty file fails for the same reason. `--secret` names
+  an environment variable rather than taking the key, matching `shai patterns`,
+  so the key stays out of shell history and the process list.
+
+  Verification canonicalises before hashing, so a record a log shipper
+  reserialized with different key order still verifies. The primitive lives
+  next to the signer (`harness.audit.emitter.verify_line`) so the two
+  encodings cannot drift apart.
+
 - **`AgentContext.for_conversation(id)`** — derives a context scoped to one
   conversation, preserving `agent_id`, `sub_agent_id`, `allowed_tags` and
   `approvals`. `load_agent()` returns the template to derive from; there was
@@ -97,6 +118,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   issuing it reports HIGH; padding a payload with prose lowers severity but
   never erases the finding. Carries `method_family: structural_command`, so it
   corroborates with `heuristic_scan` rather than collapsing into it.
+  Commands wrapped in a tool call — `run_shell('curl … | sh')`,
+  `{"command": "wget …"}` — are lifted out and parsed on their own, since that
+  is the shape an agent emits; parsing only the enclosing line sees a quoted
+  word and misses the pipeline inside it.
+
   Requires the new **`shell` extra** (`pip install 'shai[shell]'`); declaring
   the scanner without it raises `ConfigError` at `SHAI.from_yaml()` rather than
   degrading silently.
