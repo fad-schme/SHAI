@@ -117,6 +117,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the JSON `warnings` list.
 
 ### Fixed
+- **A malformed dispatch token could escape `ShaiTransport`'s denial path.**
+  `verify_token()` documented `TokenError` as its only failure mode, but a
+  token decoding to a JSON array raised `AttributeError` and one carrying a
+  non-string timestamp raised `TypeError`. Neither is caught by the transport's
+  `except TokenError`, so the request aborted on an unexpected exception
+  *before* the `NetworkAuditEvent` with `status="denied"` was emitted — the one
+  case where a refused request left no audit record. Both now raise
+  `TokenError` and deny normally.
+
+  The cause was duplication: `connectivity/token.py` and `core/approval.py` had
+  grown two independent copies of the same signed envelope, and the grant copy
+  already had both guards. They now share one implementation
+  (`harness.core.signing`), so a hardening fix lands once. The wire format is
+  byte-identical — signatures, encodings, and previously issued tokens and
+  grants all verify unchanged.
+
 - **Heuristic candidate matching worked only on exact duplicates.** The
   fingerprint's `lsh` field computed a 64-function MinHash over character
   bigrams and then compressed it with `sha256(signature)[:16]`; `lsh_jaccard`

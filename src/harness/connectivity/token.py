@@ -19,14 +19,12 @@ nonce store keys on token_id to prevent replay within the TTL window.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
+import dataclasses
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+
+from harness.core.signing import claims_of, decode, encode, sign
 
 # ── Token dataclass ────────────────────────────────────────────────────────
 
@@ -85,6 +83,10 @@ def default_allowed_urls(source_url: str) -> list[str]:
 
 
 # ── Signing ────────────────────────────────────────────────────────────────
+#
+# Envelope mechanics — canonical encoding, HMAC, base64url, expiry — live in
+# harness.core.signing and are shared with the approval grant. Only the field
+# set and the error type are this module's.
 
 # The signed field set, declared once. Signing, encoding, and verification all
 # derive from this — three hand-maintained copies had to agree exactly or
@@ -95,20 +97,6 @@ _SIGNED_FIELDS: tuple[str, ...] = (
     "tool_name", "source_name", "allowed_urls", "allowed_methods",
     "issued_at", "expires_at",
 )
-
-
-def _claims(token: DispatchToken) -> dict[str, Any]:
-    """The signed fields of a token, datetimes rendered ISO 8601."""
-    claims: dict[str, Any] = {f: getattr(token, f) for f in _SIGNED_FIELDS}
-    claims["issued_at"]  = token.issued_at.isoformat()
-    claims["expires_at"] = token.expires_at.isoformat()
-    return claims
-
-
-def _canonical(claims: dict[str, Any]) -> bytes:
-    """The one encoding the HMAC covers. Signing and verification share it, so
-    a token re-encodes byte-for-byte to what was signed."""
-    return json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
 
 
 def sign_token(
@@ -149,17 +137,15 @@ def sign_token(
         signature="",   # placeholder — replaced below
     )
 
-    sig = hmac.new(secret, _canonical(_claims(token)), hashlib.sha256).hexdigest()
-
-    # Return token with real signature (dataclass is frozen — use replace pattern)
-    import dataclasses
-    return dataclasses.replace(token, signature=sig)
+    # Frozen dataclass — replace rather than mutate.
+    return dataclasses.replace(
+        token, signature=sign(claims_of(token, _SIGNED_FIELDS), secret)
+    )
 
 
 def encode_token(token: DispatchToken) -> str:
     """Encode a DispatchToken to a base64url string for the X-Shai-Token header."""
-    raw = _canonical({**_claims(token), "signature": token.signature})
-    return base64.urlsafe_b64encode(raw).decode()
+    return encode(claims_of(token, _SIGNED_FIELDS), token.signature)
 
 
 class TokenError(Exception):
@@ -177,36 +163,16 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
 
     Does NOT check nonce uniqueness — that is the transport/gateway's job.
     """
-    try:
-        raw  = base64.urlsafe_b64decode(encoded.encode() + b"==")
-        data = json.loads(raw)
-    except Exception as e:
-        raise TokenError(f"malformed token: {e}") from e
-
-    missing = (set(_SIGNED_FIELDS) | {"signature"}) - data.keys()
-    if missing:
-        raise TokenError(f"token missing fields: {sorted(missing)}")
-
-    claimed_sig = data.pop("signature")
-
-    # Re-encode whatever remains, not just the fields we expect: an extra field
-    # smuggled into the token changes the bytes and must fail the comparison.
-    expected_sig = hmac.new(secret, _canonical(data), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected_sig, claimed_sig):
-        raise TokenError("signature mismatch")
-
-    try:
-        issued_at  = datetime.fromisoformat(data["issued_at"])
-        expires_at = datetime.fromisoformat(data["expires_at"])
-    except ValueError as e:
-        raise TokenError(f"invalid datetime field: {e}") from e
-
-    if datetime.now(UTC) > expires_at:
-        raise TokenError(
-            f"token expired at {expires_at.isoformat()} "
-            f"(token_id={data['token_id']})"
-        )
-
+    data = decode(
+        encoded,
+        secret=secret,
+        fields=_SIGNED_FIELDS,
+        error=TokenError,
+        noun="token",
+        # Carries into the transport's deny_reason, which is where an expired
+        # token is correlated back to the gate event that issued it.
+        id_field="token_id",
+    )
     return DispatchToken(
         version=data["version"],
         token_id=data["token_id"],
@@ -217,7 +183,7 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
         source_name=data["source_name"],
         allowed_urls=data["allowed_urls"],
         allowed_methods=data["allowed_methods"],
-        issued_at=issued_at,
-        expires_at=expires_at,
-        signature=claimed_sig,
+        issued_at=data["issued_at"],
+        expires_at=data["expires_at"],
+        signature=data["signature"],
     )

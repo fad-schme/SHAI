@@ -30,7 +30,6 @@ over the canonical encoding of every field except the signature.
 """
 from __future__ import annotations
 
-import base64
 import dataclasses
 import hashlib
 import hmac
@@ -39,6 +38,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from harness.core.signing import claims_of, decode, encode, sign
 
 
 class ApprovalError(Exception):
@@ -73,22 +74,13 @@ class ApprovalPolicy:
     irreversible_quorum: int = 2
 
 
+# Envelope mechanics — canonical encoding, HMAC, base64url, expiry — live in
+# harness.core.signing and are shared with the dispatch token. Only the field
+# set, the binding rules, and the error type are this module's.
 _SIGNED_FIELDS: tuple[str, ...] = (
     "version", "grant_id", "agent_id", "tenant_id",
     "tool_name", "args_digest", "approver_id", "issued_at", "expires_at",
 )
-
-
-def _claims(grant: ApprovalGrant) -> dict[str, Any]:
-    claims: dict[str, Any] = {f: getattr(grant, f) for f in _SIGNED_FIELDS}
-    claims["issued_at"]  = grant.issued_at.isoformat()
-    claims["expires_at"] = grant.expires_at.isoformat()
-    return claims
-
-
-def _canonical(claims: dict[str, Any]) -> bytes:
-    """The one encoding the HMAC covers, shared by signing and verification."""
-    return json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
 
 
 def args_digest(args: dict[str, Any]) -> str:
@@ -138,14 +130,14 @@ def sign_grant(
         expires_at=now + timedelta(seconds=ttl_seconds),
         signature="",
     )
-    sig = hmac.new(secret, _canonical(_claims(grant)), hashlib.sha256).hexdigest()
-    return dataclasses.replace(grant, signature=sig)
+    return dataclasses.replace(
+        grant, signature=sign(claims_of(grant, _SIGNED_FIELDS), secret)
+    )
 
 
 def encode_grant(grant: ApprovalGrant) -> str:
     """Encode a grant for transport on AgentContext.approvals."""
-    raw = _canonical({**_claims(grant), "signature": grant.signature})
-    return base64.urlsafe_b64encode(raw).decode()
+    return encode(claims_of(grant, _SIGNED_FIELDS), grant.signature)
 
 
 def verify_grant(encoded: str, secret: bytes) -> ApprovalGrant:
@@ -153,35 +145,13 @@ def verify_grant(encoded: str, secret: bytes) -> ApprovalGrant:
 
     Does not check binding — that is verify_grants(), which knows the call.
     """
-    try:
-        raw  = base64.urlsafe_b64decode(encoded.encode() + b"==")
-        data = json.loads(raw)
-    except Exception as e:
-        raise ApprovalError(f"malformed grant: {e}") from e
-
-    if not isinstance(data, dict):
-        raise ApprovalError("malformed grant: not an object")
-
-    missing = (set(_SIGNED_FIELDS) | {"signature"}) - data.keys()
-    if missing:
-        raise ApprovalError(f"grant missing fields: {sorted(missing)}")
-
-    claimed_sig = data.pop("signature")
-    # Re-encode whatever remains rather than only the fields expected: a field
-    # smuggled into the grant changes the bytes and must fail the comparison.
-    expected_sig = hmac.new(secret, _canonical(data), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected_sig, claimed_sig):
-        raise ApprovalError("grant signature mismatch")
-
-    try:
-        issued_at  = datetime.fromisoformat(data["issued_at"])
-        expires_at = datetime.fromisoformat(data["expires_at"])
-    except (ValueError, TypeError) as e:
-        raise ApprovalError(f"invalid datetime field: {e}") from e
-
-    if datetime.now(UTC) > expires_at:
-        raise ApprovalError(f"grant expired at {expires_at.isoformat()}")
-
+    data = decode(
+        encoded,
+        secret=secret,
+        fields=_SIGNED_FIELDS,
+        error=ApprovalError,
+        noun="grant",
+    )
     return ApprovalGrant(
         version=data["version"],
         grant_id=data["grant_id"],
@@ -190,9 +160,9 @@ def verify_grant(encoded: str, secret: bytes) -> ApprovalGrant:
         tool_name=data["tool_name"],
         args_digest=data["args_digest"],
         approver_id=data["approver_id"],
-        issued_at=issued_at,
-        expires_at=expires_at,
-        signature=claimed_sig,
+        issued_at=data["issued_at"],
+        expires_at=data["expires_at"],
+        signature=data["signature"],
     )
 
 

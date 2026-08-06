@@ -79,21 +79,24 @@ def test_version_is_1():
 # ── Expiry ────────────────────────────────────────────────────────────────
 
 def test_expired_token_raises():
-    tok     = _token(ttl_seconds=1)
-    encoded = encode_token(tok)
-    # Manually create an expired token by patching expires_at in the raw JSON
-    import dataclasses
-    expired = dataclasses.replace(
-        tok,
-        expires_at=datetime.now(UTC) - timedelta(seconds=60),
-        signature="",
-    )
-    import hashlib
-    import hmac as _hmac
+    """A token whose signature is valid but whose expiry has passed is refused.
 
-    from harness.connectivity.token import _canonical, _claims
-    sig = _hmac.new(SECRET, _canonical(_claims(expired)), hashlib.sha256).hexdigest()
-    expired = dataclasses.replace(expired, signature=sig)
+    Signed here rather than via sign_token() because that always issues from
+    `now` — the case under test is a correctly signed token that has aged out,
+    not a tampered one.
+    """
+    import dataclasses
+
+    from harness.connectivity.token import _SIGNED_FIELDS
+    from harness.core.signing import claims_of, sign
+
+    tok     = _token(ttl_seconds=1)
+    expired = dataclasses.replace(
+        tok, expires_at=datetime.now(UTC) - timedelta(seconds=60), signature="",
+    )
+    expired = dataclasses.replace(
+        expired, signature=sign(claims_of(expired, _SIGNED_FIELDS), SECRET)
+    )
     with pytest.raises(TokenError, match="expired"):
         verify_token(encode_token(expired), SECRET)
 

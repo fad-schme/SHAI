@@ -30,6 +30,8 @@ src/harness/
 │   ├── normalize.py                   NFKC + obfuscation-resistant text views
 │   ├── turn_signals.py                TurnSignals — cross-boundary signal bus, one per turn
 │   ├── attestation.py                 startup attestation payload (SYSTEM/STARTUP event)
+│   ├── approval.py                    ApprovalGrant — signed human authorisation (L3)
+│   ├── signing.py                     signed-envelope format shared by grants and tokens
 │   └── errors.py                      HarnessError hierarchy
 ├── boundaries/
 │   ├── check_tool_call.py             seven-layer tool gate (L1–L7)
