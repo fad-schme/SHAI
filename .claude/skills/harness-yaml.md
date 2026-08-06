@@ -290,9 +290,9 @@ shape: `name`, `meta` (`severity`, `category`, `threat_level`, `description`),
 `strings`, and optional `functions`. See the built-in catalogs under
 `src/harness/adapters/scanners/l10n/` for reference.
 
-**Heuristic candidates.** The heuristic scanner records novel patterns it
-sees (fingerprinted, deduplicated by LSH similarity) into `heuristic_candidates`
-in the same DB. Operators review and promote them:
+**Heuristic candidates.** The heuristic scanner records novel patterns it sees
+(fingerprinted, deduplicated at MinHash similarity ≥ 0.7) into
+`heuristic_candidates` in the same DB. Operators review and promote them:
 
 ```bash
 shai patterns candidates --db state/patterns.db --status open

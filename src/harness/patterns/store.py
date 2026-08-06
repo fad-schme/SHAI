@@ -214,9 +214,6 @@ def verify_all(db_path: str | Path, secret: bytes) -> tuple[int, int]:
 
 # ── Heuristic candidates ─────────────────────────────────────────────────
 
-_LSH_SIMILARITY_THRESHOLD = 0.7
-
-
 def upsert_candidate(
     db_path: str | Path,
     fingerprint_json: str,
@@ -227,7 +224,11 @@ def upsert_candidate(
     """Insert or update a heuristic candidate. Deduplicates by LSH similarity."""
     import time
 
-    from harness.patterns.fingerprint import fingerprint_from_json, lsh_jaccard
+    from harness.patterns.fingerprint import (
+        LSH_MATCH_THRESHOLD,
+        fingerprint_from_json,
+        lsh_jaccard,
+    )
 
     path = Path(db_path)
     init_db(path)
@@ -242,7 +243,7 @@ def upsert_candidate(
         for row in rows:
             existing_fp = fingerprint_from_json(row["fingerprint"])
             existing_lsh = existing_fp.get("lsh", "")
-            if lsh_jaccard(lsh, existing_lsh) >= _LSH_SIMILARITY_THRESHOLD:
+            if lsh_jaccard(lsh, existing_lsh) >= LSH_MATCH_THRESHOLD:
                 conn.execute(
                     "UPDATE heuristic_candidates SET hit_count = hit_count + 1, last_seen = ? WHERE id = ?",
                     (now, row["id"]),

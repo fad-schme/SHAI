@@ -117,6 +117,38 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in the JSON `warnings` list.
 
 ### Fixed
+- **Heuristic candidate matching worked only on exact duplicates.** The
+  fingerprint's `lsh` field computed a 64-function MinHash over character
+  bigrams and then compressed it with `sha256(signature)[:16]`; `lsh_jaccard`
+  compared characters of that digest. SHA-256 is an avalanche hash, so a single
+  differing minimum — which is what "these two texts are 95% similar" looks
+  like — produced an unrelated digest. Measured, two prompts differing by one
+  word scored **0.0**. Both consumers threshold at 0.7, so candidate
+  deduplication never merged near-duplicates and promoted candidates never
+  matched anything but a byte-identical replay. `hit_count` therefore stayed at
+  1 and almost nothing reached the three-hit floor `shai patterns candidates`
+  applies, leaving the review queue looking empty.
+
+  `lsh` now holds the whole signature — 64 minima as fixed-width hex — and
+  `lsh_jaccard` returns the fraction of minima that agree, which is the
+  estimator MinHash is for. Near-duplicates now score 0.93–0.98 and unrelated
+  texts ~0.20.
+
+  *Operational note:* the stored format changed. Existing rows in
+  `state/patterns.db` carry the old 16-char digest, and signatures of unequal
+  length share nothing by definition, so **previously promoted candidates stop
+  matching** until the pattern recurs and is promoted again. No migration is
+  provided — the candidate table is a rebuildable discovery surface, not a
+  system of record. Clear it with
+  `sqlite3 state/patterns.db 'DELETE FROM heuristic_candidates'` to drop the
+  dead rows; the signed `patterns` table is untouched and unaffected.
+
+  This changes what is detected, not what is blocked: promoted-candidate
+  findings remain MEDIUM, never enter the per-scanner results the action loop
+  reads, and carry `structural_heuristic` — the same method family as
+  `heuristic_scan` — so they still cannot reach HIGH through ensemble promotion
+  or block on their own.
+
 - **Manifest resolution no longer discards the manifest.** Resolving a source
   that names `connector:` treated every unset `SourceConfig` field as an
   operator override, so the model's own defaults — `transport: local`, empty

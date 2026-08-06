@@ -36,11 +36,13 @@ scanner (`injection_scan`, `jailbreak_scan`, `identity_spoof_scan`) produced
 a finding in the same call, the system:
 
 1. Extracts a **fingerprint** — bucketed sub-scores, structural marker flags,
-   control token categories, and a MinHash LSH of the text's bigram distribution.
+   control token categories, and a MinHash signature of the text's bigram
+   distribution.
 2. Extracts a **skeleton** — structural markers and control tokens in order,
    all other content replaced with `···`, capped at 200 characters.
-3. Checks existing candidates by LSH similarity. Match → increment hit count.
-   No match → insert new row with `status=open`.
+3. Checks existing `open` and `promoted` candidates by MinHash similarity.
+   Similarity ≥ 0.7 → increment that candidate's hit count. No match → insert
+   new row with `status=open`.
 
 No raw user text is stored. The skeleton contains only attack scaffolding:
 `[INST]`, `<|system|>`, `{"role":}`, control tokens like "ignore", "override".
@@ -52,7 +54,9 @@ Fire-and-forget — errors are logged and swallowed. Never affects the scan verd
 ## Read path — promoted candidates only
 
 After all scanners complete but before the ensemble runs, the pipeline checks
-the current text against promoted candidates by LSH similarity.
+the current text against promoted candidates by MinHash similarity, using the
+same 0.7 threshold as the write path. The first match wins — the pipeline stops
+looking once one candidate matches.
 
 A match injects a synthetic finding:
 
@@ -65,10 +69,13 @@ Finding(
 )
 ```
 
-This finding is always MEDIUM, and it is injected after the per-scanner action
-loop — it never blocks. It carries `structural_heuristic`, the same family as
-`heuristic_scan`, so the scanner whose output produced the candidate cannot
-corroborate it.
+This finding is always MEDIUM, and it never blocks. Injection adds it to the
+verdict's findings only — the action loop that decides BLOCK / WARN / REDACT
+iterates the per-scanner results, which a synthetic finding never joins. No
+boundary action can read it, whatever its severity ends up being.
+
+It carries `structural_heuristic`, the same family as `heuristic_scan`, so the
+scanner whose output produced the candidate cannot corroborate it.
 
 Nor, in practice, can anything else: the finding's category is
 `heuristic_anomaly`, and `ensemble.py` promotes only on a **shared** category
@@ -98,13 +105,25 @@ The fingerprint captures the shape of an anomaly without storing content:
   "markers": ["<|system|>", "[INST]"],
   "control_tokens": ["ignore", "override", "call"],
   "length_bucket": "medium",
-  "lsh": "a3f9b1c4e2d71086"
+  "lsh": "a3f9b1c4e2d710863f0a91bb…"
 }
 ```
 
-Sub-scores are bucketed: `none | low | medium | high`. The LSH is a MinHash
-over character bigrams — two texts with similar bigram distributions produce
-similar hashes without being reversible to content.
+Sub-scores are bucketed: `none | low | medium | high`.
+
+`lsh` is a MinHash signature over character bigrams: 64 minima, each written as
+8 hex characters, concatenated into one 512-character string. Similarity is the
+**fraction of those 64 minima that agree** — an unbiased estimate of the Jaccard
+overlap of the two bigram sets. Two texts differing by a word score ~0.95;
+unrelated texts score ~0.20. Neither is reversible to content.
+
+The whole signature is stored on purpose. Compressing it to a short digest — as
+this field did before 0.7.0 — destroys the property the estimator depends on:
+minima have to survive independently, and any avalanche hash turns one differing
+minimum into an unrelated output, collapsing every non-identical pair to ~0.
+
+Signatures of unequal length share nothing, so a row written under the older
+format scores 0.0 against current text and is superseded rather than matched.
 
 ---
 
@@ -199,11 +218,11 @@ candidate is no longer needed — the regex rule is the permanent fix.
 
 - **No auto-learning.** Open candidates never affect scans. Only human-promoted
   candidates enter the read path.
-- **No raw text storage.** Fingerprints contain bucketed scores and LSH hashes.
-  Skeletons contain only structural markers and control tokens.
+- **No raw text storage.** Fingerprints contain bucketed scores and a MinHash
+  signature. Skeletons contain only structural markers and control tokens.
 - **No blocking on their own.** Promoted candidate findings are MEDIUM. They
-  never trigger a boundary block directly — they are injected after the
-  per-scanner action loop has run, so no action ever reads them. Ensemble
+  never trigger a boundary block directly — the action loop reads the
+  per-scanner results, and a synthetic finding is never one of them. Ensemble
   promotion raises their recorded severity in the verdict and the audit
   event's `max_severity`; it does not feed the block decision.
 - **No replacement for regex rules.** Candidates are similarity-based discovery.

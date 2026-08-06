@@ -67,6 +67,14 @@ def _minhash_lsh(text: str) -> str:
     return "".join(f"{m:0{_LSH_WIDTH}x}" for m in mins)
 
 
+# Score at or above which two signatures are treated as the same pattern.
+# One threshold for the whole candidate system: the write path merges a hit
+# into an existing candidate at exactly the score the read path matches a
+# promoted one, so a text that would increment a candidate is a text that
+# candidate would fire on. Two spellings of this number let those drift apart.
+LSH_MATCH_THRESHOLD = 0.7
+
+
 def lsh_jaccard(lsh_a: str, lsh_b: str) -> float:
     """Estimated Jaccard similarity: the fraction of MinHash minima that agree.
 

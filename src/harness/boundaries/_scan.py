@@ -529,6 +529,7 @@ def _check_promoted_candidates(
         return findings
 
     from harness.patterns.fingerprint import (
+        LSH_MATCH_THRESHOLD,
         extract_fingerprint,
         fingerprint_from_json,
         lsh_jaccard,
@@ -542,7 +543,7 @@ def _check_promoted_candidates(
     for candidate in promoted:
         stored_fp = fingerprint_from_json(candidate["fingerprint"])
         stored_lsh = stored_fp.get("lsh", "")
-        if lsh_jaccard(current_lsh, stored_lsh) >= 0.7:
+        if lsh_jaccard(current_lsh, stored_lsh) >= LSH_MATCH_THRESHOLD:
             injected.append(Finding(
                 scanner="learned_candidate",
                 category="heuristic_anomaly",
