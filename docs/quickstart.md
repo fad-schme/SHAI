@@ -30,7 +30,7 @@ this step.
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install -e ".[dev]"
+pip install shai-harness
 ```
 
 Requires Python 3.11+.

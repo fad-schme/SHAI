@@ -33,7 +33,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install shai-harness
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short
@@ -60,7 +60,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install shai-harness
 
       - name: Run security invariant tests
         run: pytest tests/security/ -v --tb=short
@@ -85,7 +85,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install shai-harness
 
       - name: Run contract tests
         run: pytest tests/contracts/ -v --tb=short
@@ -116,7 +116,7 @@ jobs:
         run: pip install --upgrade pip setuptools pip-audit
 
       - name: Install project dependencies
-        run: pip install -e ".[dev]"
+        run: pip install shai-harness
 
       - name: Audit dependencies for CVEs
         # --skip-editable excludes SHAI's own editable install, which pip-audit
@@ -237,7 +237,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install shai-harness
 
       - name: Run performance budget
         run: pytest tests/perf/ -m perf -v -s --tb=short

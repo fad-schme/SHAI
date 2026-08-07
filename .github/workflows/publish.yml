@@ -5,7 +5,7 @@ name: Publish
 # the workflow identity directly, so there is no long-lived credential to leak.
 #
 # One-time setup on PyPI (https://pypi.org/manage/account/publishing/):
-#   PyPI project name : shai
+#   PyPI project name : shai-harness
 #   Owner             : fad-schme
 #   Repository        : SHAI
 #   Workflow          : publish.yml
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/shai
+      url: https://test.pypi.org/p/shai-harness
     permissions:
       id-token: write   # required for Trusted Publishing; the only credential in play
 
@@ -117,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/shai
+      url: https://pypi.org/p/shai-harness
     permissions:
       id-token: write   # mints the short-lived OIDC token PyPI verifies
 

@@ -123,7 +123,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is the shape an agent emits; parsing only the enclosing line sees a quoted
   word and misses the pipeline inside it.
 
-  Requires the new **`shell` extra** (`pip install 'shai[shell]'`); declaring
+  Requires the new **`shell` extra** (`pip install 'shai-harness[shell]'`); declaring
   the scanner without it raises `ConfigError` at `SHAI.from_yaml()` rather than
   degrading silently.
 - **`policy.forbidden_tag_combinations`** — tag sets no single agent may declare

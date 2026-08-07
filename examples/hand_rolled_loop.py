@@ -10,7 +10,7 @@ scanner actions, rate limits, and policy rules.
 Run from the repo root:
     python examples/hand_rolled_loop.py
 
-Requires: pip install -e ".[dev]"
+Requires: pip install shai-harness
 """
 from __future__ import annotations
 

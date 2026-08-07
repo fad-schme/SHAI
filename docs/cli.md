@@ -10,7 +10,7 @@ from a local source checkout:
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install -e ".[dev]"
+pip install shai-harness
 which shai         # ~/.local/bin/shai
 shai --help
 ```

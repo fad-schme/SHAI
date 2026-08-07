@@ -14,7 +14,7 @@ The agent loop:
 Run from repo root:
     python examples/with_uma.py
 
-Requires: pip install -e ".[dev]"
+Requires: pip install shai-harness
 """
 from __future__ import annotations
 

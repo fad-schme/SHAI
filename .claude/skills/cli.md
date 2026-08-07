@@ -18,7 +18,7 @@ from a local source checkout:
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install -e ".[dev]"
+pip install shai-harness
 which shai
 # ~/.local/bin/shai   (or your venv's bin/)
 shai --help
@@ -469,7 +469,7 @@ shai audit tail --file logs/audit.jsonl --decision blocked --last 100 | grep ses
 ```yaml
 # .github/workflows/validate.yml
 - uses: actions/checkout@v4
-- run: pip install -e ".[dev]"
+- run: pip install shai-harness
 - run: shai validate --config config/harness.yaml --agents-dir agents/
 ```
 

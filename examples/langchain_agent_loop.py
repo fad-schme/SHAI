@@ -13,7 +13,7 @@ Configuration:
   config/agents/orchestrator_agent.yaml — tool permissions, subagents
 
 Install:
-    pip install -e ".[dev]"
+    pip install shai-harness
     pip install "langchain>=0.3" langgraph langchain-ollama langchain-core
 
 Run:

@@ -63,7 +63,7 @@ checkout as part of this installation.
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install -e ".[dev]"
+pip install shai-harness
 pytest tests/unit -q
 python examples/quickstart.py
 ```

@@ -85,7 +85,7 @@ development checkout from source:
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install -e ".[dev]"
+pip install shai-harness
 ```
 
 The editable install builds SHAI from the local checkout and installs the

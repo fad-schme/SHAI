@@ -15,7 +15,7 @@ No `.l10n.yaml` sibling, deliberately: shell syntax is language-independent,
 so unlike every pattern catalog in this package this scanner has exactly one
 copy. Its absence is not the gap the five-copy rule exists to catch.
 
-Requires the `shell` extra (`pip install shai[shell]`) for `bashlex`. Declaring
+Requires the `shell` extra (`pip install shai-harness[shell]`) for `bashlex`. Declaring
 the scanner without it fails at from_yaml() rather than degrading silently — a
 command scanner that quietly stopped parsing is worse than one that never ran.
 """
@@ -275,7 +275,7 @@ class CommandInjectionScanner:
         if bashlex is None:
             raise ConfigError(
                 "command_injection_scan requires the 'shell' extra: "
-                "pip install 'shai[shell]'",
+                "pip install 'shai-harness[shell]'",
                 op="build_scanner",
             )
 

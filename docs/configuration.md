@@ -83,7 +83,7 @@ scan_input:
     - name: command_injection_scan
 ```
 
-Install it with `pip install 'shai[shell]'` — it needs `bashlex`. Declaring the
+Install it with `pip install 'shai-harness[shell]'` — it needs `bashlex`. Declaring the
 scanner without the extra fails at `SHAI.from_yaml()` rather than degrading
 quietly.
 

@@ -12,7 +12,7 @@ own minimal harness.yaml and agent.yaml to a tempdir at runtime.
 USAGE
 -----
     # from the root of the SHAI checkout
-    pip install -e ".[dev]"
+    pip install shai-harness
     python step_zero.py
 """
 
