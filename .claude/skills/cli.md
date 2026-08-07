@@ -12,12 +12,7 @@ validation, on-call log inspection, and pattern-DB operations.
 
 ## Install
 
-SHAI is not published on PyPI during early access. Build and install the CLI
-from a local source checkout:
-
 ```bash
-git clone https://github.com/fad-schme/SHAI.git
-cd SHAI
 pip install shai-harness
 which shai
 # ~/.local/bin/shai   (or your venv's bin/)

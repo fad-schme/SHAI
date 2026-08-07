@@ -55,15 +55,13 @@ On top of those, `SHAI.from_yaml()` emits one `system`/`startup` attestation eve
 
 ## Quick start
 
-SHAI is in early access and is not published as an installable package on
-PyPI yet. Clone the source first, then install the local checkout in editable
-mode with the development dependencies. `pip` builds the package from the
-checkout as part of this installation.
+Install SHAI from PyPI, then clone the repository to run the tests and the
+examples against it.
 
 ```bash
+pip install shai-harness
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install shai-harness
 pytest tests/unit -q
 python examples/quickstart.py
 ```

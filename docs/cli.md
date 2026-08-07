@@ -4,12 +4,7 @@ The `shai` command is a developer tool: validate config, tail and verify audit l
 
 Installed as a `console_scripts` entry point along with the package:
 
-SHAI is not published on PyPI during early access. Build and install the CLI
-from a local source checkout:
-
 ```bash
-git clone https://github.com/fad-schme/SHAI.git
-cd SHAI
 pip install shai-harness
 which shai         # ~/.local/bin/shai
 shai --help

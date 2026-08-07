@@ -79,13 +79,12 @@ If that happens, here is how the workflow looks.
 
 ### Development workflow
 
-SHAI is not published on PyPI during early access. Set up an invited
-development checkout from source:
+Contributors work from a source checkout, not the PyPI release:
 
 ```bash
 git clone https://github.com/fad-schme/SHAI.git
 cd SHAI
-pip install shai-harness
+pip install -e ".[dev]"
 ```
 
 The editable install builds SHAI from the local checkout and installs the
