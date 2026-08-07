@@ -160,7 +160,16 @@ _LEETSPEAK_TRANSLATION = str.maketrans({
 
 # Absolute URLs and www-prefixed hosts. Their separators are spaced out before
 # fuzzy analysis; the text the catalogs see is untouched.
-_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)\S+", re.IGNORECASE)
+#
+# The scheme repeat is bounded. Unbounded, it backtracks the whole remaining
+# input at every start position whenever `://` never arrives, so text with no
+# URL in it at all — the common case — costs O(n^2): half a megabyte of prose
+# stalled the boundary for minutes. A bound makes the per-position work
+# constant and the scan linear. 63 is far past the longest registered scheme
+# (36 chars); a longer one simply is not recognised as a URL, which leaves its
+# separators in place and can only make this scanner more suspicious, never
+# less.
+_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]{0,63}://|www\.)\S+", re.IGNORECASE)
 _URL_SEPARATORS = re.compile(r"[.\-/_?=&:+~%]+")
 _FRAGMENTED_TOKEN_RE = re.compile(r"\b(?:[a-z0-9][.-]){3,}[a-z0-9]\b")
 _SEPARATOR_CHAIN_RE = re.compile(r"\b(?:[a-z0-9]{3,}[.-]){3,}[a-z0-9]{3,}\b")

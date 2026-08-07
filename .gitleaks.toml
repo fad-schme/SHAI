@@ -1,0 +1,25 @@
+title = "SHAI gitleaks configuration"
+
+# Picked up automatically by gitleaks and by gitleaks-action in CI.
+#
+# SHAI is a security product, so its test corpus necessarily contains
+# credential-shaped strings — that is what proves the scanners detect
+# credentials rather than merely claiming to. Those fixtures are synthetic and
+# always will be, but a secret scanner cannot tell them apart from the real
+# thing, so each one is allowlisted here by exact value.
+#
+# Allowlisting is deliberately by literal, not by path: excluding `tests/`
+# wholesale would mean a genuinely leaked credential committed to a test file
+# goes unreported. Anything not listed below still fails the scan, anywhere in
+# the repository.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic credential fixtures used to test credential detection"
+regexes = [
+  # tests/unit/test_boundaries_check_tool_call.py — asserts regex_pii blocks a
+  # credential-bearing tool argument at the gate and redacts it from the audit.
+  '''sk-live-9f8a7b6c5d4e3f2a1b0c''',
+]

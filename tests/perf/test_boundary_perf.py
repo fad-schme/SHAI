@@ -19,10 +19,14 @@ import asyncio
 import time
 from pathlib import Path
 
+import pytest
+
 from harness.core.context import AgentContext
 from harness.core.harness import SHAI
 from harness.core.types import Transport
 from harness.tools.tool import Tool
+
+pytestmark = pytest.mark.perf
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 

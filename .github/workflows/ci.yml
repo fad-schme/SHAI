@@ -110,7 +110,10 @@ jobs:
           cache: pip
 
       - name: Install pip-audit
-        run: pip install pip-audit
+        # setuptools is upgraded too: it is ambient in the runner image rather
+        # than a SHAI dependency, and a stale one fails the audit on a CVE that
+        # has nothing to do with this project.
+        run: pip install --upgrade pip setuptools pip-audit
 
       - name: Install project dependencies
         run: pip install -e ".[dev]"
@@ -206,6 +209,38 @@ jobs:
           if [ "$SRC_CHANGED" -gt "0" ] && [ "$CHANGELOG_CHANGED" -eq "0" ]; then
             echo "::warning::Source files changed but CHANGELOG was not updated. Please add an entry."
           fi
+
+
+  # ── Job 8: Performance budget ────────────────────────────────────────────
+  # The `perf` marker is deselected by default (see pyproject.toml), so these
+  # need `-m perf` to run at all. `-s` is deliberate: the tests print their
+  # measurements, and the numbers in the log are the point — a pass tells you
+  # nothing a regression from 3 ms to 90 ms would not.
+  #
+  # Deliberately NOT in the gate's `needs`. These assert wall-clock thresholds
+  # on a shared runner whose neighbours SHAI does not control, so they are a
+  # trend signal, not a merge criterion. A failure shows as a red X on the PR
+  # for a human to judge; it does not block. Promote to a required check only
+  # alongside a dedicated runner.
+  perf-budget:
+    name: Performance budget
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run performance budget
+        run: pytest tests/perf/ -m perf -v -s --tb=short
 
 
   # ── Gate job ─────────────────────────────────────────────────────────────

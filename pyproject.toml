@@ -94,6 +94,11 @@ include = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Wall-clock measurement, not correctness: 15 tests that cost more than the
+# other ~1600 combined, and whose thresholds are sensitive to whatever else the
+# machine is doing. Excluded by default; run explicitly with `-m perf`.
+markers = ["perf: wall-clock performance measurement (deselected by default)"]
+addopts = "-m 'not perf'"
 
 
 [project.scripts]

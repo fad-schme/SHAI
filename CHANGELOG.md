@@ -141,6 +141,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   existing `policy.digest` would not have moved if an operator dropped it.
 
 ### Fixed
+- **Large text no longer stalls a boundary.** `HeuristicScanner` is the
+  always-on backstop on every text boundary, and its internal URL regex left
+  the URL scheme repeat unbounded. On text where `://` never arrives — ordinary
+  prose, the common case — the engine re-scanned the remainder of the input
+  from every start position, making the scan quadratic: roughly 0.5 s at 40 KB,
+  30 s at 80 KB, and about 19 minutes for a 500 KB input, with the boundary
+  blocked for the duration. Any caller could reach it by passing a large
+  document to `scan_input` or `scan_output`, and a tool returning a large
+  result reached it through `scan_tool_result` with no user action at all.
+
+  The scheme repeat is now bounded at 63 characters, which makes the scan
+  linear — 500 KB completes in 0.48 s. Detection is unchanged: the longest
+  registered URI scheme is 36 characters, and a longer one is simply not
+  treated as a URL, which preserves its separators and can only raise this
+  scanner's suspicion, never lower it.
+
 - **Per-character fragmentation is now detected.** A payload written
   `i g n o r e your previous instructions` passed every boundary. Two separate
   causes, both in the normalization layer that produces the views scanners
