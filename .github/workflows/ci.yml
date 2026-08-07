@@ -267,11 +267,16 @@ jobs:
 
     steps:
       - name: Check all jobs passed
+        # The needs context is passed through the environment, not piped: `python3 -`
+        # takes its script from stdin, so a heredoc and a pipe cannot both use it.
+        # Using env also keeps workflow context out of the shell command line,
+        # which is GitHub's documented defence against script injection.
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          results='${{ toJSON(needs) }}'
-          echo "$results" | python3 - << 'EOF'
-          import json, sys
-          results = json.load(sys.stdin)
+          python3 - << 'EOF'
+          import json, os, sys
+          results = json.loads(os.environ["NEEDS_JSON"])
           failed = [
               name for name, outcome in results.items()
               if outcome.get("result") not in ("success", "skipped")
