@@ -114,7 +114,7 @@ async def test_scan_input_redacted_text_returned(emitter, sink, state):
     verdict = await run_scan(
         "Email me at test@example.com.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[ConfiguredScanner(RegexPIIScanner())],
+        scanners=[ConfiguredScanner(RegexPIIScanner(), action=ScanAction.REDACT)],
         boundary_action=ScanAction.BLOCK,
         emitter=emitter,
         tenant_id="test", enabled=True, block_at=Severity.CRITICAL,
@@ -123,6 +123,26 @@ async def test_scan_input_redacted_text_returned(emitter, sink, state):
     assert not verdict.blocked
     assert verdict.redacted_text is not None
     assert "test@example.com" not in verdict.redacted_text
+
+
+async def test_no_redaction_without_redact_action(emitter, sink, state):
+    """A scanner that offers redacted_text under block/alert must not apply it.
+
+    Callers follow `verdict.redacted_text or text`, so populating the field
+    outside action=redact silently enforces a transform the operator did not
+    configure.
+    """
+    verdict = await run_scan(
+        "Email me at test@example.com.", CTX,
+        boundary=BoundaryName.INPUT_SCAN,
+        scanners=[ConfiguredScanner(RegexPIIScanner(), action=ScanAction.ALERT)],
+        boundary_action=ScanAction.BLOCK,
+        emitter=emitter,
+        tenant_id="test", enabled=True, block_at=Severity.CRITICAL,
+        state=state,
+    )
+    assert not verdict.blocked
+    assert verdict.redacted_text is None
 
 
 # ── Multiple scanners ─────────────────────────────────────────────────────

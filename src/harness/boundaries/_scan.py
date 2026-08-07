@@ -430,18 +430,20 @@ async def run_scan(
         ]
         per_scanner_data.append((findings, result, effective_action, redact_with))
         all_findings.extend(findings)
-        # Apply redaction unconditionally when the scanner returned redacted_text.
-        # Redaction is a content transform — it is independent of block_at threshold.
+        # Redaction is a content transform, so it applies whenever the scanner
+        # produced one and the operator asked for it — independent of block_at.
         # (Block/alert actions still respect block_at; redaction does not.)
+        #
+        # It applies ONLY under action=redact. A scanner returning redacted_text
+        # under block or alert is offering a transform the config did not ask
+        # for: every caller follows the documented `verdict.redacted_text or
+        # text` pattern, so propagating it silently enforces redaction on an
+        # alert-configured scanner and mutates content the operator chose to
+        # let through.
         if result.redacted_text is not None and effective_action == ScanAction.REDACT:
             current_text = _apply_redaction(
                 current_text, result.findings, result, redact_with
             )
-        elif result.redacted_text is not None and effective_action != ScanAction.REDACT:
-            # Scanner returned redacted_text even though action is block/alert —
-            # still propagate it so callers can use it (e.g. action=block but
-            # caller wants to log the redacted form for debugging).
-            current_text = result.redacted_text
 
     # ── Promoted candidates: inject findings from human-promoted heuristic matches ──
     all_findings = _check_promoted_candidates(text, all_findings, state)
