@@ -116,9 +116,13 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Audit dependencies for CVEs
+        # --skip-editable excludes SHAI's own editable install, which pip-audit
+        # cannot resolve against PyPI. --strict is omitted deliberately: it makes
+        # that skip fatal, and it is not what gates CVEs — pip-audit exits
+        # non-zero on any vulnerability found regardless.
         run: |
           pip-audit \
-            --strict \
+            --skip-editable \
             --vulnerability-service pypi \
             --format columns
 

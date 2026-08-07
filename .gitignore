@@ -34,3 +34,4 @@ tmp_pytest/
 .pytest_cache/
 
 /state/*
+benchmark/*

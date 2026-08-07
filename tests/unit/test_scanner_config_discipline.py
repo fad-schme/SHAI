@@ -156,7 +156,9 @@ async def test_gate_arg_scanners_use_the_scanners_key(tmp_path):
         "audit_sinks:\n  - name: stdout\n"
     )
     h, _ = await _harness(tmp_path, body)
-    assert [getattr(s, "name", "") for s in h._arg_scanners] == [
+    # ConfiguredScanner pairs, not bare instances: layer 7 resolves each
+    # scanner's declared action the same way every other boundary does.
+    assert [getattr(c.scanner, "name", "") for c in h._arg_scanners] == [
         "regex_pii", "heuristic_scan",
     ]
 

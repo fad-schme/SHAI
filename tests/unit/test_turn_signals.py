@@ -348,7 +348,7 @@ class TestGateCorrelationPatternB:
         result = await check_tool_call.run(
             "write_data", {"payload": "data"}, ctx,
             agent_config=agent, tools=tools, policy=RuleBasedPolicy(),
-            arg_scanners=[blocking_scanner], emitter=emitter, tenant_id="test",
+            arg_scanners=[ConfiguredScanner(scanner=blocking_scanner)], emitter=emitter, tenant_id="test",
             turn_signals=signals,
         )
 
@@ -376,7 +376,7 @@ class TestGateCorrelationPatternB:
         result = await check_tool_call.run(
             "search_docs", {"q": "x"}, ctx,
             agent_config=agent, tools=tools, policy=RuleBasedPolicy(),
-            arg_scanners=[blocking_scanner], emitter=emitter, tenant_id="test",
+            arg_scanners=[ConfiguredScanner(scanner=blocking_scanner)], emitter=emitter, tenant_id="test",
             turn_signals=signals,
         )
         # Read-only tool, no tightening; scanner not invoked
@@ -401,7 +401,7 @@ class TestGateCorrelationPatternB:
         result = await check_tool_call.run(
             "write_data", {"payload": "data"}, ctx,
             agent_config=agent, tools=tools, policy=RuleBasedPolicy(),
-            arg_scanners=[blocking_scanner], emitter=emitter, tenant_id="test",
+            arg_scanners=[ConfiguredScanner(scanner=blocking_scanner)], emitter=emitter, tenant_id="test",
             turn_signals=signals,
         )
         # ALLOW verdict — no tightening, scanner not invoked, gate allows

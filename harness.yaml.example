@@ -41,11 +41,15 @@ scan_input:
   #   fail_open   — treat as empty findings (use during rollout / testing)
   #   degrade     — treat as WARN; content passes, audit event flagged
   on_error: fail_closed
+  action: block       # block | alert
   scanners:
     - name: injection_scan       # data-boundary attacks: tool coercion, exfiltration, context spoofing
+        action: block            # always hard-block injection attempts
     - name: jailbreak_scan       # guardrail-integrity attacks: persona override, instruction override, etc.
     - name: identity_spoof_scan  # agentic identity spoofing: claimed orchestrator/system authority
     - name: regex_pii
+        action: redact          # redact PII instead of blocking
+        redact_with: "***"      # placeholder (use {category} for category name)
 
 # ── File upload scanning ──────────────────────────────────────────────────
 # FileScanner handles MIME, size, PDF JS, EXIF, ZIP, and Office macros.
@@ -53,6 +57,7 @@ scan_input:
 scan_file:
   enabled: false
   block_at: high
+  action: block       # block | alert
   max_size_mb: 50
   scanners:
     - name: injection_scan
@@ -63,6 +68,7 @@ scan_file:
 scan_tool_result:
   enabled: false
   block_at: high
+  action: block       # block | alert
   scanners:
     - name: injection_scan
     - name: identity_spoof_scan
@@ -94,6 +100,7 @@ scan_mcp_metadata:
 scan_output:
   enabled: true
   block_at: high
+  action: block       # block | alert
   on_error: fail_closed
   scanners:
     - name: regex_pii

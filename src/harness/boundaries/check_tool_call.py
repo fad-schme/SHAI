@@ -214,26 +214,28 @@ async def run(
     )
     scanned_redactions: dict[str, Any] = {}
     if should_scan_args:
-        # One scan per argument, not one over the joined block: a redaction has
-        # to land back on the argument that produced it, and the joined form
-        # cannot say which key a replacement belongs to.
-        arg_items = [(k, str(v)) for k, v in effective_args.items() if v is not None]
+        # One scan per argument rather than one over the joined block, because a
+        # redaction has to land back on the argument that produced it and the
+        # joined form cannot say which key a replacement belongs to.
+        #
+        # Each scan still carries the `key: value` framing. The key is load
+        # bearing, not decoration: regex_pii matches `api_key: sk-live-…` and
+        # finds nothing in `sk-live-…` alone, so scanning bare values would
+        # quietly stop detecting credentials here.
+        #
+        # The cost is that a payload split across two arguments no longer
+        # corroborates — the joined form could match across them, this cannot.
+        scan_targets = [
+            (configured, key, f"{key}: {value}")
+            for configured in arg_scanners
+            for key, value in effective_args.items()
+            if value is not None
+        ]
         scan_results = await asyncio.gather(
-            *[
-                configured.scanner.scan(value, ctx)
-                for configured in arg_scanners
-                for _, value in arg_items
-            ],
+            *[configured.scanner.scan(text, ctx) for configured, _, text in scan_targets],
             return_exceptions=True,
         )
-        pairs = [
-            (configured, key, result)
-            for i, (configured, key) in enumerate(
-                (c, k) for c in arg_scanners for k, _ in arg_items
-            )
-            for result in [scan_results[i]]
-        ]
-        for configured, key, result in pairs:
+        for (configured, key, _text), result in zip(scan_targets, scan_results, strict=True):
             scanner = configured.scanner
             if isinstance(result, Exception):
                 log.warning("arg scanner failed — skipped",
@@ -249,9 +251,15 @@ async def run(
             action = configured.action if configured.action is not None else ScanAction.BLOCK
 
             # REDACT with nothing to substitute falls back to BLOCK, matching
-            # ScanAction's documented contract.
+            # ScanAction's documented contract. The `key: ` framing added for
+            # detection comes back off the redacted form — the argument value is
+            # what gets substituted, not the line the scanner saw.
             if action == ScanAction.REDACT and result.redacted_text is not None:
-                scanned_redactions[key] = result.redacted_text
+                prefix = f"{key}: "
+                redacted_value = result.redacted_text
+                if redacted_value.startswith(prefix):
+                    redacted_value = redacted_value[len(prefix):]
+                scanned_redactions[key] = redacted_value
                 continue
             if action == ScanAction.ALERT:
                 continue

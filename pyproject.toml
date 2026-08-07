@@ -60,6 +60,9 @@ dev = [
     "cyclonedx-bom",
     "python-semantic-release",
     "sigstore",
+    # Transitive via sigstore. Pinned forward for PYSEC-2026-3552; dev-only,
+    # never a runtime dependency of the published package.
+    "cryptography>=50.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
