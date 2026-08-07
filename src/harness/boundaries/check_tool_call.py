@@ -32,11 +32,11 @@ from harness.core.errors import (
     PolicyEvaluationError,
 )
 from harness.core.events import AuditEvent, now_ms
-from harness.core.types import BoundaryName, Decision, ScanStatus, Severity
+from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import GateDecision
 
 if TYPE_CHECKING:
-    from harness.adapters.scanners.base import Scanner
+    from harness.adapters.scanners.base import ConfiguredScanner
     from harness.agents.agent_config import AgentConfig, SubAgentConfig
     from harness.audit.emitter import AuditEmitter
     from harness.core.context import AgentContext
@@ -62,7 +62,7 @@ async def run(
     agent_config: AgentConfig,
     tools: dict[str, Tool],
     policy: PolicyEngine,
-    arg_scanners: list[Scanner],
+    arg_scanners: list[ConfiguredScanner],
     emitter: AuditEmitter,
     tenant_id: str,
     scan_args_for_tags: frozenset[str] = frozenset({"sensitive"}),
@@ -212,25 +212,58 @@ async def run(
     should_scan_args = bool(arg_scanners) and (
         bool(scan_args_for_tags & set(tool.tags)) or tighten_arg_scan
     )
+    scanned_redactions: dict[str, Any] = {}
     if should_scan_args:
-        arg_text = "\n".join(f"{k}: {v}" for k, v in effective_args.items())
+        # One scan per argument, not one over the joined block: a redaction has
+        # to land back on the argument that produced it, and the joined form
+        # cannot say which key a replacement belongs to.
+        arg_items = [(k, str(v)) for k, v in effective_args.items() if v is not None]
         scan_results = await asyncio.gather(
-            *[scanner.scan(arg_text, ctx) for scanner in arg_scanners],
+            *[
+                configured.scanner.scan(value, ctx)
+                for configured in arg_scanners
+                for _, value in arg_items
+            ],
             return_exceptions=True,
         )
-        for scanner, result in zip(arg_scanners, scan_results):
+        pairs = [
+            (configured, key, result)
+            for i, (configured, key) in enumerate(
+                (c, k) for c in arg_scanners for k, _ in arg_items
+            )
+            for result in [scan_results[i]]
+        ]
+        for configured, key, result in pairs:
+            scanner = configured.scanner
             if isinstance(result, Exception):
                 log.warning("arg scanner failed — skipped",
                             extra={"scanner": scanner.name, "tool": name,
                                    **ctx.to_log_fields()})
                 continue
             blocking = [f for f in result.findings if f.severity >= Severity.HIGH]
-            if blocking:
-                return await emit_deny(
-                    f"arg scan blocked: {blocking[0].category}",
-                    name, tool, ctx, emitter, start, tenant_id,
-                    audit_tags=agent_config.audit_tags,
-                )
+            if not blocking:
+                continue
+
+            # Layer 7 has no boundary action of its own, so an undeclared
+            # scanner blocks — the historical behaviour and the safe default.
+            action = configured.action if configured.action is not None else ScanAction.BLOCK
+
+            # REDACT with nothing to substitute falls back to BLOCK, matching
+            # ScanAction's documented contract.
+            if action == ScanAction.REDACT and result.redacted_text is not None:
+                scanned_redactions[key] = result.redacted_text
+                continue
+            if action == ScanAction.ALERT:
+                continue
+
+            return await emit_deny(
+                f"arg scan blocked: {blocking[0].category}",
+                name, tool, ctx, emitter, start, tenant_id,
+                audit_tags=agent_config.audit_tags,
+            )
+
+    if scanned_redactions:
+        effective_args = {**effective_args, **scanned_redactions}
 
     # ── Allow ──────────────────────────────────────────────────────────────
     # The token is minted here, before the event is built, so token_id lands on
@@ -242,7 +275,11 @@ async def run(
 
     event = AuditEvent.build(
         boundary=BoundaryName.TOOL_CALL_GATE,
-        decision=Decision.REDACT if policy_decision.action == "redact" else Decision.ALLOW,
+        decision=(
+            Decision.REDACT
+            if policy_decision.action == "redact" or scanned_redactions
+            else Decision.ALLOW
+        ),
         ctx=ctx,
         tenant_id=tenant_id,
         duration_ms=now_ms() - start,
@@ -259,7 +296,11 @@ async def run(
     await emitter.emit(event)
     return GateDecision(
         allowed=True,
-        redacted_args=effective_args if policy_decision.action == "redact" else None,
+        redacted_args=(
+            effective_args
+            if policy_decision.action == "redact" or scanned_redactions
+            else None
+        ),
         dispatch_token=token[0] if token is not None else None,
         source_name=source_name,
     )

@@ -139,6 +139,11 @@ _TYPO_PROTECTED_OBJECTS = frozenset({
     "programming", "conversation", "transcript", "transcripts",
 })
 
+# Suffixes that make a longer vocabulary entry the inflected form of a shorter
+# one. Only these count as morphology when the token is the shorter string —
+# any other trailing difference is a truncation, which is an attack shape.
+_MORPHOLOGICAL_SUFFIXES = frozenset({"s", "es", "ed", "ing"})
+
 _TYPO_EXECUTION_DESTINATIONS = frozenset({
     "attacker", "external", "email", "webhook", "shell", "account", "url",
 })
@@ -153,6 +158,10 @@ _LEETSPEAK_TRANSLATION = str.maketrans({
     "8": "b",
 })
 
+# Absolute URLs and www-prefixed hosts. Their separators are spaced out before
+# fuzzy analysis; the text the catalogs see is untouched.
+_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)\S+", re.IGNORECASE)
+_URL_SEPARATORS = re.compile(r"[.\-/_?=&:+~%]+")
 _FRAGMENTED_TOKEN_RE = re.compile(r"\b(?:[a-z0-9][.-]){3,}[a-z0-9]\b")
 _SEPARATOR_CHAIN_RE = re.compile(r"\b(?:[a-z0-9]{3,}[.-]){3,}[a-z0-9]{3,}\b")
 _RAW_FUZZY_TOKEN_RE = re.compile(r"[a-z0-9]{4,}")
@@ -235,7 +244,29 @@ def _typoglycemia_match_kind(word: str, target: str) -> str | None:
         return None
     # Prefix-relationship rejection: one is the other + trailing chars →
     # morphological form, not typoglycemia.
+    #
+    # Two directions, and they are not symmetric.
+    #
+    # Token longer than the target is morphology in general: `instructions`,
+    # `disabled`, `filters` are the inflected forms of vocabulary entries.
+    #
+    # Token *shorter* than the target is only morphology when the vocabulary
+    # happens to hold the inflected form — several classes carry a word and its
+    # own plural (`password`/`passwords`, `instruction`/`instructions`,
+    # `filter`/`filters`, `credential`/`credentials`, `secret`/`secrets`,
+    # `restriction`/`restrictions`, `guardrail`/`guardrails`,
+    # `transcript`/`transcripts`). An exact, unmodified `password` scored
+    # `strong` against `passwords`, which alone satisfies `has_obfuscation`, so
+    # any benign text pairing one of those nouns with an action word ("please
+    # ignore this email … reset your password") became a HIGH
+    # `typoglycemia_compound`.
+    #
+    # Restricted to real suffixes, because truncation is a genuine attack
+    # shape: `ignor` for `ignore` and `reve` for `reveal` are typoglycemia, and
+    # rejecting every shorter prefix loses them.
     if word.startswith(target):
+        return None
+    if target.startswith(word) and target[len(word):] in _MORPHOLOGICAL_SUFFIXES:
         return None
     # Insertions/deletions are strong obfuscation evidence. Same-length
     # substitutions can collide with ordinary words ("peak" → "leak",
@@ -245,6 +276,23 @@ def _typoglycemia_match_kind(word: str, target: str) -> str | None:
 
 
 def _normalize_fuzzy_text(text: str) -> tuple[list[str], frozenset[str]]:
+    # URLs are removed before any de-obfuscation transform runs. Every transform
+    # below reads dots and hyphens as an attacker's separators, but they are
+    # also how hostnames and path slugs are spelled: the host
+    # `www.password-reset-12bh12.com` matches the separator-chain rule and
+    # donates `password` and `reset` as "recovered" tokens, which the
+    # exact-match branch of _match_fuzzy_class then reads as strong obfuscation
+    # evidence. That alone satisfies has_obfuscation, so an ordinary
+    # password-reset email scored as a compound typoglycemia attack.
+    #
+    # Only the separators are replaced, not the URL. Deleting it would hide the
+    # words too, leaving this scanner blind to `.../ignore-all-previous-
+    # instructions`; spacing them keeps every vocabulary hit and removes only
+    # the dot/hyphen structure that was manufacturing the obfuscation signal.
+    #
+    # Word-level fragmentation in prose is unaffected — `ignore-all-previous-
+    # instructions` on its own is not a URL.
+    text = _URL_RE.sub(lambda m: _URL_SEPARATORS.sub(" ", m.group(0)), text)
     normalized = unicodedata.normalize("NFKC", text).lower()
     transformed_tokens: set[str] = set()
 

@@ -216,12 +216,13 @@ class SHAI:
 
         input_scanners  = _build_text_scanners(config.scan_input.scanners, extra_rules=db_extra_rules)
         output_scanners = _build_text_scanners(config.scan_output.scanners, extra_rules=db_extra_rules)
-        # The gate runs arg scanners directly — no boundary action model, so it
-        # takes the scanner instances rather than the configured pairs.
-        arg_scanners    = [
-            c.scanner for c in
-            _build_text_scanners(config.check_tool_call.scanners, extra_rules=db_extra_rules)
-        ]
+        # Configured pairs, not bare instances: layer 7 honours each scanner's
+        # declared action exactly as every other boundary does. Stripping the
+        # pairing here made `action: redact` on a check_tool_call scanner load
+        # without complaint and do nothing.
+        arg_scanners    = _build_text_scanners(
+            config.check_tool_call.scanners, extra_rules=db_extra_rules
+        )
         file_scanners   = _build_file_scanners(
             config.scan_file.scanners,
             max_size_mb=config.scan_file.max_size_mb,
@@ -333,7 +334,7 @@ class SHAI:
                 scanners=[
                     *[c.scanner for c in input_scanners],
                     *[c.scanner for c in output_scanners],
-                    *arg_scanners,
+                    *[c.scanner for c in arg_scanners],
                     *[c.scanner for c in file_scanners],
                     *[c.scanner for c in tool_result_scanners],
                     *mcp_metadata_scanners,
@@ -931,7 +932,7 @@ class SHAI:
             + self._tool_result_scanners
             + self._file_scanners
         )
-        for scanner in [c.scanner for c in configured] + self._arg_scanners:
+        for scanner in [c.scanner for c in configured + self._arg_scanners]:
             name = getattr(scanner, "name", type(scanner).__name__)
             result[name] = scanner
         if self._rate_limiter is not None:

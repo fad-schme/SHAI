@@ -6,10 +6,28 @@ build-backend = "hatchling.build"
 name = "shai"
 version = "0.7.0"
 description = "Secure Harness AI — control-plane SDK for production agents"
+readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [
   { name = "a.Diaz-Schmeier", email = "ad-schme@memory-engineering.com" },
+]
+keywords = [
+    "ai-agents", "llm-security", "prompt-injection", "guardrails",
+    "audit", "policy-engine", "agent-security",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = [
     "pydantic>=2.7",
@@ -21,6 +39,8 @@ dependencies = [
 [project.urls]
 Homepage   = "https://shai.aibestlabs.com"
 Repository = "https://github.com/fad-schme/SHAI"
+Changelog  = "https://github.com/fad-schme/SHAI/blob/main/CHANGELOG.md"
+Issues     = "https://github.com/fad-schme/SHAI/issues"
 
 [project.optional-dependencies]
 shell = [
@@ -58,6 +78,8 @@ include = [
     "LICENSE",
     "NOTICE",
     "README.md",
+    "CHANGELOG.md",
+    "THREAT_MODEL.md",
     "CLA.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
