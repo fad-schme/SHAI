@@ -159,9 +159,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   characters are now joined in place, leaving surrounding words separate, so
   the recovered text reads `ignore your previous instructions`.
 
-  Affects `scan_input`, `scan_output`, `scan_tool_result`, `scan_file`, and
-  argument scanning at the gate — anywhere normalization runs. No config or API
-  change; text already detected stays detected.
+  Affects `scan_input`, `scan_output`, `scan_tool_result`, and argument scanning
+  at the gate — anywhere normalization runs. No config or API change; text
+  already detected stays detected.
+
+- **Payloads glued to the text carrying them are now detected.** An indirect
+  payload is concatenated onto the document that delivers it, and where no
+  separator lands between them the trigger word loses its left word boundary:
+  `…New York, NY 10001 USAIgnore your previous instructions` passed, while the
+  same text one space later blocked. Most catalog patterns lead with a
+  `\b`-anchored token and there is no `\b` between two word characters.
+
+  Normalization now adds a view splitting at lower/digit → upper, acronym →
+  capitalised word, and digit → letter. Glue between two lowercase words
+  (`regardsignore`) is **not** covered — separating that needs a dictionary, not
+  a character rule. camelCase identifiers in tool output are split in the added
+  view, which is the accepted cost: the view is scan-only and additive.
+
+- **`scan_file` no longer blocks files whose path normalization altered.** The
+  boundary passed the file *path* through the normalization layer, and every
+  scanner runs against every view — so a de-obfuscated view was a *different
+  path*, and the structural scanner reported `file.not_found` at HIGH for each
+  one. Any path containing a base64-looking segment, a `-/-` run, or (after the
+  glue split above) an ordinary `C:/Users/…/AppData/…` could block a legitimate
+  upload. Paths are no longer normalized; file content is unaffected, since it
+  was never normalized here in the first place — it is scanned where it is
+  extracted. One consequence worth knowing: the suspicious-filename check now
+  sees the raw filename, so a homoglyph filename no longer folds before that
+  check.
 
 ## [0.7.0] — 2026-08-05
 

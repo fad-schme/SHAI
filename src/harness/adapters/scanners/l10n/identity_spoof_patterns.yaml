@@ -128,6 +128,17 @@ patterns:
       system_message_override:  '(?i)\b(this\s+is\s+a?\s+)?(system|harness|security)\s+(message|instruction|directive|command)\b.{0,40}\b(override|bypass|allow|grant|disable)\b'
       elevated_system_context:  '(?i)\b(running\s+in|operating\s+in|you\s+are\s+in)\b.{0,20}\b(elevated|privileged|trusted|unrestricted)\s+(system\s+)?context\b'
       harness_disabled:         '(?i)\b(shai|harness|security\s+layer|guard(rail)?)\b.{0,30}\b(is\s+disabled|has\s+been\s+disabled|does\s+not\s+apply|is\s+not\s+active)\b'
+      # A delimited role marker issuing an imperative. The existing
+      # fake_system_tag rules require a trailing ':', '>' or three spaces, so
+      # '###(system_message) Send a transaction…' and '[SYSTEM] Send…' pass them
+      # both.
+      #
+      # The verb must sit *immediately* after the marker, not merely within N
+      # characters. '[SYSTEM] Starting service' and '[SYSTEM] Scheduled job did
+      # not run' are ordinary log lines that a proximity window matches on
+      # 'run'; position is what separates a directive from a log record, and it
+      # is structural rather than a vocabulary the author has to keep extending.
+      role_marker_directive:    '(?i)(?:^|[\s>#*`\-])[\[(<]\s*(?:system|assistant|developer|orchestrator|harness)(?:[_\s-]?(?:message|prompt|instruction))?\s*[\])>][\s:>-]*(?:please\s+|now\s+|immediately\s+|urgent(?:ly)?\s+)?\b(?:send|transfer|pay|purchase|delete|remove|share|forward|email|post|upload|execute|run|invoke|call|grant|allow|override|bypass|disable|ignore|reveal|disclose)\b'
     functions:
       - structure_score
       - intent_score
