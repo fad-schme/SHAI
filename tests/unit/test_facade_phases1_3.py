@@ -26,7 +26,7 @@ async def harness(tmp_path: Path) -> SHAI:
 async def test_load_and_list_agents(harness, orchestrator_yaml, research_yaml):
     await harness.load_agent(orchestrator_yaml)
     await harness.load_agent(research_yaml)
-    agents = harness.maintenance.list_agents()
+    agents = harness.maintenance.registered_agents()
     ids = {a.id for a in agents}
     assert ids == {"orchestrator_agent", "research_agent"}
 
@@ -50,7 +50,7 @@ async def test_reload_agent(harness, orchestrator_yaml, tmp_path):
 async def test_deregister_agent(harness, orchestrator_yaml):
     await harness.load_agent(orchestrator_yaml)
     harness.maintenance.deregister_agent("orchestrator_agent")
-    agents = harness.maintenance.list_agents()
+    agents = harness.maintenance.registered_agents()
     assert not any(a.id == "orchestrator_agent" for a in agents)
 
 

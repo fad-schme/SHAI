@@ -106,7 +106,7 @@ async def test_agent_stays_registered_while_revoked(tmp_path):
     harness, _ = await _harness(tmp_path)
     await _load(harness, tmp_path, "a1")
     harness.maintenance.revoke_agent("a1")
-    assert [a.id for a in harness.maintenance.list_agents()] == ["a1"]
+    assert [a.id for a in harness.maintenance.registered_agents()] == ["a1"]
     await harness.close()
 
 
@@ -150,4 +150,62 @@ async def test_unconfigured_revocation_does_not_affect_the_gate(tmp_path):
     harness, _ = await _harness(tmp_path, revocation=False)
     ctx = await _load(harness, tmp_path, "a1")
     assert (await harness.check_tool_call("search_docs", {}, ctx)).allowed
+    await harness.close()
+
+
+# ── The other two per-agent operations ────────────────────────────────────
+# Revocation has covered containment since it was written. Deregistration and
+# reload are the same promise — act on one agent, leave the rest running — and
+# were only tested for their effect on the target.
+
+async def test_deregister_leaves_other_agents_running(tmp_path):
+    """Removing one agent must not disturb another mid-flight."""
+    harness, _ = await _harness(tmp_path)
+    doomed = await _load(harness, tmp_path, "doomed_agent")
+    keeper = await _load(harness, tmp_path, "keeper_agent")
+
+    assert (await harness.check_tool_call("search_docs", {}, keeper)).allowed
+
+    harness.maintenance.deregister_agent("doomed_agent")
+
+    # Gone: denied as unregistered, not merely tool-gated.
+    gate = await harness.check_tool_call("search_docs", {}, doomed)
+    assert not gate.allowed
+    assert "not registered" in gate.deny_reason
+    assert "doomed_agent" not in [
+        a.id for a in harness.maintenance.registered_agents()
+    ]
+
+    # Untouched.
+    assert (await harness.check_tool_call("search_docs", {}, keeper)).allowed
+    assert harness.tools_for(keeper), "keeper lost its resolved tools"
+    await harness.close()
+
+
+async def test_reload_leaves_other_agents_running(tmp_path):
+    """Reloading one agent's YAML must not re-resolve or disturb another."""
+    harness, _ = await _harness(tmp_path)
+    target = await _load(harness, tmp_path, "target_agent")
+    keeper = await _load(harness, tmp_path, "keeper_agent")
+
+    keeper_tools_before = {t.name for t in harness.tools_for(keeper)}
+
+    # Point the target at a tool that is not registered, then reload just it.
+    # (allowed_tool_names cannot be empty — the schema rejects an agent that
+    # declares no tools at all, which is the check working.)
+    path = tmp_path / "target_agent.yaml"
+    path.write_text(
+        "id: target_agent\n"
+        "allowed_tool_names: [some_other_tool]\n"
+        "allowed_tags: [read]\n"
+    )
+    await harness.maintenance.reload_agent(path)
+
+    # The target picked up the narrower definition...
+    assert harness.tools_for(target) == []
+    assert not (await harness.check_tool_call("search_docs", {}, target)).allowed
+
+    # ...and the other agent is exactly as it was.
+    assert {t.name for t in harness.tools_for(keeper)} == keeper_tools_before
+    assert (await harness.check_tool_call("search_docs", {}, keeper)).allowed
     await harness.close()

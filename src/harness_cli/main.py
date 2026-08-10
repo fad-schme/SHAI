@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agents_list = agents_sub.add_parser(
         "list",
-        help="List registered agents",
+        help="List agent YAML files in a directory",
         description="List valid agent YAML files and their declared capabilities.",
     )
     agents_list.add_argument(

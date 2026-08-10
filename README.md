@@ -76,7 +76,7 @@ Wire it into your agent:
 from harness import SHAI, Tool
 
 harness = await SHAI.from_yaml("config/harness.yaml")
-await harness.register_tools([Tool("search_docs", tags=["read"])])
+await harness.register_tools([Tool(name="search_docs", tags=["read"])])
 agent = await harness.load_agent("config/agents/my_agent.yaml")
 
 # Per conversation — concurrent turns need one context each
@@ -89,7 +89,7 @@ verdict = await harness.scan_tool_result(result, ctx)
 verdict = await harness.scan_output(response, ctx)
 ```
 
-Framework-specific templates live in [`docs/08-integrations.md`](docs/08-integrations.md).
+Framework-specific templates live in [`docs/integrations.md`](docs/integrations.md).
 
 ---
 

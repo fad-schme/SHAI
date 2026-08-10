@@ -378,7 +378,7 @@ class SHAI:
         """Agent administration, the kill switch, and scanner inspection.
 
             harness.maintenance.revoke_agent("billing_agent")
-            harness.maintenance.list_agents()
+            harness.maintenance.registered_agents()
 
         Separate because none of it runs during a turn. What stays on this
         facade is the per-turn contract: the five boundaries plus the calls a

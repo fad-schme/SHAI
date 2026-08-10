@@ -180,8 +180,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   inspection is what the maintenance surface is for.
 
   On the new surface, `async` follows the same rule as the registries — only
-  `reload_agent` awaits, so `deregister_agent()` and `list_agents()` are now
-  synchronous. `harness.maintenance` needs no construction and no await.
+  `reload_agent` awaits, so `deregister_agent()` and `registered_agents()` are
+  now synchronous. `harness.maintenance` needs no construction and no await.
+
+  `list_agents()` is renamed **`registered_agents()`**, pairing with
+  `revoked_agents()` on the same object. The old name read as the in-process
+  twin of `shai agents list` and is not: the CLI scans a directory of agent YAML
+  files offline and registers nothing, while this reflects live harness state.
+  The CLI's own `--help` claimed it listed "registered agents" and now says what
+  it does.
 
 ### Removed
 - **BREAKING**: `SHAI.scan_pii()` and `SHAI.scan_injection()`, and with them

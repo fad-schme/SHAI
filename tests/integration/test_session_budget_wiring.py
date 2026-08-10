@@ -184,7 +184,7 @@ async def test_failed_load_leaves_no_half_registered_agent(tmp_path: Path):
     with pytest.raises(ConfigError):
         await h.load_agent(agent)
 
-    assert AGENT not in [a.id for a in h.maintenance.list_agents()]
+    assert AGENT not in [a.id for a in h.maintenance.registered_agents()]
     assert AGENT not in h._agent_limits
     assert AGENT not in h._agent_tools
 

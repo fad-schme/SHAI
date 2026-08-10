@@ -88,8 +88,17 @@ class Maintenance:
         self._h._agent_registry.deregister(config)
         self._h._forget_agent(agent_id)
 
-    def list_agents(self) -> list[AgentConfig]:
-        """Every agent currently registered on this harness."""
+    def registered_agents(self) -> list[AgentConfig]:
+        """Every agent registered on *this* harness, right now.
+
+        Named to pair with `revoked_agents()` and to say which question it
+        answers. It was `list_agents()`, which reads as the in-process twin of
+        `shai agents list` and is not: the CLI scans a directory of agent YAML
+        files offline and registers nothing, so the two returned different
+        things under near-identical names. This one reflects live state — an
+        agent appears after `load_agent()` and disappears after
+        `deregister_agent()`, whatever is on disk.
+        """
         return self._h._agent_registry.list()
 
     # ── Kill switch ───────────────────────────────────────────────────────
