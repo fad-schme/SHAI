@@ -25,20 +25,15 @@ safe_text = verdict.redacted_text or user_text
 
 ## Named scanner methods
 
-A single configured scanner can be run on its own through the facade. These run
-the scanner you name **and nothing else** — if it is not declared under
-`scan_input.scanners`, the call blocks rather than substituting a different
-scanner. Scanners are selected in `harness.yaml`, never imported.
+There is no facade method that runs one named scanner. Which scanners run at a
+surface is a `harness.yaml` decision: give the boundary a chain of exactly the
+scanners it should run — `regex_pii` alone for a surface that needs only PII
+detection. Scanners are selected by name in config, never imported and never
+called directly.
 
 ```python
-# Run only PII detection — no injection scan overhead
-verdict = await harness.scan_pii(text, ctx)
-
-# Run only injection detection — targeted surface scanning
-verdict = await harness.scan_injection(text, ctx)
-
 # Inspect active scanners
-print(harness.scanners)
+print(harness.maintenance.scanners)
 # {
 #   'regex_pii':          RegexPIIScanner,
 #   'injection_scan':     InjectionScanner,

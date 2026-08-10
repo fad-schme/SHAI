@@ -96,7 +96,7 @@ def resolve(group: str, name: str) -> type:
 
 
 def list_registered(group: str) -> list[str]:
-    """List all adapter names registered under a group. Used by CLI."""
+    """List all adapter names registered under a group. Empty for an unknown group."""
     if group not in GROUPS:
         return []
     return sorted(_load_group(group).keys())

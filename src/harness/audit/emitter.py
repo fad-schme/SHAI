@@ -96,10 +96,22 @@ class AuditEmitter:
         self._subscribers: list[list[AnyAuditEvent]] = []
 
     async def emit(self, event: AnyAuditEvent) -> None:
-        """Truncate oversized fields, optionally sign, then fan-out concurrently."""
+        """Truncate oversized fields, optionally sign, then fan-out concurrently.
+
+        What reaches the sinks is a new object, never the caller's. `AuditEvent`
+        and `NetworkAuditEvent` are frozen public shapes; rewriting one in place
+        rewrote a record the caller already held, and the boundary that built it
+        had no way to know its event had changed after handing it over.
+
+        Truncation happens before signing, so the signature covers the
+        `deny_reason` that is actually written. `model_copy` does not re-run
+        validators, which is what we want here — the emitter is not re-deciding
+        whether the event is well-formed, only shortening and stamping it.
+        """
         if event.deny_reason and len(event.deny_reason) > _MAX_DENY_REASON:
-            object.__setattr__(event, "deny_reason",
-                               event.deny_reason[:_MAX_DENY_REASON - 3] + "...")
+            event = event.model_copy(update={
+                "deny_reason": event.deny_reason[:_MAX_DENY_REASON - 3] + "...",
+            })
 
         if self._signing_secret is not None:
             try:
@@ -112,7 +124,7 @@ class AuditEmitter:
                     f"audit event signing failed: {e}",
                     op="audit_sign",
                 ) from e
-            object.__setattr__(event, "signature", sig)
+            event = event.model_copy(update={"signature": sig})
 
         results = await asyncio.gather(
             *[sink.emit(event) for sink in self._sinks],

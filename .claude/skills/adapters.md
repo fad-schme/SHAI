@@ -8,7 +8,7 @@ SHAI discovers adapters via Python entry points. Any package can contribute adap
 
 | Group | Interface | Reference implementations |
 |---|---|---|
-| `harness.scanners` | `Scanner` Protocol | `regex_pii`, `injection_scan`, `jailbreak_scan`, `identity_spoof_scan`, `command_injection_scan` |
+| `harness.scanners` | `Scanner` Protocol | `regex_pii`, `injection_scan`, `heuristic_scan`, `jailbreak_scan`, `identity_spoof_scan`, `command_injection_scan`, `mcp_metadata_scan` |
 | `harness.policy` | `PolicyEngine` Protocol | `rules` |
 | `harness.audit_sinks` | `AuditSink` Protocol | `stdout`, `file` |
 | `harness.secrets` | `SecretsProvider` ABC | `env` |

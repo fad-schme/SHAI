@@ -4,6 +4,13 @@ register / deregister / get / list, plus as_dict() for startup tool resolution.
 
 Writes hold a threading.Lock (startup only).
 Reads are lock-free — GIL-safe dict reads in CPython.
+
+Every method here is synchronous, because none of them awaits anything: this is
+a dict behind a threading.Lock. The rule across the three registries is `async`
+iff the method actually awaits — `AgentRegistry.load` is async because it parses
+YAML off the event loop, `SourceRegistry.activate` because it loads sources
+concurrently. Nothing in this module has an equivalent. Marking these `async`
+made `list()` and `as_dict()` two spellings of the same read on one class.
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
         self._lock = threading.Lock()
 
-    async def register(self, item: Tool) -> bool:
+    def register(self, item: Tool) -> bool:
         """True = newly registered. False = identical already existed.
         Raises ConfigError on same name with different content.
         """
@@ -58,7 +65,7 @@ class ToolRegistry:
                 op="register_tool",
             )
 
-    async def deregister(self, item: Tool) -> bool:
+    def deregister(self, item: Tool) -> bool:
         """True = removed. False = was not registered."""
         with self._lock:
             if item.name in self._tools:
@@ -67,11 +74,11 @@ class ToolRegistry:
                 return True
             return False
 
-    async def register_many(self, items: Iterable[Tool]) -> None:
+    def register_many(self, items: Iterable[Tool]) -> None:
         for item in items:
-            await self.register(item)
+            self.register(item)
 
-    async def get(self, name: str) -> Tool:
+    def get(self, name: str) -> Tool:
         """Lock-free read. Raises ToolNotRegisteredError on miss."""
         t = self._tools.get(name)
         if t is None:
@@ -82,7 +89,7 @@ class ToolRegistry:
             )
         return t
 
-    async def list(self) -> list[Tool]:
+    def list(self) -> list[Tool]:
         return list(self._tools.values())
 
     def as_dict(self) -> dict[str, Tool]:

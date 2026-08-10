@@ -1,4 +1,4 @@
-"""Agent kill switch end-to-end — SHAI.revoke_agent() and the CLI file.
+"""Agent kill switch end-to-end — SHAI.maintenance.revoke_agent() and the CLI file.
 
 Covers the property that makes it a kill switch rather than a config change:
 one revoked agent stops calling tools while every other agent in the same
@@ -56,7 +56,7 @@ async def test_revoked_agent_is_denied_at_the_gate(tmp_path):
     ctx = await _load(harness, tmp_path, "billing_agent")
     assert (await harness.check_tool_call("search_docs", {}, ctx)).allowed
 
-    harness.revoke_agent("billing_agent", reason="anomalous spend")
+    harness.maintenance.revoke_agent("billing_agent", reason="anomalous spend")
 
     gate = await harness.check_tool_call("search_docs", {}, ctx)
     assert not gate.allowed
@@ -70,7 +70,7 @@ async def test_other_agents_keep_running(tmp_path):
     bad = await _load(harness, tmp_path, "bad_agent")
     good = await _load(harness, tmp_path, "good_agent")
 
-    harness.revoke_agent("bad_agent")
+    harness.maintenance.revoke_agent("bad_agent")
 
     assert not (await harness.check_tool_call("search_docs", {}, bad)).allowed
     assert (await harness.check_tool_call("search_docs", {}, good)).allowed
@@ -80,7 +80,7 @@ async def test_other_agents_keep_running(tmp_path):
 async def test_revocation_emits_exactly_one_deny_event(tmp_path):
     harness, _ = await _harness(tmp_path)
     ctx = await _load(harness, tmp_path, "a1")
-    harness.revoke_agent("a1")
+    harness.maintenance.revoke_agent("a1")
 
     with harness.collect_events() as events:
         await harness.check_tool_call("search_docs", {}, ctx)
@@ -95,8 +95,8 @@ async def test_revocation_emits_exactly_one_deny_event(tmp_path):
 async def test_restore_lets_it_run_again(tmp_path):
     harness, _ = await _harness(tmp_path)
     ctx = await _load(harness, tmp_path, "a1")
-    harness.revoke_agent("a1")
-    assert harness.restore_agent("a1") is True
+    harness.maintenance.revoke_agent("a1")
+    assert harness.maintenance.restore_agent("a1") is True
     assert (await harness.check_tool_call("search_docs", {}, ctx)).allowed
     await harness.close()
 
@@ -105,8 +105,8 @@ async def test_agent_stays_registered_while_revoked(tmp_path):
     """Revocation stops actions, not conversation — unlike deregister_agent()."""
     harness, _ = await _harness(tmp_path)
     await _load(harness, tmp_path, "a1")
-    harness.revoke_agent("a1")
-    assert [a.id for a in await harness.list_agents()] == ["a1"]
+    harness.maintenance.revoke_agent("a1")
+    assert [a.id for a in harness.maintenance.list_agents()] == ["a1"]
     await harness.close()
 
 
@@ -126,7 +126,7 @@ async def test_cli_side_write_reaches_the_running_harness(tmp_path):
 async def test_revocation_survives_a_restart(tmp_path):
     harness, _ = await _harness(tmp_path)
     await _load(harness, tmp_path, "a1")
-    harness.revoke_agent("a1")
+    harness.maintenance.revoke_agent("a1")
     await harness.close()
 
     restarted, _ = await _harness(tmp_path)
@@ -141,8 +141,8 @@ async def test_unconfigured_revocation_raises_rather_than_no_op(tmp_path):
     """A kill switch that silently did nothing would be worse than none."""
     harness, _ = await _harness(tmp_path, revocation=False)
     with pytest.raises(ConfigError, match="revocation is not configured"):
-        harness.revoke_agent("a1")
-    assert harness.revoked_agents() == frozenset()
+        harness.maintenance.revoke_agent("a1")
+    assert harness.maintenance.revoked_agents() == frozenset()
     await harness.close()
 
 

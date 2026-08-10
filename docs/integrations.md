@@ -30,15 +30,12 @@ async def send_email(to: str, subject: str, body: str) -> str:
 | Anthropic SDK raw loop | `gated_dispatch` + `make_tool_result_from_denial` |
 | CrewAI | `wrap_tools()` |
 | PydanticAI | `harness_tool` decorator + `add_harness_middleware()` |
-| OpenAI Agents SDK | `make_before_tool_hook()` + `wrap_tool()` |
+| OpenAI Agents SDK | `wrap_tools()` |
 | Anything with manual tool dispatch | Call `check_tool_call` + `scan_tool_result` directly |
 
 Every wrapper on this page runs the same contract: `check_tool_call` before
 dispatch, `scan_tool_result` on what comes back. You never call either
-yourself. The one exception is `make_before_tool_hook()` for the OpenAI Agents
-SDK — the SDK dispatches the tool itself, so that hook gates the call but
-never sees the result and cannot scan it. Use `wrap_tool()` there unless you
-need the hook shape.
+yourself, and there is no longer an entry point that runs only half of it.
 
 Result scanning only does something when the boundary is on:
 `scan_tool_result.enabled` defaults to `false`, and `config/harness.yaml`
@@ -186,14 +183,14 @@ add_harness_middleware(agent, harness=harness, ctx=ctx)
 ## OpenAI Agents SDK
 
 ```python
-from harness.integrations.openai_agents import make_before_tool_hook, wrap_tool
+from harness.integrations.openai_agents import wrap_tools
 from agents import Agent, function_tool
 
 @function_tool
 async def search_docs(query: str) -> str: ...
 
-hook  = make_before_tool_hook(harness=harness, ctx=ctx)
-agent = Agent(tools=[wrap_tool(search_docs, harness=harness, ctx=ctx)])
+gated = await wrap_tools([search_docs], harness=harness, ctx=ctx)
+agent = Agent(name="assistant", tools=gated)
 ```
 
 ## Manual dispatch (any framework)

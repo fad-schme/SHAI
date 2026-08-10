@@ -224,9 +224,9 @@ revocation:
 Revoking an agent stops it calling tools — it is denied at the gate's pre-gate on the next call, and every other agent in the process keeps running. Two surfaces, one file:
 
 ```python
-harness.revoke_agent("billing_agent", reason="anomalous spend")
-harness.restore_agent("billing_agent")
-harness.revoked_agents()          # frozenset of ids
+harness.maintenance.revoke_agent("billing_agent", reason="anomalous spend")
+harness.maintenance.restore_agent("billing_agent")
+harness.maintenance.revoked_agents()          # frozenset of ids
 ```
 
 ```bash

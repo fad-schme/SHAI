@@ -103,10 +103,10 @@ In `check_tool_call`, the subagent's `allowed_tool_names` and `policy_rules` are
 ctx = await harness.load_agent("agents/my_agent.yaml")
 
 # Reload (atomic replace — old definition kept on validation failure)
-ctx = await harness.reload_agent("agents/my_agent.yaml")
+ctx = await harness.maintenance.reload_agent("agents/my_agent.yaml")
 
 # Deregister
-await harness.deregister_agent(ctx.agent_id)
+harness.maintenance.deregister_agent(ctx.agent_id)
 ```
 
 `load_agent()` is idempotent on identical content — loading the same file twice returns the same `AgentConfig` without error. Loading the same `id` with different content raises `AgentConflictError` — use `reload_agent` instead.

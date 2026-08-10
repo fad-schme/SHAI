@@ -144,7 +144,7 @@ async def test_reload_nonexistent_raises(tmp_path: Path):
 async def test_deregister_removes_agent(tmp_path: Path):
     reg = AgentRegistry()
     cfg = await reg.load(_minimal(tmp_path))
-    removed = await reg.deregister(cfg)
+    removed = reg.deregister(cfg)
     assert removed is True
     with pytest.raises(AgentNotRegisteredError):
         reg.get("test_agent")
@@ -155,8 +155,8 @@ async def test_deregister_not_registered_returns_false(tmp_path: Path):
     reg = AgentRegistry()
     # Build a minimal AgentConfig to pass as the item
     cfg = await reg.load(_minimal(tmp_path))
-    await reg.deregister(cfg)           # remove it
-    removed = await reg.deregister(cfg) # try again — already gone
+    reg.deregister(cfg)           # remove it
+    removed = reg.deregister(cfg) # try again — already gone
     assert removed is False
 
 
@@ -166,14 +166,14 @@ async def test_list_returns_all_agents(tmp_path: Path):
     reg = AgentRegistry()
     await reg.load(_minimal(tmp_path, "agent_a", "a.yaml"))
     await reg.load(_minimal(tmp_path, "agent_b", "b.yaml"))
-    agents = await reg.list()
+    agents = reg.list()
     ids = {a.id for a in agents}
     assert {"agent_a", "agent_b"} == ids
 
 
 async def test_list_empty_registry(tmp_path: Path):
     reg = AgentRegistry()
-    assert await reg.list() == []
+    assert reg.list() == []
 
 
 # ── concurrent safety ─────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ async def test_concurrent_load_different_agents(tmp_path: Path):
     errors = [r for r in results if isinstance(r, Exception)]
     assert not errors
 
-    agents = await reg.list()
+    agents = reg.list()
     assert len(agents) == 10
 
 

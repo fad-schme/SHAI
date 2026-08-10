@@ -134,8 +134,104 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   not checked separately — their tags are always a subset of their parent's.
   `shai validate` and `shai harness inspect` apply the same check. Defaults to
   empty, so existing configs are unaffected.
+- **`SHAI.tools_for(ctx)`** — the `Tool` descriptors a context can reach, for
+  building a tool list for an LLM call without re-parsing the agent YAML. It
+  applies the gate's two *static* capability layers against the same effective
+  profile `check_tool_call` resolves — L1 `allowed_tool_names` and L4
+  `allowed_tags` — so **a subagent context returns the subagent's narrowed set,
+  not the parent's**, and a tool the agent names but whose tags it does not hold
+  is absent. Empty for an agent that is not loaded, and for a subagent the parent
+  does not declare; the gate allows nothing in either case.
+
+  Deliberately a superset of what will actually be allowed: argument rules,
+  approvals, policy, signal correlation and arg scanning all depend on the call
+  rather than the agent, and cannot be answered without one. Use it to build a
+  tool list, never as a substitute for calling `check_tool_call`. Source
+  ownership is not exposed — read `gate.source_name` off an allowed decision.
+  Integrations no longer reach into `harness._agent_tools` for this, which
+  `harness.integrations.anthropic_sdk.run_turn` previously did.
+
+### Added
+- **`SHAI` is an async context manager.** `async with await
+  SHAI.from_yaml(path) as harness:` closes the harness on exit. `close()` stays
+  public and unchanged for applications that manage lifetime themselves — it
+  releases the MCP sources' httpx clients, the audit sinks' file handles and the
+  threat accumulator's SQLite connection, and nothing inside SHAI knows when the
+  last turn has run.
 
 ### Changed
+- **BREAKING**: the operational surface moves off the `SHAI` facade to
+  `harness.maintenance`. Seven members relocate — `reload_agent`,
+  `deregister_agent`, `list_agents`, `revoke_agent`, `restore_agent`,
+  `revoked_agents`, and the `scanners` property:
+
+      harness.revoke_agent("billing_agent")     # before
+      harness.maintenance.revoke_agent("billing_agent")   # after
+
+  The facade now carries only the per-turn contract — the five enforcement
+  boundaries plus what a turn needs to reach them — and drops from 22 public
+  members to 16. Nothing else changed: the five boundaries stay public, because
+  SHAI does not own the agent loop and an application with its own loop calls
+  them directly.
+
+  `scanners` moves for a second reason. Scanners are enabled by name in
+  `harness.yaml` and resolved through the `harness.scanners` entry-point group;
+  handing live scanner instances back out of the facade contradicted that, and
+  inspection is what the maintenance surface is for.
+
+  On the new surface, `async` follows the same rule as the registries — only
+  `reload_agent` awaits, so `deregister_agent()` and `list_agents()` are now
+  synchronous. `harness.maintenance` needs no construction and no await.
+
+### Removed
+- **BREAKING**: `SHAI.scan_pii()` and `SHAI.scan_injection()`, and with them
+  `BoundaryName.NARROW_SCAN` and its `shai audit tail --boundary` choice.
+  They were the only two entry points on the facade named after a *scanner*
+  rather than a *boundary*. A scanner is enabled by name in `harness.yaml` and
+  runs at the boundary that declares it; a method that reaches past the
+  configured chain to run one scanner is a second way to answer a question
+  config already answers.
+
+  *Migration:* declare the scanner you want on the boundary that should run it.
+  For a surface that needs only PII detection, give that boundary a chain of
+  `regex_pii` alone — the verdict shape is unchanged. Audit consumers filtering
+  on `boundary == "narrow_scan"` can drop the filter: no event carries it now.
+
+- **BREAKING**: `harness.integrations.openai_agents.make_before_tool_hook()`.
+  It gated a call and handed control back to the SDK, which dispatches the tool
+  itself — so the hook never saw the result and `scan_tool_result` could not
+  run. Tool output reached the model unscanned, with no T6 indirect-injection
+  boundary, from a public entry point that otherwise looked equivalent to
+  `wrap_tools()`. It was the only place in six integrations that ran part of
+  the contract instead of all of it.
+
+  *Migration:* `gated = await wrap_tools(tools, harness=harness, ctx=ctx)`,
+  then pass `gated` to `Agent(...)`. This registers the tools and runs
+  `check_tool_call` → dispatch → `scan_tool_result`, the same sequence every
+  other integration runs.
+
+### Changed
+- **BREAKING**: `ToolRegistry`, `AgentRegistry` and `SourceRegistry` are
+  `async` only where they await. `register`, `deregister`, `register_many`,
+  `get` and `list` are now synchronous on all three — they are dict operations
+  behind a `threading.Lock`, and marking them `async` made `ToolRegistry.list()`
+  and `as_dict()` two spellings of one read. `AgentRegistry.load`/`reload`
+  (YAML parsed off the event loop) and `SourceRegistry.activate`/`close`
+  (concurrent source loading) stay async.
+
+  These classes are internal — not exported from `harness` — so this reaches
+  only code holding a registry directly. **The `SHAI` facade is unchanged**:
+  `await harness.get_source(...)`, `await harness.register_tools(...)` and
+  `await harness.list_agents()` keep their signatures. The facade is the
+  published surface and stays uniformly async; the rule applies behind it.
+
+- **The audit emitter stamps a copy instead of rewriting the event it was
+  given.** Truncating an oversized `deny_reason` and applying the HMAC used
+  `object.__setattr__` to write through `AuditEvent`'s frozen model, so a
+  boundary that had already handed its event over found it altered afterwards.
+  Sinks, `collect_events()`, the written bytes and the signature are all
+  unchanged — the emitter produces the same record as before. What changes is
+  that the caller's own object is left alone.
 - **Startup attestation** now records `policy.forbidden_tag_combinations`. The
   control is enforced at agent load rather than by a policy rule, so the
   existing `policy.digest` would not have moved if an operator dropped it.
@@ -203,6 +299,41 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   extracted. One consequence worth knowing: the suspicious-filename check now
   sees the raw filename, so a homoglyph filename no longer folds before that
   check.
+
+- **`reload_agent()` no longer promotes optional sources to required.**
+  `load_agent()` passes each source's `required` flag from `harness.yaml` into
+  source activation; `reload_agent()` — otherwise a copy of the same body — did
+  not, and activation treats a missing flag as required. A source declared
+  `required: false` was therefore optional at load and mandatory at reload, so an
+  enrichment source that had gone down turned a reload into `ConfigError` where
+  the original load had succeeded. Both paths now share one implementation.
+
+  The divergence erred strict: it refused reloads, and never admitted a source
+  that should have been skipped.
+
+- **`harness.__version__` reports the real version again, and so does the
+  startup attestation.** `__init__.py` read its version from a distribution
+  named `shai`, but the distribution is `shai-harness`. A wrong name does not
+  raise — `PackageNotFoundError` is caught and the source-tree sentinel is
+  returned — so on a correct install `__version__` was `0.0.0+dev`, and every
+  `boundary=system, decision=startup` event recorded
+  `shai_version="0.0.0+dev"`. The signature over those events was valid; the
+  version they attested was not the one running, which is the one question that
+  record exists to answer. Contract tests now compare `__version__` against the
+  distribution name declared in `pyproject.toml`, so a future rename fails
+  loudly instead of restoring the sentinel.
+
+- **`command_injection_scan` and `mcp_metadata_scan` are resolvable by name.**
+  Both are selectable under a boundary's `scanners:` list, but neither was
+  registered in the `harness.scanners` entry-point group, so
+  `harness.adapters.discovery.resolve("harness.scanners", name)` raised
+  `AdapterDiscoveryError` for them. That broke the migration this changelog
+  published when the `MCPMetadataScanner` re-export was removed — it directs
+  users to "resolve it by name through `harness.scanners` like every other
+  scanner", which was the one name that could not be resolved that way.
+  `harness.yaml` was never affected: `from_yaml()` builds bundled scanners from
+  an internal table that always had all seven. A contract test now pins the two
+  against each other.
 
 ## [0.7.0] — 2026-08-05
 

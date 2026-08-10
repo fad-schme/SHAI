@@ -417,7 +417,7 @@ def _write_config(
 
 
 def _injection_catalog(harness) -> list:
-    scanner = harness.scanners["injection_scan"]
+    scanner = harness.maintenance.scanners["injection_scan"]
     return scanner._catalog
 
 
@@ -573,7 +573,7 @@ class TestPatternsDBSubclassScanners:
         harness = await SHAI.from_yaml(
             _write_config(tmp_path, db, scanners=_ALL_THREE)
         )
-        assert set(_ALL_THREE) <= set(harness.scanners)
+        assert set(_ALL_THREE) <= set(harness.maintenance.scanners)
 
     async def test_every_catalog_reaches_its_own_scanner(self, tmp_path, monkeypatch):
         """Each signed rule must fire through the scanner its catalog routes to."""

@@ -215,7 +215,7 @@ docker logs shai | shai audit tail --file - --decision blocked
 | `--file` / `-f PATH` | `-` (stdin) | Audit log path, or `-` for stdin. |
 | `--follow` / `-F` | off | Follow the file — new lines print as they arrive. |
 | `--last` / `-n N` | `20` | Number of lines to show before following. |
-| `--boundary` / `-b NAME` | — | Filter: `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `narrow_scan`, `system`. |
+| `--boundary` / `-b NAME` | — | Filter: `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `system`. |
 | `--decision` / `-d NAME` | — | Filter: `allow`, `warn`, `blocked`, `deny`, `redact`, `degraded`, `startup`. |
 
 **Output surfaces the signals that would otherwise take a JSON pretty-printer

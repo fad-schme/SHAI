@@ -289,7 +289,7 @@ async def test_one_event_per_call_on_every_gate_denial_path(tmp_path: Path):
             "search_docs", {}, AgentContext(agent_id="ghost"))) == 1
     # Revoked agent
     async def _revoke(h):
-        h.revoke_agent("orchestrator_agent", reason="test")
+        h.maintenance.revoke_agent("orchestrator_agent", reason="test")
     assert await one_case(
         _revoke, lambda h: h.check_tool_call("search_docs", {}, agent)) == 1
 
@@ -301,18 +301,6 @@ async def test_one_event_per_call_on_every_gate_denial_path(tmp_path: Path):
         await h.check_tool_call("search_docs", {}, agent)
         assert _count(sink, BoundaryName.TOOL_CALL_GATE) == 1
         await h.close()
-
-
-async def test_one_event_per_call_on_narrow_scan_helpers(tmp_path: Path):
-    """scan_pii / scan_injection emit under NARROW_SCAN — one event each."""
-    h, sink = await _harness(tmp_path)
-    ctx = AgentContext(agent_id="orchestrator_agent")
-
-    await h.scan_pii("text", ctx)
-    assert _count(sink, BoundaryName.NARROW_SCAN) == 1
-    sink.events.clear()
-    await h.scan_injection("text", ctx)
-    assert _count(sink, BoundaryName.NARROW_SCAN) == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════

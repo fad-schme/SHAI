@@ -36,12 +36,19 @@ from harness.core.types import (
 )
 from harness.core.verdicts import Finding, GateDecision, ScanVerdict
 from harness.integrations.base import ShaiTool, shai_tool
+from harness.maintenance import Maintenance
 from harness.tools.source import ToolSource
 from harness.tools.tool import ArgumentRule, Tool
 
 try:
-    __version__ = version("shai")
+    # Must match `name` in pyproject.toml. The import package is `harness` and
+    # the distribution is `shai-harness`; looking up the wrong one does not
+    # fail loudly, it falls through to the sentinel below — which is how every
+    # startup attestation came to record shai_version="0.0.0+dev" on a correct
+    # install. test_version_matches_installed_distribution pins the two.
+    __version__ = version("shai-harness")
 except PackageNotFoundError:
+    # Running from a source tree with nothing installed.
     __version__ = "0.0.0+dev"
 
 __all__ = [
@@ -57,9 +64,12 @@ __all__ = [
     "shai_tool",
     "ShaiTool",
 
-    # Agent scope — load_agent(), scope_context_for_subagent(), list_agents()
+    # Agent scope — load_agent(), scope_context_for_subagent()
     "AgentContext",
     "AgentConfig",
+
+    # What harness.maintenance returns — agent admin, kill switch, inspection
+    "Maintenance",
 
     # What the boundaries return
     "ScanVerdict",

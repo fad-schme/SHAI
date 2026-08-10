@@ -86,7 +86,7 @@ class SourceRegistry:
         self._sources: dict[str, ToolSource] = {}
         self._policy  = policy
 
-    async def register(self, item: ToolSource) -> bool:
+    def register(self, item: ToolSource) -> bool:
         """True = newly registered. False = same object already registered.
         Raises ConfigError on name collision with a different object.
         """
@@ -102,7 +102,7 @@ class SourceRegistry:
             op="register_source",
         )
 
-    async def deregister(self, item: ToolSource) -> bool:
+    def deregister(self, item: ToolSource) -> bool:
         """True = removed. False = was not registered."""
         if item.name in self._sources:
             del self._sources[item.name]
@@ -110,7 +110,7 @@ class SourceRegistry:
             return True
         return False
 
-    async def get(self, name: str) -> ToolSource:
+    def get(self, name: str) -> ToolSource:
         """Raises ConfigError on miss."""
         source = self._sources.get(name)
         if source is None:
@@ -121,7 +121,7 @@ class SourceRegistry:
             )
         return source
 
-    async def list(self) -> list[ToolSource]:
+    def list(self) -> list[ToolSource]:
         return list(self._sources.values())
 
     async def activate(
@@ -160,8 +160,7 @@ class SourceRegistry:
             source = self._sources.get(name)
             if source is None:
                 if is_required:
-                    from harness.core.errors import ConfigError as _CE
-                    raise _CE(
+                    raise ConfigError(
                         f"source '{name}' declared by agent '{ctx.agent_id}' "
                         f"is not registered in the harness. "
                         f"Add it to config.sources or set required: false.",
@@ -192,8 +191,7 @@ class SourceRegistry:
         for (src_name, is_req, _), result in zip(tasks, results):
             if isinstance(result, Exception):
                 if is_req:
-                    from harness.core.errors import ConfigError as _CE
-                    raise _CE(
+                    raise ConfigError(
                         f"source '{src_name}' failed to load: {result}",
                         op="source_activate",
                     )
@@ -257,12 +255,12 @@ class LocalSource:
             candidates: list[Tool] = []
             for tname in self._tool_names:
                 try:
-                    candidates.append(await self._registry.get(tname))
+                    candidates.append(self._registry.get(tname))
                 except Exception:
                     log.warning("local source: tool not found — skipped",
                                 extra={"tool": tname, "source": self.name})
         else:
-            candidates = await self._registry.list()
+            candidates = self._registry.list()
 
         # Apply subagent tag filter if present
         if ctx.allowed_tags is not None:
@@ -850,6 +848,7 @@ def _extract_session_id(endpoint_data: str) -> str | None:
         ids = qs.get("sessionId") or qs.get("session_id")
         if ids:
             return ids[0]
-    except Exception:  # nosec B110 — session ID extraction is best-effort; None is the correct fallback
+    # Session ID extraction is best-effort; None is the correct fallback.
+    except Exception:  # nosec B110
         pass
     return None

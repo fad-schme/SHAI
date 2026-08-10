@@ -28,39 +28,39 @@ async def test_name():
 async def test_register_and_get():
     reg = ToolRegistry()
     t = make_tool("search_docs")
-    await reg.register(t)
-    result = await reg.get("search_docs")
+    reg.register(t)
+    result = reg.get("search_docs")
     assert result.name == "search_docs"
 
 
 async def test_register_idempotent():
     reg = ToolRegistry()
     t = make_tool("search_docs")
-    first  = await reg.register(t)
-    second = await reg.register(t)  # identical — idempotent
+    first  = reg.register(t)
+    second = reg.register(t)  # identical — idempotent
     assert first  is True
     assert second is False
-    assert len(await reg.list()) == 1
+    assert len(reg.list()) == 1
 
 
 async def test_register_conflict_raises():
     reg = ToolRegistry()
-    await reg.register(make_tool("search_docs", tags=["read"]))
+    reg.register(make_tool("search_docs", tags=["read"]))
     with pytest.raises(ConfigError):
-        await reg.register(make_tool("search_docs", tags=["write"]))  # different tags
+        reg.register(make_tool("search_docs", tags=["write"]))  # different tags
 
 
 async def test_get_unknown_raises():
     reg = ToolRegistry()
     with pytest.raises(ToolNotRegisteredError):
-        await reg.get("nonexistent")
+        reg.get("nonexistent")
 
 
 async def test_register_many():
     reg = ToolRegistry()
     tools = [make_tool(f"tool_{i}") for i in range(5)]
-    await reg.register_many(tools)
-    listed = await reg.list()
+    reg.register_many(tools)
+    listed = reg.list()
     assert len(listed) == 5
 
 
@@ -68,17 +68,17 @@ async def test_list_insertion_order():
     reg = ToolRegistry()
     names = ["c_tool", "a_tool", "b_tool"]
     for n in names:
-        await reg.register(make_tool(n))
-    listed = [t.name for t in await reg.list()]
+        reg.register(make_tool(n))
+    listed = [t.name for t in reg.list()]
     assert listed == names
 
 
 async def test_concurrent_get_safe():
     reg = ToolRegistry()
-    await reg.register(make_tool("search_docs"))
+    reg.register(make_tool("search_docs"))
 
     async def _get():
-        return await reg.get("search_docs")
+        return reg.get("search_docs")
 
     results = await asyncio.gather(*[_get() for _ in range(50)], return_exceptions=True)
     errors = [r for r in results if isinstance(r, Exception)]
@@ -88,15 +88,15 @@ async def test_concurrent_get_safe():
 async def test_deregister_removes_tool():
     reg = ToolRegistry()
     t = make_tool("search_docs")
-    await reg.register(t)
-    removed = await reg.deregister(t)
+    reg.register(t)
+    removed = reg.deregister(t)
     assert removed is True
     with pytest.raises(ToolNotRegisteredError):
-        await reg.get("search_docs")
+        reg.get("search_docs")
 
 
 async def test_deregister_not_registered_returns_false():
     reg = ToolRegistry()
     t   = make_tool("search_docs")
-    result = await reg.deregister(t)
+    result = reg.deregister(t)
     assert result is False

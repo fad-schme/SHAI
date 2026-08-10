@@ -68,7 +68,7 @@ class FailingSource:
 async def _make_registry(*tools: Tool) -> ToolRegistry:
     reg = ToolRegistry()
     for t in tools:
-        await reg.register(t)
+        reg.register(t)
     return reg
 
 
@@ -77,16 +77,16 @@ async def _make_registry(*tools: Tool) -> ToolRegistry:
 async def test_register_and_get():
     reg = SourceRegistry(_make_policy())
     src = LocalSource(_local("docs"), registry=ToolRegistry())
-    await reg.register(src)
-    got = await reg.get("docs")
+    reg.register(src)
+    got = reg.get("docs")
     assert got is src
 
 
 async def test_register_same_object_idempotent():
     reg = SourceRegistry(_make_policy())
     src = LocalSource(_local("docs"), registry=ToolRegistry())
-    r1 = await reg.register(src)
-    r2 = await reg.register(src)
+    r1 = reg.register(src)
+    r2 = reg.register(src)
     assert r1 is True
     assert r2 is False
 
@@ -95,31 +95,31 @@ async def test_register_different_object_same_name_raises():
     reg = SourceRegistry(_make_policy())
     src1 = LocalSource(_local("docs"), registry=ToolRegistry())
     src2 = LocalSource(_local("docs"), registry=ToolRegistry())
-    await reg.register(src1)
+    reg.register(src1)
     with pytest.raises(ConfigError):
-        await reg.register(src2)
+        reg.register(src2)
 
 
 async def test_get_unknown_raises():
     reg = SourceRegistry(_make_policy())
     with pytest.raises(ConfigError):
-        await reg.get("nonexistent")
+        reg.get("nonexistent")
 
 
 async def test_deregister():
     reg = SourceRegistry(_make_policy())
     src = LocalSource(_local("docs"), registry=ToolRegistry())
-    await reg.register(src)
-    removed = await reg.deregister(src)
+    reg.register(src)
+    removed = reg.deregister(src)
     assert removed is True
     with pytest.raises(ConfigError):
-        await reg.get("docs")
+        reg.get("docs")
 
 
 async def test_deregister_unknown_returns_false():
     reg = SourceRegistry(_make_policy())
     src = LocalSource(_local("docs"), registry=ToolRegistry())
-    result = await reg.deregister(src)
+    result = reg.deregister(src)
     assert result is False
 
 
@@ -127,9 +127,9 @@ async def test_list():
     reg = SourceRegistry(_make_policy())
     s1 = LocalSource(_local("a"), registry=ToolRegistry())
     s2 = LocalSource(_local("b"), registry=ToolRegistry())
-    await reg.register(s1)
-    await reg.register(s2)
-    sources = await reg.list()
+    reg.register(s1)
+    reg.register(s2)
+    sources = reg.list()
     assert {s.name for s in sources} == {"a", "b"}
 
 
@@ -141,7 +141,7 @@ async def test_activate_returns_tools():
     src = LocalSource(_local("docs", tool_names=["search"]), registry=tool_reg)
 
     reg = SourceRegistry(_make_policy(active=True))
-    await reg.register(src)
+    reg.register(src)
     tools = await reg.activate(CTX, ["docs"])
     assert len(tools) == 1
     assert tools[0].name == "search"
@@ -153,7 +153,7 @@ async def test_activate_suppressed_by_policy():
     src = LocalSource(_local("docs", tool_names=["search"]), registry=tool_reg)
 
     reg = SourceRegistry(_make_policy(active=False))  # policy blocks it
-    await reg.register(src)
+    reg.register(src)
     tools = await reg.activate(CTX, ["docs"])
     assert tools == []
 
@@ -181,7 +181,7 @@ async def test_activate_failed_required_source_raises():
     bad = FailingSource("bad_source")
 
     reg = SourceRegistry(_make_policy(active=True))
-    await reg.register(bad)
+    reg.register(bad)
     with pytest.raises(ConfigError, match="bad_source"):
         await reg.activate(CTX, ["bad_source"])
 
@@ -191,7 +191,7 @@ async def test_activate_failed_optional_source_skipped():
     bad = FailingSource("bad_source")
 
     reg = SourceRegistry(_make_policy(active=True))
-    await reg.register(bad)
+    reg.register(bad)
     tools = await reg.activate(CTX, ["bad_source"],
                                required_flags={"bad_source": False})
     assert tools == []
@@ -206,8 +206,8 @@ async def test_activate_merges_multiple_sources():
     s2 = LocalSource(_local("write_src", tool_names=["send_email"]), registry=reg2)
 
     reg = SourceRegistry(_make_policy(active=True))
-    await reg.register(s1)
-    await reg.register(s2)
+    reg.register(s1)
+    reg.register(s2)
     tools = await reg.activate(CTX, ["read_src", "write_src"])
     names = {t.name for t in tools}
     assert names == {"search", "send_email"}
@@ -551,7 +551,7 @@ async def test_failed_required_source_raises():
     bad = FailingSource("bad_src", error="connection refused")
 
     reg = SourceRegistry(_make_policy(active=True))
-    await reg.register(bad)
+    reg.register(bad)
 
     with pytest.raises(ConfigError, match="bad_src"):
         await reg.activate(CTX, ["bad_src"], required_flags={"bad_src": True})
@@ -562,7 +562,7 @@ async def test_failed_optional_source_skips():
     bad = FailingSource("bad_src", error="connection refused")
 
     reg = SourceRegistry(_make_policy(active=True))
-    await reg.register(bad)
+    reg.register(bad)
 
     tools = await reg.activate(CTX, ["bad_src"], required_flags={"bad_src": False})
     assert tools == []
@@ -574,11 +574,11 @@ async def test_policy_suppressed_source_skips_regardless_of_required():
     tool_reg = _make_registry.__wrapped__(tool) if hasattr(_make_registry, '__wrapped__') else None
 
     tr = ToolRegistry()
-    await tr.register(Tool(name="search", tags=["read"], transport=Transport.LOCAL))
+    tr.register(Tool(name="search", tags=["read"], transport=Transport.LOCAL))
     src = LocalSource(_local("docs", tool_names=["search"]), registry=tr)
 
     reg = SourceRegistry(_make_policy(active=False))  # policy suppresses
-    await reg.register(src)
+    reg.register(src)
 
     # Even though required=True, suppression is not a failure — no raise
     tools = await reg.activate(CTX, ["docs"], required_flags={"docs": True})
@@ -592,3 +592,126 @@ async def test_required_defaults_to_true_when_no_flags_passed():
     reg = SourceRegistry(_make_policy(active=True))
     with pytest.raises(ConfigError):
         await reg.activate(CTX, ["unregistered_source"])
+
+
+async def test_reload_agent_honours_required_false(tmp_path: Path):
+    """reload_agent must apply the same required_flags load_agent does.
+
+    Regression (C4): reload_agent was a copy of load_agent that called
+    activate() with no required_flags. activate defaults a missing flag to
+    True, so a source declared `required: false` was optional at load and
+    mandatory at reload — an enrichment source that had gone away turned a
+    reload into ConfigError while the original load had succeeded.
+    """
+    from harness.core.harness import SHAI
+
+    cfg_file = tmp_path / "h.yaml"
+    cfg_file.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  rules: []\n"
+        "sources:\n"
+        "  - name: optional_src\n"
+        "    transport: local\n"
+        "    required: false\n"
+    )
+    agent_file = tmp_path / "agent.yaml"
+    agent_file.write_text(
+        "id: reload_agent_test\n"
+        "allowed_tool_names:\n  - search_docs\n"
+        "allowed_tags:\n  - read\n"
+        "sources:\n  - optional_src\n"
+    )
+
+    harness = await SHAI.from_yaml(cfg_file)
+    await harness.register_tools([
+        Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
+    ])
+    await harness.load_agent(agent_file)
+
+    # The optional source goes away between load and reload.
+    harness._source_registry._sources.pop("optional_src")
+
+    ctx = await harness.maintenance.reload_agent(agent_file)      # must not raise
+    assert ctx.agent_id == "reload_agent_test"
+    assert "search_docs" in {t.name for t in harness.tools_for(ctx)}
+    await harness.close()
+
+
+async def _tools_for_harness(tmp_path: Path):
+    """A parent with a narrower subagent, and a tool whose tag the parent lacks."""
+    from harness.core.harness import SHAI
+
+    cfg_file = tmp_path / "h.yaml"
+    cfg_file.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  rules: []\n"
+    )
+    agent_file = tmp_path / "agent.yaml"
+    agent_file.write_text(
+        "id: parent_agent\n"
+        # wipe_db is named here but its `destructive` tag is NOT in allowed_tags,
+        # so gate layer 4 denies it — tools_for must not list it either.
+        "allowed_tool_names:\n  - search_docs\n  - send_email\n  - wipe_db\n"
+        "allowed_tags:\n  - read\n  - external_write\n"
+        "sub_agents:\n"
+        "  - id: research_sub\n"
+        "    allowed_tool_names:\n      - search_docs\n"
+        "    allowed_tags:\n      - read\n"
+    )
+    harness = await SHAI.from_yaml(cfg_file)
+    await harness.register_tools([
+        Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL),
+        Tool(name="send_email", tags=["external_write"], transport=Transport.LOCAL),
+        Tool(name="wipe_db", tags=["destructive"], transport=Transport.LOCAL),
+    ])
+    ctx = await harness.load_agent(agent_file)
+    return harness, ctx
+
+
+async def test_tools_for_applies_the_gates_static_layers(tmp_path: Path):
+    """tools_for() applies L1 (allowed_tool_names) and L4 (allowed_tags)."""
+    harness, ctx = await _tools_for_harness(tmp_path)
+
+    names = [t.name for t in harness.tools_for(ctx)]
+    assert names == ["search_docs", "send_email"]     # wipe_db fails L4
+    assert all(isinstance(t, Tool) for t in harness.tools_for(ctx))
+    # Unknown agent is empty, not an error.
+    assert harness.tools_for(AgentContext(agent_id="nobody")) == []
+    await harness.close()
+
+
+async def test_tools_for_narrows_to_the_subagent(tmp_path: Path):
+    """A subagent context must not be handed the parent's tool set.
+
+    Regression: tools_for keyed on ctx.agent_id alone, so a subagent context
+    returned every tool the parent could reach. The gate denied them at L1, but
+    an integration building an LLM tool list from this — run_turn does — offered
+    a subagent's model tools that were refused on every call.
+    """
+    harness, ctx = await _tools_for_harness(tmp_path)
+    child = harness.scope_context_for_subagent(ctx, "research_sub")
+
+    assert [t.name for t in harness.tools_for(child)] == ["search_docs"]
+    # A subagent the parent does not declare reaches nothing, as at the gate.
+    undeclared = AgentContext(agent_id="parent_agent", sub_agent_id="nope")
+    assert harness.tools_for(undeclared) == []
+    await harness.close()
+
+
+async def test_tools_for_agrees_with_the_gate(tmp_path: Path):
+    """The listed set and the set check_tool_call allows must be identical."""
+    harness, ctx = await _tools_for_harness(tmp_path)
+    child = harness.scope_context_for_subagent(ctx, "research_sub")
+
+    for scope in (ctx, child):
+        listed = {t.name for t in harness.tools_for(scope)}
+        allowed = {
+            name for name in ("search_docs", "send_email", "wipe_db")
+            if (await harness.check_tool_call(name, {}, scope)).allowed
+        }
+        assert listed == allowed, f"{listed} != {allowed}"
+    await harness.close()

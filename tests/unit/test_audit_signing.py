@@ -215,3 +215,57 @@ async def test_harness_signing_enabled_via_env(tmp_path: Path, monkeypatch):
     )
     h = await SHAI.from_yaml(cfg)
     assert h._emitter._signing_secret == b"mysecret"
+
+
+async def test_emit_does_not_mutate_the_callers_event():
+    """The emitter stamps a copy — AuditEvent is a frozen public shape.
+
+    Truncation and signing used to rewrite the caller's object in place via
+    object.__setattr__, so a boundary that had already handed its event over
+    found it changed underneath. The written record is unaffected either way;
+    what changes is that the caller's own object is now left alone.
+    """
+    sink = RecordingSink()
+    emitter = AuditEmitter([sink], signing_secret=SECRET)
+
+    long_reason = "x" * 900
+    event = AuditEvent.build(
+        boundary=BoundaryName.TOOL_CALL_GATE,
+        decision=Decision.DENY,
+        ctx=AgentContext(agent_id="a"),
+        tenant_id="t",
+        duration_ms=0,
+        tool_name="some_tool",
+        deny_reason=long_reason,
+    )
+
+    await emitter.emit(event)
+
+    # The caller's object is untouched.
+    assert event.signature is None
+    assert event.deny_reason == long_reason
+
+    # The sink got the truncated, signed copy.
+    emitted = sink.events[0]
+    assert emitted is not event
+    assert emitted.signature is not None and len(emitted.signature) == 64
+    assert len(emitted.deny_reason) == 500
+    assert emitted.deny_reason.endswith("...")
+
+
+async def test_signature_covers_the_truncated_reason():
+    """Truncation happens before signing, so the signature covers what is written."""
+    sink = RecordingSink()
+    emitter = AuditEmitter([sink], signing_secret=SECRET)
+    await emitter.emit(AuditEvent.build(
+        boundary=BoundaryName.TOOL_CALL_GATE,
+        decision=Decision.DENY,
+        ctx=AgentContext(agent_id="a"),
+        tenant_id="t",
+        duration_ms=0,
+        tool_name="some_tool",
+        deny_reason="y" * 900,
+    ))
+    emitted = sink.events[0]
+    body = canonical_json(emitted, exclude={"signature"}).encode()
+    assert emitted.signature == hmac.new(SECRET, body, hashlib.sha256).hexdigest()

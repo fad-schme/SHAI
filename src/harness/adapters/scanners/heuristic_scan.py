@@ -466,11 +466,6 @@ def _fuzzy_intent(text: str) -> _FuzzyIntent:
     )
 
 
-def _fuzzy_intent_score(text: str) -> float:
-    """Return the fuzzy-intent contribution to the anomaly score."""
-    return _fuzzy_intent(text).score
-
-
 class HeuristicScanner:
     """Structural anomaly scanner. Always on. Satisfies Scanner Protocol."""
 

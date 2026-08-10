@@ -105,11 +105,19 @@ addopts = "-m 'not perf'"
 shai = "harness_cli.main:main"
 
 [project.entry-points."harness.scanners"]
+# Every scanner selectable by name under a boundary's `scanners:` list appears
+# here — the seven in _SCANNER_FACTORIES (core/harness.py). from_yaml() builds
+# built-ins from that table, so these registrations exist for callers resolving
+# a bundled scanner by name through harness.adapters.discovery.resolve(), which
+# the CHANGELOG names as the supported way to reach MCPMetadataScanner.
+# A scanner missing here is one resolve() cannot find.
 regex_pii       = "harness.adapters.scanners.regex_pii:RegexPIIScanner"
 injection_scan  = "harness.adapters.scanners.injection_scan:InjectionScanner"
 heuristic_scan  = "harness.adapters.scanners.heuristic_scan:HeuristicScanner"
 jailbreak_scan     = "harness.adapters.scanners.jailbreak_scan:JailbreakScanner"
 identity_spoof_scan = "harness.adapters.scanners.identity_spoof_scan:IdentitySpoofScanner"
+command_injection_scan = "harness.adapters.scanners.command_injection_scan:CommandInjectionScanner"
+mcp_metadata_scan      = "harness.adapters.scanners.mcp_metadata_scanner:MCPMetadataScanner"
 
 [project.entry-points."harness.policy"]
 rules = "harness.policy.rules:RuleBasedPolicy"

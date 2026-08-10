@@ -6,7 +6,6 @@ Agent tools are resolved once at load_agent() time — no per-turn overhead.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,7 +45,9 @@ from harness.tools.tool import Tool
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
+    from harness.agents.agent_config import SubAgentConfig
     from harness.core.events import AnyAuditEvent
+    from harness.maintenance import Maintenance
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,22 @@ class SHAI:
     separates the execution budget and the cross-turn threat score, which key
     on `conversation_id or agent_id`. Reusing one context across concurrent
     turns merges all three.
+
+    Async surface
+    -------------
+    Two layers, two rules, and they differ on purpose.
+
+    *This facade* is uniformly async for boundaries and lifecycle. It is the
+    stability boundary the SDK publishes, and `await harness.get_source(...)`
+    appears in the docs and in every integration; a method here does not lose
+    its `await` because today's implementation happens to be a dict read.
+
+    *The registries behind it* (`ToolRegistry`, `AgentRegistry`,
+    `SourceRegistry`) are `async` iff they actually await —
+    `AgentRegistry.load` parses YAML off the event loop, `SourceRegistry.activate`
+    loads sources concurrently, and everything else is synchronous. They are
+    internal, so nothing outside this package has to change when that rule is
+    applied.
     """
 
     def __init__(
@@ -147,6 +164,11 @@ class SHAI:
         self._source_overrides: dict[str, dict[str, Tool]] = {}
         self._connectivity        = config.connectivity
         self._connectivity_secret = connectivity_secret
+        # Operational surface — agent admin, kill switch, scanner inspection.
+        # Off the per-turn path and reached as `harness.maintenance`, so the
+        # facade below carries only what a turn actually calls.
+        from harness.maintenance import Maintenance
+        self._maintenance = Maintenance(self)
         # Per-instance scan state: circuit breakers, promoted-candidate cache.
         # Shares patterns_db.path — signed rules and heuristic candidates are two
         # tables in the one DB file the CLI writes.
@@ -292,7 +314,7 @@ class SHAI:
             else:
                 # LOCAL — backed by the shared tool registry
                 source = LocalSource(src_cfg, registry=tool_registry)
-            await source_registry.register(source)
+            source_registry.register(source)
             resolved_sources.append(src_cfg)
 
         rl_cfg = config.check_tool_call.rate_limit
@@ -349,6 +371,21 @@ class SHAI:
                         "sources": len(resolved_sources)})
         return instance
 
+    # ── Operational surface ───────────────────────────────────────────────
+
+    @property
+    def maintenance(self) -> Maintenance:
+        """Agent administration, the kill switch, and scanner inspection.
+
+            harness.maintenance.revoke_agent("billing_agent")
+            harness.maintenance.list_agents()
+
+        Separate because none of it runs during a turn. What stays on this
+        facade is the per-turn contract: the five boundaries plus the calls a
+        turn needs to reach them.
+        """
+        return self._maintenance
+
     # ── Startup ───────────────────────────────────────────────────────────
 
     async def register_tools(self, tools: list[Tool | Any]) -> None:
@@ -365,9 +402,9 @@ class SHAI:
         """
         from harness.integrations.base import extract_shai_tools
         shai_descriptors = extract_shai_tools(tools)
-        await self._tool_registry.register_many(shai_descriptors)
+        self._tool_registry.register_many(shai_descriptors)
         # Re-resolve all already-loaded agents so they see the new tools
-        for cfg in await self._agent_registry.list():
+        for cfg in self._agent_registry.list():
             self._agent_tools[cfg.id] = self._resolve_tools(cfg)
 
     # ── Agent management ──────────────────────────────────────────────────
@@ -386,6 +423,19 @@ class SHAI:
         scan_output on every turn.
         """
         cfg = await self._agent_registry.load(path)
+        await self._wire_agent(cfg, message="agent loaded", op="load_agent")
+        return AgentContext(agent_id=cfg.id)
+
+    async def _wire_agent(self, cfg: AgentConfig, *, message: str, op: str) -> None:
+        """Activate an agent's sources and build its resolved tools and limits.
+
+        The one place an agent's per-turn state is constructed. load_agent and
+        reload_agent differ only in which registry call produced `cfg`; keeping
+        two copies of this body is how reload_agent came to omit
+        required_flags, which promoted every `required: false` source back to
+        mandatory and turned a reload into ConfigError whenever an optional
+        source was down.
+        """
         ctx = AgentContext(agent_id=cfg.id)
 
         # Activate declared sources for this agent
@@ -408,7 +458,7 @@ class SHAI:
         overrides: dict[str, Tool] = {}
         for tool in source_tools:
             try:
-                await self._tool_registry.register(tool)
+                self._tool_registry.register(tool)
                 # Registered cleanly (new tool from MCP or first registration)
             except Exception:
                 # Tag mismatch with an existing registry entry — store as override
@@ -418,35 +468,21 @@ class SHAI:
 
         self._agent_tools[cfg.id] = self._resolve_tools(cfg)
         self._agent_limits[cfg.id] = self._build_execution_limits(cfg)
-        log.info("agent loaded",
-                 extra={"agent_id": cfg.id,
+        log.info(message,
+                 extra={"op": op,
+                        "agent_id": cfg.id,
                         "tools": len(self._agent_tools[cfg.id]),
                         "source_tools": len(source_tools)})
-        return AgentContext(agent_id=cfg.id)
 
-    async def reload_agent(self, path: str | Path) -> AgentContext:
-        """Reload an agent-xx.yaml and refresh its resolved tool set."""
-        cfg = await self._agent_registry.reload(path)
-        ctx = AgentContext(agent_id=cfg.id)
-        source_tools = await self._source_registry.activate(ctx, list(cfg.sources))
-        overrides: dict[str, Tool] = {}
-        for tool in source_tools:
-            try:
-                await self._tool_registry.register(tool)
-            except Exception:
-                overrides[tool.name] = tool
-        self._source_overrides[cfg.id] = overrides
-        self._agent_tools[cfg.id] = self._resolve_tools(cfg)
-        self._agent_limits[cfg.id] = self._build_execution_limits(cfg)
-        log.info("agent reloaded",
-                 extra={"agent_id": cfg.id,
-                        "tools": len(self._agent_tools[cfg.id])})
-        return AgentContext(agent_id=cfg.id)
+    def _forget_agent(self, agent_id: str) -> None:
+        """Drop every piece of per-agent state `_wire_agent` built, plus the
+        counters keyed on the agent.
 
-    async def deregister_agent(self, agent_id: str) -> None:
-        # Retrieve the config first so we can pass the object to deregister()
-        config = self._agent_registry.get(agent_id)
-        await self._agent_registry.deregister(config)
+        The teardown half of `_wire_agent`, and the one place it lives —
+        `Maintenance.deregister_agent` calls this rather than reaching for six
+        dictionaries. An agent left in any of them keeps consuming its rate-limit
+        and budget slots after it is gone.
+        """
         self._agent_tools.pop(agent_id, None)
         self._source_overrides.pop(agent_id, None)
         self._agent_limits.pop(agent_id, None)
@@ -454,46 +490,57 @@ class SHAI:
             self._rate_limiter.reset(agent_id)
         self._session_budget.reset(agent_id)
 
-    async def list_agents(self) -> list[AgentConfig]:
-        return await self._agent_registry.list()
+    def tools_for(self, ctx: AgentContext) -> list[Tool]:
+        """The tools this context can reach the gate's per-call layers with.
 
-    # ── Kill switch ───────────────────────────────────────────────────────
+        Applies the gate's two *static* capability layers against the same
+        effective profile check_tool_call resolves — L1 `allowed_tool_names`
+        and L4 `allowed_tags` — so a subagent context returns the subagent's
+        narrowed set, not the parent's. Returning the parent's set here would
+        offer a subagent's model tools the gate denies on every call.
 
-    def revoke_agent(self, agent_id: str, *, reason: str | None = None) -> None:
-        """Stop this agent from calling tools. Takes effect immediately here.
+        This is a superset of what will actually be allowed, and deliberately
+        so: argument rules, approvals, policy, signal correlation and arg
+        scanning (L2, L3, L5, L6, L7) all depend on the call, not the agent,
+        and cannot be answered without one. Use it to build a tool list for an
+        LLM, never as a substitute for calling check_tool_call.
 
-        Denies at the gate's pre-gate on the next call, leaving every other
-        agent in the process running. The revocation is written to
-        `revocation.path`, so it survives a restart and is visible to any other
-        process reading the same file — including `shai agent revoke`, which is
-        the same switch from the other side.
+        Empty when the agent is not loaded, and when the context names a
+        subagent the parent does not declare — both are cases where the gate
+        allows nothing.
 
-        The agent stays registered: this stops actions, not conversation, and
-        `restore_agent()` reverses it without reloading anything. Use
-        `deregister_agent()` to remove it entirely.
-
-        Raises ConfigError when `revocation.path` is not configured — a kill
-        switch that silently did nothing would be worse than none.
+        Which source owns a tool is deliberately not exposed: that is the
+        gate's business, and a caller routing on it would be dispatching
+        around check_tool_call. Use gate.source_name from an allowed decision.
         """
-        if not self._revocations.enabled:
-            raise ConfigError(
-                "revocation is not configured; set revocation.path in harness.yaml",
-                op="revoke_agent",
-            )
-        self._revocations.revoke(agent_id, reason=reason)
+        tools = [tool for _, tool in self._agent_tools.get(ctx.agent_id, {}).values()]
+        if not tools:
+            return []
 
-    def restore_agent(self, agent_id: str) -> bool:
-        """Lift a revocation. False if the agent was not revoked."""
-        if not self._revocations.enabled:
-            raise ConfigError(
-                "revocation is not configured; set revocation.path in harness.yaml",
-                op="restore_agent",
+        # Same effective-profile resolution as check_tool_call: a subagent is
+        # gated by its own declaration, a parent by the agent's.
+        try:
+            agent_config = self._agent_registry.get(ctx.agent_id)
+            effective: AgentConfig | SubAgentConfig = (
+                agent_config.get_sub_agent(ctx.sub_agent_id)
+                if ctx.sub_agent_id is not None else agent_config
             )
-        return self._revocations.restore(agent_id)
+        except Exception:
+            # Unregistered agent, or a subagent this agent does not declare.
+            # The gate denies every call in both cases; report the same.
+            return []
 
-    def revoked_agents(self) -> frozenset[str]:
-        """Currently revoked agent ids. Empty when revocation is unconfigured."""
-        return self._revocations.revoked_agents()
+        allowed_names = set(effective.allowed_tool_names)
+        # L4 intersects the profile's tags with the context's, neither widening
+        # the other — see check_tool_call layer 4.
+        capability_tags = set(effective.allowed_tags)
+        if ctx.allowed_tags is not None:
+            capability_tags &= set(ctx.allowed_tags)
+
+        return [
+            t for t in tools
+            if t.name in allowed_names and not (set(t.tags) - capability_tags)
+        ]
 
     # ── Subagent scoping (sync, pure) ─────────────────────────────────────
 
@@ -597,92 +644,6 @@ class SHAI:
             ctx._clear_signals()
 
         return verdict
-
-    async def scan_pii(self, text: str, ctx: AgentContext) -> ScanVerdict:
-        """Run the configured PII scanner on text, and nothing else.
-
-        Same pipeline as scan_input — action, block_at, on_error, one audit
-        event — narrowed to `regex_pii`. Useful for content that needs PII
-        detection but not injection scanning (a structured API response, say).
-
-        **Blocks** when `regex_pii` is not declared under `scan_input.scanners`:
-        asking for a scan that cannot be performed is not an allow. See
-        _narrow_scan.
-        """
-        return await self._narrow_scan(
-            text, ctx, subset="regex_pii",
-            match=lambda n: n == "regex_pii",
-        )
-
-    async def scan_injection(self, text: str, ctx: AgentContext) -> ScanVerdict:
-        """Run the configured injection scanner on text, and nothing else.
-
-        Same pipeline as scan_input, narrowed to the injection-catalog family.
-        Useful for a specific input surface — a URL parameter, a tool name, a
-        structured field.
-
-        **Blocks** when no injection scanner is declared under
-        `scan_input.scanners`. See _narrow_scan.
-        """
-        return await self._narrow_scan(
-            text, ctx, subset="injection_scan",
-            match=lambda n: n.startswith("injection_scan"),
-        )
-
-    async def _narrow_scan(
-        self,
-        text: str,
-        ctx: AgentContext,
-        *,
-        subset: str,
-        match: Callable[[str], bool],
-    ) -> ScanVerdict:
-        """Run the subset of `scan_input.scanners` whose name satisfies `match`.
-
-        Config is the only source of what runs. A scanner the operator did not
-        declare is never substituted in: these helpers previously fell back to
-        the *entire* input stack when the named scanner was absent, so asking
-        for targeted PII detection silently ran injection, jailbreak and the
-        heuristic backstop under scan_input's block_at — the opposite of what
-        the call says.
-
-        With nothing to run, run_scan fails the call closed: an enabled
-        boundary that inspects nothing must not answer ALLOW, because the
-        caller cannot tell that from a scan that ran and found nothing. The
-        operator picks which scanners run; picking none for a surface the code
-        asks about is a configuration error, not a pass.
-
-        Emits under BoundaryName.NARROW_SCAN rather than INPUT_SCAN so a
-        consumer counting input scans per turn is not thrown off by a helper
-        call, and `adapters` names the subset that actually ran.
-        """
-        scanners = [
-            c for c in self._input_scanners
-            if match(getattr(c.scanner, "name", ""))
-        ]
-        if not scanners:
-            log.warning(
-                "narrow scan requested but no matching scanner is configured — "
-                "nothing will run",
-                extra={"op": "narrow_scan", "subset": subset,
-                       "configured": [getattr(c.scanner, "name", "?")
-                                      for c in self._input_scanners],
-                       **ctx.to_log_fields()},
-            )
-        return await run_scan(
-            text, ctx,
-            boundary=BoundaryName.NARROW_SCAN,
-            scanners=scanners,
-            boundary_action=self._config.scan_input.action,
-            emitter=self._emitter,
-            tenant_id=self._tenant_id,
-            enabled=self._config.scan_input.enabled,
-            block_at=self._config.scan_input.block_at,
-            state=self._scan_state,
-            normalization=self._config.normalization,
-            audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_input.on_error,
-        )
 
     async def check_tool_call(
         self, name: str, args: dict[str, Any], ctx: AgentContext
@@ -902,43 +863,6 @@ class SHAI:
         return ScanVerdict(status=ScanStatus.BLOCK)
 
 
-    @property
-    def scanners(self) -> dict[str, object]:
-        """Return all active scanner instances keyed by name.
-
-        Provides visibility into which scanners are running and their
-        configuration. Useful for inspection, testing, and debugging.
-
-        Covers the boundaries the facade runs: scan_input, scan_output,
-        scan_tool_result, scan_file, and the gate's argument scanners. A
-        scanner used at more than one boundary appears once (the first
-        instance seen, scanning input first). MCP metadata scanners are not
-        here — they live on the MCPSource that runs them at connect time.
-
-            harness.scanners
-            # {
-            #   'regex_pii':          RegexPIIScanner(...),
-            #   'injection_scan':     InjectionScanner(...),
-            #   'heuristic_scan':     HeuristicScanner(...),   # always-on backstop
-            #   'file_scanner':       FileScanner(...),
-            #   'file_content_scan':  FileContentScanner(...),
-            #   'rate_limiter':       RateLimiter(...),
-            # }
-        """
-        result: dict[str, object] = {}
-        configured = (
-            self._input_scanners
-            + self._output_scanners
-            + self._tool_result_scanners
-            + self._file_scanners
-        )
-        for scanner in [c.scanner for c in configured + self._arg_scanners]:
-            name = getattr(scanner, "name", type(scanner).__name__)
-            result[name] = scanner
-        if self._rate_limiter is not None:
-            result["rate_limiter"] = self._rate_limiter
-        return result
-
     def collect_events(self) -> AbstractContextManager[list[AnyAuditEvent]]:
         """Context manager that collects AuditEvents emitted during the block.
 
@@ -961,8 +885,32 @@ class SHAI:
         """
         return self._emitter.collect_events()
 
+    async def __aenter__(self) -> SHAI:
+        """Enter a scope that closes the harness on exit.
+
+            async with await SHAI.from_yaml("config/harness.yaml") as harness:
+                await harness.register_tools([...])
+                ...
+
+        Preferred over calling `close()` by hand: the resources below are held
+        for the life of the process otherwise, and a `finally` that someone
+        forgets is how they leak.
+        """
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Release every resource the harness holds. Call at process shutdown.
+
+        Stays public, and is not something config can do for you: it releases
+        the MCP sources' httpx clients, the audit sinks' file handles, and the
+        threat accumulator's SQLite connection. The application owns the
+        process, so it has to be able to say when those go — nothing inside
+        SHAI knows when the last turn has run. `async with` (above) is the
+        ergonomic form; this is here for applications that manage lifetime
+        themselves.
 
         Best-effort and idempotent: one component failing to close must not
         strand the others. Sources first, then the audit trail, then the
@@ -991,7 +939,7 @@ class SHAI:
                 source = await harness.get_source("my_mcp_server")
                 result = await source.call(tool_name, gate.redacted_args or args)
         """
-        return await self._source_registry.get(name)
+        return self._source_registry.get(name)
 
     # ── Internal helpers ──────────────────────────────────────────────────
 

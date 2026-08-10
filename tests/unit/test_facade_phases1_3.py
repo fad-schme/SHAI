@@ -26,7 +26,7 @@ async def harness(tmp_path: Path) -> SHAI:
 async def test_load_and_list_agents(harness, orchestrator_yaml, research_yaml):
     await harness.load_agent(orchestrator_yaml)
     await harness.load_agent(research_yaml)
-    agents = await harness.list_agents()
+    agents = harness.maintenance.list_agents()
     ids = {a.id for a in agents}
     assert ids == {"orchestrator_agent", "research_agent"}
 
@@ -40,7 +40,7 @@ async def test_reload_agent(harness, orchestrator_yaml, tmp_path):
         "allowed_tool_names: [search_docs]\n"
         "allowed_tags: [read]\n"
     )
-    agent = await harness.reload_agent(updated)
+    agent = await harness.maintenance.reload_agent(updated)
     # reload_agent returns AgentContext — verify via registry that config updated
     assert agent.agent_id == "orchestrator_agent"
     cfg = harness._agent_registry.get("orchestrator_agent")
@@ -49,8 +49,8 @@ async def test_reload_agent(harness, orchestrator_yaml, tmp_path):
 
 async def test_deregister_agent(harness, orchestrator_yaml):
     await harness.load_agent(orchestrator_yaml)
-    await harness.deregister_agent("orchestrator_agent")
-    agents = await harness.list_agents()
+    harness.maintenance.deregister_agent("orchestrator_agent")
+    agents = harness.maintenance.list_agents()
     assert not any(a.id == "orchestrator_agent" for a in agents)
 
 
@@ -112,3 +112,42 @@ async def test_boundaries_are_wired_in_phase5(harness):
 async def test_from_yaml_missing_file():
     with pytest.raises(ConfigError):
         await SHAI.from_yaml("/nonexistent/path/harness.yaml")
+
+
+async def test_async_context_manager_closes_the_harness(tmp_path: Path):
+    """`async with` releases what close() releases — sources, sinks, session DB."""
+    cfg = tmp_path / "harness.yaml"
+    cfg.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  rules: []\n"
+        "audit_sinks:\n  - name: stdout\n"
+    )
+    closed: list[bool] = []
+
+    async with await SHAI.from_yaml(cfg) as h:
+        assert isinstance(h, SHAI)
+        original = h.close
+
+        async def _record() -> None:
+            closed.append(True)
+            await original()
+
+        h.close = _record            # type: ignore[method-assign]
+
+    assert closed == [True], "__aexit__ did not close the harness"
+
+
+async def test_close_is_still_public_and_idempotent(tmp_path: Path):
+    """Applications that manage lifetime themselves keep calling close()."""
+    cfg = tmp_path / "harness.yaml"
+    cfg.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  rules: []\n"
+    )
+    h = await SHAI.from_yaml(cfg)
+    await h.close()
+    await h.close()      # second call must not raise

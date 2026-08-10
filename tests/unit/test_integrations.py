@@ -239,37 +239,6 @@ async def test_harness_tool_decorator_deny(tmp_path: Path):
 
 # ── openai_agents integration ─────────────────────────────────────────────
 
-async def test_make_before_tool_hook_allow(tmp_path: Path):
-    from harness.integrations.openai_agents import make_before_tool_hook
-
-    h   = await _build_harness(tmp_path)
-    ctx = AgentContext(agent_id="orchestrator_agent")
-
-    hook = make_before_tool_hook(harness=h, ctx=ctx)
-
-    class _Tool:
-        name = "search_docs"
-
-    result = await hook(_Tool(), {"query": "test"})
-    # None means proceed — search_docs is allowed
-    assert result is None
-
-
-async def test_make_before_tool_hook_deny(tmp_path: Path):
-    from harness.integrations.openai_agents import make_before_tool_hook
-
-    h   = await _build_harness(tmp_path)
-    ctx = AgentContext(agent_id="orchestrator_agent")
-
-    hook = make_before_tool_hook(harness=h, ctx=ctx)
-
-    class _Tool:
-        name = "send_email"
-
-    result = await hook(_Tool(), {"to": "x@y.com"})
-    assert "denied" in str(result).lower()
-
-
 # ── Subagent handoff — integration-level ─────────────────────────────────
 
 async def test_gated_dispatch_subagent_cannot_send_email(tmp_path: Path):
@@ -519,7 +488,7 @@ async def _mcp_harness(tmp_path: Path) -> tuple[SHAI, AgentContext, _FakeMCPSour
         Tool(name="search_docs", tags=["read", "internal"], transport=Transport.MCP),
     ])
     source = _FakeMCPSource()
-    await h._source_registry.register(source)
+    h._source_registry.register(source)
     ctx = AgentContext(agent_id="orchestrator_agent")
     # Route the tool to the fake source, as load_agent would for a real one.
     h._agent_tools[ctx.agent_id]["search_docs"] = (

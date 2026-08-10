@@ -333,7 +333,9 @@ def _replace_args_in_request(request: Any, new_args: dict) -> Any:
             if hasattr(r, attr) and isinstance(getattr(r, attr), dict):
                 object.__setattr__(r, attr, new_args)
                 return r
-    except Exception:  # nosec B110 — best-effort mutation of unknown LangChain request type; original returned on failure
+    # Best-effort mutation of an unknown LangChain request type; on failure the
+    # original request is returned unchanged.
+    except Exception:  # nosec B110
         pass
     return request
 
@@ -369,7 +371,9 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
     if hasattr(result, "content"):
         try:
             object.__setattr__(result, "content", new_text)
-        except Exception:  # nosec B110 — best-effort mutation of frozen LangChain result type; original returned on failure
+        # Best-effort mutation of a frozen LangChain result type; on failure the
+        # original result is returned unchanged.
+        except Exception:  # nosec B110
             pass
     return result
 

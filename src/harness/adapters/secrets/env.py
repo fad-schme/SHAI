@@ -40,7 +40,8 @@ from harness.core.errors import ConfigError
 
 log = logging.getLogger(__name__)
 
-SECRET_URI_PREFIX = "secret://"  # nosec B105 — URI scheme prefix, not a hardcoded credential
+# A URI scheme prefix, not a hardcoded credential.
+SECRET_URI_PREFIX = "secret://"  # nosec B105
 _REF_TO_ENVVAR = re.compile(r"[^A-Za-z0-9]+")
 
 

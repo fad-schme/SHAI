@@ -1,6 +1,6 @@
 """Agent revocation — the kill switch's enforcement half.
 
-Per-agent containment already worked: `deregister_agent()` drops an agent's
+Per-agent containment already worked: `maintenance.deregister_agent()` drops an agent's
 tools, limits, rate-limiter and budget, after which every `check_tool_call` for
 it denies at the pre-gate, leaving other agents running. What was missing is a
 way to trigger that from *outside* the process — it is a method on a live SHAI
@@ -8,7 +8,7 @@ handle, useless to an operator watching an agent misbehave.
 
 This module is that trigger. Two operator surfaces write the same file:
 
-    SHAI.revoke_agent("billing_agent")     # in-process, applies immediately
+    SHAI.maintenance.revoke_agent("billing_agent")   # in-process, applies immediately
     shai agent revoke billing_agent        # separate process
 
 A CLI cannot reach another process's memory, so a file is the medium between
@@ -29,7 +29,7 @@ Three properties are deliberate:
   for; a second way to express it would be a parallel path to gate layer 5.
 
 Revocation stops *actions*, not conversation: it denies at the tool-call gate,
-the same place `deregister_agent()` does. Scan boundaries are unaffected.
+the same place `maintenance.deregister_agent()` does. Scan boundaries are unaffected.
 """
 from __future__ import annotations
 

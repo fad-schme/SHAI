@@ -120,13 +120,8 @@ async def run_turn(
     if input_verdict.blocked:
         return input_verdict
 
-    # Tools are resolved at load_agent() time — read from the harness directly.
-    # Values are (source_name, Tool); llm_fn receives the Tools. source_name is
-    # the gate's business, not the caller's.
-    agent_tools = [
-        tool for _, tool in harness._agent_tools.get(ctx.agent_id, {}).values()
-    ]
-    response = await llm_fn(user_text, agent_tools, ctx)
+    # Tools are resolved at load_agent() time — ask the harness for the set.
+    response = await llm_fn(user_text, harness.tools_for(ctx), ctx)
     output_verdict = await harness.scan_output(response, ctx)
     return output_verdict.redacted_text or response
 

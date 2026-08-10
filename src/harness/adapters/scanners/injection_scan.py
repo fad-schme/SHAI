@@ -105,7 +105,8 @@ _FUNCTION_WEIGHTS: dict[str, float] = {
     "encoding_score":           1.0,
     "persona_score":            1.2,
     "cumulative_soft_triggers": 1.0,
-    "token_score":              0.5,  # nosec B105 — scoring weight, not a password
+    # B105 fires on the "_score" key name; this is a scoring weight, not a password.
+    "token_score":              0.5,  # nosec B105
     "obfuscation_score":        1.2,
     "invisible_text":           1.0,
 }
@@ -534,7 +535,8 @@ class InjectionScanner:
                                     )
                                 )
                                 group_matched = bool(spans)
-                    except Exception as pat_err:  # nosec B112 — malformed pattern; skip signal, do not abort scan
+                    # Malformed pattern; skip this signal rather than abort the scan.
+                    except Exception as pat_err:  # nosec B112
                         log.debug("pattern match error in rule scan: %s", pat_err)
                         continue
                     if group_matched:
@@ -582,7 +584,8 @@ class InjectionScanner:
                     contribution = float(fn(text))
                     function_score += contribution * _FUNCTION_WEIGHTS.get(fn_name, 1.0)
                     scored_functions.add(function_key)
-                except Exception as fn_err:  # nosec B110 — scoring fn failure degrades gracefully; score stays at 0
+                # A scoring function failing degrades gracefully — score stays at 0.
+                except Exception as fn_err:  # nosec B110
                     log.debug("scoring function '%s' failed: %s", fn_name, fn_err)
 
         if not matched_rules:

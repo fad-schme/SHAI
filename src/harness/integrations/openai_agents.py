@@ -17,9 +17,13 @@ Quickstart::
     gated = await wrap_tools(tools, harness=harness, ctx=ctx)
     agent = Agent(name="assistant", tools=gated)
 
-    # Or use a before_tool_call hook on an existing agent:
-    hook  = make_before_tool_hook(harness=harness, ctx=ctx)
-    agent = Agent(..., hooks=AgentHooks(before_tool_call=hook))
+`wrap_tools` is the only entry point, because it is the only shape that can run
+the whole sequence. A `before_tool_call` hook — which this module used to
+provide — gates and then hands control back to the SDK, which dispatches the
+tool itself; the hook never sees the result, so `scan_tool_result` cannot run
+and tool output reaches the model unscanned. That is the T6 indirect-injection
+boundary, and an integration that silently omits it is not a weaker option,
+it is a different security posture wearing the same name.
 
 OpenAI Agents SDK is imported lazily.
 """
@@ -27,7 +31,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
@@ -43,35 +47,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-__all__ = ["shai_tool", "make_before_tool_hook", "wrap_tool", "wrap_tools"]
-
-
-def make_before_tool_hook(*, harness: SHAI, ctx: AgentContext) -> Callable:
-    """Return an async before_tool_call hook for AgentHooks.
-
-    Gates each tool call. Returns deny reason (SDK uses as tool result) on deny.
-
-    Gate only: the SDK dispatches the tool itself, so this hook never sees the
-    result and cannot run scan_tool_result. Tool output reaches the model
-    unscanned — no T6 indirect-injection protection. Use wrap_tools() instead
-    unless you need the hook shape.
-    """
-    harness_ = harness
-    ctx_     = ctx
-
-    async def before_tool_call(tool: Any, args: Any) -> Any:
-        tool_name = getattr(tool, "name", str(tool))
-        tool_args = (args if isinstance(args, dict)
-                     else vars(args) if hasattr(args, "__dict__") else {})
-        gate = await harness_.check_tool_call(tool_name, tool_args, ctx_)
-        if not gate.allowed:
-            log.info("tool call denied",
-                     extra={"tool": tool_name, "reason": gate.deny_reason,
-                            **ctx_.to_log_fields()})
-            return f"Tool call denied: {gate.deny_reason}"
-        return gate.redacted_args if gate.redacted_args is not None else None
-
-    return before_tool_call
+__all__ = ["shai_tool", "wrap_tool", "wrap_tools"]
 
 
 def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:

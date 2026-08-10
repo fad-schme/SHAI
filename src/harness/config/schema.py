@@ -224,7 +224,7 @@ class RevocationConfig(BaseModel, frozen=True, extra="forbid"):
 
     path:
         JSON file holding the revoked agent ids. Written by
-        `SHAI.revoke_agent()` and by `shai agent revoke`, read by the gate.
+        `SHAI.maintenance.revoke_agent()` and by `shai agent revoke`, read by the gate.
         A file is the medium because the CLI runs in its own process and cannot
         reach the harness's memory. Empty (default) disables revocation.
 
@@ -235,7 +235,8 @@ class RevocationConfig(BaseModel, frozen=True, extra="forbid"):
         0 disables caching: every gate call reads the file, which is the fastest
         possible response at the cost of a read per call.
 
-    Revocation denies at the tool-call gate, the same place `deregister_agent()`
+    Revocation denies at the tool-call gate, the same place
+    `maintenance.deregister_agent()`
     does: it stops actions, not conversation. It is agent-scoped only —
     tool- and source-level denial belongs to policy rules.
     """

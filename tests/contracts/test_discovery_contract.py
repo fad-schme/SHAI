@@ -222,3 +222,81 @@ def test_declared_entry_point_targets_import():
             assert hasattr(module, attr), (
                 f"{group}.{name} points at {target}, which does not exist"
             )
+
+
+def test_every_name_selectable_in_config_is_registered():
+    """A scanner an operator can name in harness.yaml must be resolvable.
+
+    Two registries name the built-in scanners: `_SCANNER_FACTORIES`, which
+    from_yaml() builds them from, and the `harness.scanners` entry-point group,
+    which is what `resolve()` reads and what the CHANGELOG names as the
+    supported way to reach a bundled scanner by name — `MCPMetadataScanner`'s
+    removal from `harness.adapters.scanners` pointed users straight at it.
+
+    They drifted: `command_injection_scan` and `mcp_metadata_scan` were added to
+    the factory table and never registered, so `resolve()` raised for the very
+    scanner the migration note named. Pin them together.
+    """
+    import tomllib
+    from pathlib import Path
+
+    from harness.core.harness import _SCANNER_FACTORIES
+
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject.exists():
+        pytest.skip("pyproject.toml not found (installed package, not a checkout)")
+
+    declared = set(
+        tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        ["project"]["entry-points"]["harness.scanners"]
+    )
+    missing = set(_SCANNER_FACTORIES) - declared
+    assert not missing, (
+        f"scanner(s) {sorted(missing)} are selectable by name in harness.yaml "
+        f"but absent from the harness.scanners entry-point group — "
+        f"resolve() cannot find them"
+    )
+
+
+def test_registry_methods_are_async_only_when_they_await():
+    """`async` iff the method awaits, on all three registries.
+
+    They were uniformly `async` while holding plain dicts behind a
+    threading.Lock, so `ToolRegistry.list()` was async and `as_dict()` — the
+    same read — was not. Asserted by AST rather than by listing method names, so
+    a new method is covered the day it is written.
+
+    The SHAI facade is deliberately excluded: it keeps a uniform async surface
+    because it is the published API. See the SHAI class docstring.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "src" / "harness"
+    targets = {
+        root / "tools" / "registry.py":  "ToolRegistry",
+        root / "agents" / "registry.py": "AgentRegistry",
+        root / "tools" / "source.py":    "SourceRegistry",
+    }
+
+    violations = []
+    for path, cls_name in targets.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        cls = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.ClassDef) and n.name == cls_name
+        )
+        for fn in cls.body:
+            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            awaits = any(
+                isinstance(x, ast.Await | ast.AsyncFor | ast.AsyncWith)
+                for x in ast.walk(fn)
+            )
+            if isinstance(fn, ast.AsyncFunctionDef) != awaits:
+                violations.append(
+                    f"{cls_name}.{fn.name}: "
+                    f"{'async but never awaits' if not awaits else 'awaits but is not async'}"
+                )
+
+    assert not violations, "registry async/await mismatch: " + "; ".join(violations)

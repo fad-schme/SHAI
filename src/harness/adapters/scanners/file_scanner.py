@@ -360,7 +360,8 @@ def _svg_tree_findings(raw: bytes, findings: list[Finding], seen: set[str]) -> N
     external entities, so no XXE surface remains and no new dependency is needed
     — the same call `_extract_xmp` makes.
     """
-    import xml.etree.ElementTree as ET  # nosec B405 — entity-free source, gated by caller
+    # Entity-free source, gated by the caller — see the checks above.
+    import xml.etree.ElementTree as ET  # nosec B405
 
     def flag(category: str, severity: Severity, detail: str) -> None:
         if category in seen:
@@ -373,7 +374,8 @@ def _svg_tree_findings(raw: bytes, findings: list[Finding], seen: set[str]) -> N
             detail=detail,
         ))
 
-    root = ET.fromstring(raw)  # nosec B314 — entity-free source, gated by caller
+    # Entity-free source, gated by the caller — see the checks above.
+    root = ET.fromstring(raw)  # nosec B314
     for el in root.iter():
         # Comments and processing instructions carry a callable tag.
         tag = _localname(el.tag) if isinstance(el.tag, str) else ""
@@ -581,7 +583,8 @@ def _nested_reasons(
         try:
             with z.open(name) as entry:
                 blob = entry.read(_ARCHIVE_ENTRY_READ_CAP)
-        except Exception as e:  # nosec B112 — malformed entry; keep scanning the rest
+        # Malformed entry; keep scanning the rest of the archive.
+        except Exception as e:  # nosec B112
             log.debug("nested entry read failed for %s: %s", name, e)
             continue
         inner = _zip_metadata_reasons(io.BytesIO(blob), depth + 1, max_mb)
@@ -812,7 +815,8 @@ def _check_ooxml(path: Path, findings: list[Finding], max_mb: float) -> None:
                                 detail=f"Injection pattern found in {name}",
                             ))
                             return
-                except Exception as entry_err:  # nosec B110 — malformed OOXML entry; skip and continue scanning
+                # Malformed OOXML entry; skip it and continue scanning the rest.
+                except Exception as entry_err:  # nosec B110
                     log.debug("OOXML entry scan error in %s: %s", name, entry_err)
     except Exception as e:
         log.debug("OOXML scan failed: %s", e)

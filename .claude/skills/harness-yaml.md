@@ -378,7 +378,7 @@ revoked agent consumes no budget on its way to being denied. Other agents in the
 process are unaffected. One `AuditEvent` per denied call, reason
 `agent '<id>' is revoked`.
 
-Two surfaces write the same file — `SHAI.revoke_agent()` / `restore_agent()` and
+Two surfaces write the same file — `SHAI.maintenance.revoke_agent()` / `restore_agent()` and
 `shai agents revoke|restore|revocations`. A file is the medium because the CLI
 runs in its own process. **`cache_ttl_seconds` is the kill latency**; the
 in-process API sees its own write immediately.

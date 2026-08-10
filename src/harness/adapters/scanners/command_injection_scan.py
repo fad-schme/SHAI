@@ -202,10 +202,10 @@ def _shapes(facts: _Facts) -> dict[str, Severity]:
         _basename(w[0]) == "chmod" and any(a.startswith("+") and "x" in a for a in w[1:])
         for w in facts.commands if w
     )
-    # nosec B108 — these are detection patterns matched against text the
-    # scanner reads, not paths this process opens. A dropper writes its payload
-    # to a world-writable directory and executes it from there; recognising
-    # that is the point.
+    # B108 flags hardcoded tmp paths. These are detection patterns matched
+    # against text the scanner reads, not paths this process opens. A dropper
+    # writes its payload to a world-writable directory and executes it from
+    # there; recognising that is the point.
     _DROP_DIRS = ("./", "/tmp/", "/var/tmp/", "/dev/shm/")  # nosec B108
     runs_local_path = any(w[0].startswith(_DROP_DIRS) for w in facts.commands if w)
     if fetches and (makes_executable or runs_local_path or binaries & _INTERPRETERS):

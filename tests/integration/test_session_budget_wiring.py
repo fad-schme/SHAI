@@ -184,7 +184,7 @@ async def test_failed_load_leaves_no_half_registered_agent(tmp_path: Path):
     with pytest.raises(ConfigError):
         await h.load_agent(agent)
 
-    assert AGENT not in [a.id for a in await h.list_agents()]
+    assert AGENT not in [a.id for a in h.maintenance.list_agents()]
     assert AGENT not in h._agent_limits
     assert AGENT not in h._agent_tools
 
@@ -218,7 +218,7 @@ async def test_failed_reload_keeps_the_previous_definition(tmp_path: Path):
         f"limits:\n  max_steps: 99\n  no_such_limit: 1000\n"
     )
     with pytest.raises(ConfigError):
-        await h.reload_agent(agent)
+        await h.maintenance.reload_agent(agent)
 
     assert h._agent_limits[AGENT].max_steps == 1
     assert h._agent_registry.get(AGENT).limits == {"max_steps": 1}

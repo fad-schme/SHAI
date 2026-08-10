@@ -29,7 +29,7 @@ def make_tool(name: str, tags: list[str] | None = None) -> Tool:
 async def make_registry(*tools: Tool) -> ToolRegistry:
     reg = ToolRegistry()
     for t in tools:
-        await reg.register(t)
+        reg.register(t)
     return reg
 
 
@@ -186,7 +186,7 @@ async def test_source_registry_activate():
     reg = await make_registry(make_tool("search_docs"))
     local_src = LocalSource(_local(), registry=reg)
     src_registry = SourceRegistry(policy=RuleBasedPolicy())
-    await src_registry.register(local_src)
+    src_registry.register(local_src)
     ctx  = AgentContext(
         agent_id="a1")
     tools = await src_registry.activate(ctx, ["local"])
@@ -225,7 +225,7 @@ async def test_source_registry_policy_suppress():
     )
     policy = RuleBasedPolicy(rules=[suppress_rule])
     src_registry = SourceRegistry(policy=policy)
-    await src_registry.register(local_src)
+    src_registry.register(local_src)
     ctx  = AgentContext(
         agent_id="a1")
     tools = await src_registry.activate(ctx, ["local"])

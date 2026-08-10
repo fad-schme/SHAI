@@ -45,7 +45,7 @@ class AgentRegistry:
         self._lock = threading.Lock()
         self._forbidden_tags = list(forbidden_tag_combinations or [])
 
-    async def register(self, item: AgentConfig) -> bool:
+    def register(self, item: AgentConfig) -> bool:
         """True = newly registered. False = identical already existed.
         Raises AgentConflictError if same id registered with different content.
         Raises ConfigError if allowed_tags contains a forbidden combination.
@@ -66,7 +66,7 @@ class AgentRegistry:
                 op="register_agent",
             )
 
-    async def deregister(self, item: AgentConfig) -> bool:
+    def deregister(self, item: AgentConfig) -> bool:
         """True = removed. False = was not registered."""
         with self._lock:
             if item.id in self._agents:
@@ -91,7 +91,7 @@ class AgentRegistry:
             )
         return config
 
-    async def list(self) -> list[AgentConfig]:
+    def list(self) -> list[AgentConfig]:
         return list(self._agents.values())
 
     # ── File-based operations (agent-specific) ────────────────────────────
@@ -104,7 +104,7 @@ class AgentRegistry:
         Raises ConfigError on invalid file or schema.
         """
         config = await asyncio.to_thread(self._parse, Path(path))
-        await self.register(config)
+        self.register(config)
         log.info("agent loaded", extra={"agent_id": config.id, "path": str(path)})
         return config
 

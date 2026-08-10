@@ -146,7 +146,6 @@ class AuditEvent:
 | `output_scan` | `scan_output()` |
 | `file_scan` | `scan_file()` |
 | `mcp_metadata_scan` | MCP tool-registration metadata scan |
-| `narrow_scan` | `scan_pii()` / `scan_injection()` — one named scanner |
 | `system` | Scanner degrade / circuit-breaker events, and the startup attestation emitted once by `from_yaml()` — no direct call |
 
 ### Decision values

@@ -212,7 +212,8 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                              "token_id": token_id,
                              "destination": url_str})
 
-        elif self._connectivity.no_token_policy == "strict":  # nosec B105 — policy name string, not a password
+        # B105 fires on the "strict" literal; it is a policy name, not a password.
+        elif self._connectivity.no_token_policy == "strict":  # nosec B105
             # strict mode: reject requests with no token
             # (not suitable for SSE/init — use permissive for those)
             deny_reason = (
