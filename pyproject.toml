@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "shai-harness"
-version = "0.7.0"
+version = "0.7.1"
 description = "Secure Harness AI — control-plane SDK for production agents"
 readme = "README.md"
 requires-python = ">=3.11"
