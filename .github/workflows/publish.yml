@@ -15,12 +15,23 @@ name: Publish
 #
 # Triggers:
 #   - push of a v* tag  → build, then publish to PyPI after environment approval
-#   - manual dispatch   → build, then publish to TestPyPI (rehearsal)
+#   - manual dispatch   → build, then publish to the index named by `target`
+#
+# The two indexes are independent: a dispatch reaches either one, and the tag
+# push remains the normal route to PyPI. A dispatch aimed at PyPI has no tag to
+# check the version against, so the guard that catches a version/tag mismatch
+# does not run — the `pypi` environment reviewer is the only gate on that path.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Index to publish to"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -81,12 +92,12 @@ jobs:
 
 
   # ── Job 2: Publish to TestPyPI ───────────────────────────────────────────
-  # Manual dispatch only — the rehearsal step. Verifies the upload path and the
-  # rendered project page without burning a real PyPI filename.
+  # Manual dispatch with target=testpypi — the rehearsal step. Verifies the
+  # upload path and the rendered project page without burning a PyPI filename.
   publish-testpypi:
     name: Publish to TestPyPI
     needs: build
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -107,13 +118,16 @@ jobs:
 
 
   # ── Job 3: Publish to PyPI ───────────────────────────────────────────────
-  # Tag push only. The `pypi` environment is where the human gate lives: add a
-  # required reviewer in Settings → Environments so a tag push alone can never
-  # publish. Upload is irreversible — a released version cannot be replaced.
+  # Tag push, or a manual dispatch with target=pypi. The `pypi` environment is
+  # where the human gate lives: add a required reviewer in Settings →
+  # Environments so neither route can publish unattended. Upload is
+  # irreversible — a released version cannot be replaced.
   publish-pypi:
     name: Publish to PyPI
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     runs-on: ubuntu-latest
     environment:
       name: pypi
