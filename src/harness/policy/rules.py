@@ -53,12 +53,12 @@ class RuleBasedPolicy:
         try:
             # Pass 1: agent-scoped rules
             if rules:
-                decision = self._evaluate_rules(rules, tool, ctx)
+                decision = self._evaluate_rules(rules, tool, args, ctx)
                 if decision is not None:
                     return decision
 
             # Pass 2: global rules
-            decision = self._evaluate_rules(self._global_rules, tool, ctx)
+            decision = self._evaluate_rules(self._global_rules, tool, args, ctx)
             if decision is not None:
                 return decision
 
@@ -113,6 +113,7 @@ class RuleBasedPolicy:
         self,
         rules: list[RuleConfig],
         tool: Tool,
+        args: dict[str, Any],
         ctx: AgentContext,
     ) -> PolicyDecision | None:
         """Return first matching PolicyDecision, or None if no rule matches."""
@@ -138,9 +139,16 @@ class RuleBasedPolicy:
                         rule_id=rule.id,
                     )
                 if rule.action == "redact":
+                    # Merge, never replace. `redact:` names the arguments to
+                    # mask; the rest of the call travels through untouched.
+                    # Replacing the dict dropped every argument the rule did not
+                    # name — frequently the ones that *constrain* the call — so a
+                    # rule written to narrow a dispatch widened it instead. Layer
+                    # 7's scanner redaction in check_tool_call merges for the same
+                    # reason.
                     return PolicyDecision(
                         action="redact",
-                        redacted_args=rule.redact or {},
+                        redacted_args={**args, **(rule.redact or {})},
                         rule_id=rule.id,
                     )
         return None

@@ -19,24 +19,36 @@ jobs:
 
   # ── Job 1: Unit tests ────────────────────────────────────────────────────
   unit-tests:
-    name: Unit tests
+    name: Unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version `requires-python` claims. Testing only the lowest let a
+        # 3.12+ regression ship green.
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install
-        run: pip install shai-harness
+        run: pip install -e ".[dev]"
 
-      - name: Run unit tests
-        run: pytest tests/unit/ -v --tb=short
+      # Floor, not a target. tests/unit/ measured 81% on 2026-08-12; the gate
+      # sits just below so ordinary churn does not fail the build, and exists to
+      # catch a real regression. Ratchet it upward as coverage improves — never
+      # downward to make a red build green.
+      - name: Run unit tests with coverage
+        run: >-
+          pytest tests/unit/ -v --tb=short
+          --cov=src/harness --cov-report=term-missing --cov-fail-under=78
 
 
   # ── Job 2: Security invariant tests ─────────────────────────────────────
@@ -60,7 +72,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install shai-harness
+        run: pip install -e ".[dev]"
 
       - name: Run security invariant tests
         run: pytest tests/security/ -v --tb=short
@@ -85,7 +97,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install shai-harness
+        run: pip install -e ".[dev]"
 
       - name: Run contract tests
         run: pytest tests/contracts/ -v --tb=short
@@ -116,7 +128,7 @@ jobs:
         run: pip install --upgrade pip setuptools pip-audit
 
       - name: Install project dependencies
-        run: pip install shai-harness
+        run: pip install -e ".[dev]"
 
       - name: Audit dependencies for CVEs
         # --skip-editable excludes SHAI's own editable install, which pip-audit
@@ -130,7 +142,33 @@ jobs:
             --format columns
 
 
-  # ── Job 5: Static analysis ───────────────────────────────────────────────
+  # ── Job 5: Lint ──────────────────────────────────────────────────────────
+  # ruff over src/, tests/ and examples/. examples/ is included deliberately:
+  # they are the first code a new user runs, so they are held to the same bar
+  # as the library. 32 pre-existing violations were cleared on 2026-08-12
+  # before this job was added.
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: ruff check src/ tests/ examples/
+
+
+  # ── Job 6: Static analysis ───────────────────────────────────────────────
   # Bandit scans for common security issues in Python code:
   # hardcoded secrets, use of unsafe functions, shell injection, etc.
   # Scoped to src/ only — test code is excluded.
@@ -160,7 +198,7 @@ jobs:
             --format txt
 
 
-  # ── Job 6: Secret scanning ───────────────────────────────────────────────
+  # ── Job 7: Secret scanning ───────────────────────────────────────────────
   # Catches accidentally committed credentials, API keys, and tokens
   # before they land in the repo history.
   secret-scan:
@@ -180,7 +218,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
-  # ── Job 7: Docs lint ─────────────────────────────────────────────────────
+  # ── Job 8: Docs lint ─────────────────────────────────────────────────────
   # Checks that markdown files have no broken links and that the CHANGELOG
   # has been updated on PRs that touch src/.
   # Soft check — warnings only, does not block merge.
@@ -211,7 +249,7 @@ jobs:
           fi
 
 
-  # ── Job 8: Performance budget ────────────────────────────────────────────
+  # ── Job 9: Performance budget ────────────────────────────────────────────
   # The `perf` marker is deselected by default (see pyproject.toml), so these
   # need `-m perf` to run at all. `-s` is deliberate: the tests print their
   # measurements, and the numbers in the log are the point — a pass tells you
@@ -237,7 +275,7 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install shai-harness
+        run: pip install -e ".[dev]"
 
       - name: Run performance budget
         run: pytest tests/perf/ -m perf -v -s --tb=short
@@ -259,6 +297,7 @@ jobs:
       - contract-tests
       - dependency-audit
       - static-analysis
+      - lint
       - secret-scan
     runs-on: ubuntu-latest
     if: always()      # run even if a dependency job was skipped or failed

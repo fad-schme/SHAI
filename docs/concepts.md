@@ -132,7 +132,7 @@ Key fields on `AgentContext`:
 - `sub_agent_id` — set when this call is on behalf of a subagent
 - `allowed_tags` — narrowed capability scope for subagents
 - `conversation_id` — session key for all session-scoped state: the cross-turn threat accumulator and the execution budget. Set it with `for_conversation()`. Falls back to `agent_id` when unset, which collapses every conversation onto one budget. Propagated to subagents.
-- `approvals` — signed `ApprovalGrant`s for the call about to be gated, required by `SENSITIVE` / `IRREVERSIBLE` tools. Not propagated to subagents: a grant authorises one call, not whatever that call delegates
+- `approvals` — signed `ApprovalGrant`s for the call about to be gated, required by `SENSITIVE` / `IRREVERSIBLE` tools. Not copied onto a subagent context by `scope_context_for_subagent()`, so a delegated call is approved on its own terms by default. A grant binds a tool and its arguments, never a caller role — what a subagent may invoke at all is decided by `allowed_tool_names` and `allowed_tags`
 
 Subagents can only be narrower than their parent, never wider. When you scope a context for a subagent:
 

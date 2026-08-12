@@ -176,7 +176,7 @@ gate = await harness.check_tool_call("pay_invoice", args, ctx)
 
 SHAI verifies the signature and the binding offline — it never calls out. Each grant is bound to one agent, tenant, tool, and **argument set**, so approving a $5 refund does not authorise a $50,000 one, and a grant for one tool cannot be replayed against another. Quorum counts *distinct* `approver_id`s, so two grants from one person is still one approver.
 
-Two things to know: grants are **not** propagated to subagents (a grant authorises one call, not what that call delegates), and the approvers land on the gate's allow event as `extra.approvers`, so the audit trail can answer who authorised an irreversible action.
+Two things to know. `scope_context_for_subagent()` does **not** copy `approvals` onto the child context, so a delegated call is approved on its own terms unless you pass grants down deliberately — a grant binds a tool and its arguments, never a caller role, and whether a subagent may reach that tool at all is settled earlier by `allowed_tool_names` and `allowed_tags`. And the approvers land on the gate's allow event as `extra.approvers`, so the audit trail can answer who authorised an irreversible action.
 
 ### Policy
 

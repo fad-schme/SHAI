@@ -8,6 +8,16 @@ Run:
 """
 from __future__ import annotations
 
+# Windows consoles default to a legacy codepage (cp1252), and every example
+# below prints box-drawing characters. Without this the first print() raises
+# UnicodeEncodeError before any SHAI output appears. Safe on POSIX, where the
+# stream is already UTF-8.
+import sys
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncio
 import logging
 import sys
@@ -16,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-from display import c, BOLD, DIM, CYAN, GREEN, RED, YELLOW, BLUE
+from display import BLUE, BOLD, CYAN, DIM, GREEN, RED, YELLOW, c
 
 CONFIG       = Path(__file__).parent / "connectors"
 HARNESS_YAML = CONFIG / "harness.yaml"
@@ -67,11 +77,13 @@ def print_audit_rows(events: list) -> None:
     print(f"  {c(BOLD, '│')}  {c(DIM, '─── SHAI audit ─────────────────────────────────')}")
     for ev in events:
         parts = []
-        if ev.tool_name:    parts.append(f"tool={c(CYAN, ev.tool_name)}")
+        if ev.tool_name:
+            parts.append(f"tool={c(CYAN, ev.tool_name)}")
         if ev.finding_count:
             parts.append(f"findings={c(YELLOW, str(ev.finding_count))}"
                          + (f" max={c(YELLOW, str(ev.max_severity))}" if ev.max_severity else ""))
-        if ev.deny_reason:  parts.append(c(RED, ev.deny_reason))
+        if ev.deny_reason:
+            parts.append(c(RED, ev.deny_reason))
         print_shai_row(str(ev.boundary), str(ev.decision), "  ".join(parts))
     print(f"  {c(BOLD, '│')}")
 
@@ -340,7 +352,6 @@ async def s12_connector_manifest_enforces_urls(h, ctx) -> bool:
 # ── Runner ─────────────────────────────────────────────────────────────────
 
 async def main() -> None:
-    from harness import SHAI
     from harness.connectors import list_connectors
 
     print()
@@ -379,7 +390,7 @@ async def main() -> None:
     total  = len(results)
 
     print()
-    print(c(BOLD, f"  ── Results ─────────────────────────────────────────────────────"))
+    print(c(BOLD, "  ── Results ─────────────────────────────────────────────────────"))
     for i, (fn, ok) in enumerate(zip(scenarios, results), 1):
         icon = c(GREEN, "✓") if ok else c(RED, "✗")
         name = fn.__name__[4:].replace("_", " ")

@@ -10,16 +10,25 @@ Ten scenarios covering OWASP Agentic AI Threats T2 T3 T4 T5 T6 T9 T11.
 """
 from __future__ import annotations
 
+# Windows consoles default to a legacy codepage (cp1252), and every example
+# below prints box-drawing characters. Without this the first print() raises
+# UnicodeEncodeError before any SHAI output appears. Safe on POSIX, where the
+# stream is already UTF-8.
+import sys
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncio
 import logging
 import sys
 from pathlib import Path
-from dataclasses import dataclass, field
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))      # for display.py
 
-from display import c, GREEN, RED, YELLOW, CYAN, BOLD, DIM
+from display import BOLD, CYAN, DIM, GREEN, RED, YELLOW, c
 
 # Silence harness internal logs — we print our own formatted output
 logging.basicConfig(level=logging.WARNING)
@@ -40,7 +49,33 @@ BOLD   = "\033[1m"
 DIM    = "\033[2m"
 RESET  = "\033[0m"
 
-USE_COLOUR = sys.stdout.isatty()
+def _colour_supported() -> bool:
+    """True when the stream renders ANSI escapes.
+
+    isatty() alone is not enough on Windows: a legacy console is a tty but
+    prints escape codes literally. Windows 10+ can interpret them once
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING is set, so try to set it and fall back
+    to no colour when that fails.
+    """
+    if not sys.stdout.isatty():
+        return False
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        # -11 = STD_OUTPUT_HANDLE, 0x0004 = ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except Exception:
+        return False
+
+
+USE_COLOUR = _colour_supported()
 
 def c(colour: str, text: str) -> str:
     return f"{colour}{text}{RESET}" if USE_COLOUR else text

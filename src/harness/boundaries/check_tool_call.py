@@ -175,6 +175,21 @@ async def run(
             name, tool, ctx, emitter, start, tenant_id,
             audit_tags=agent_config.audit_tags,
         )
+    except Exception as e:
+        # `policy` is operator-selected (policy.engine), so an engine outside
+        # this package can raise anything — a bundle fetch timing out, a bad
+        # duck-type. Letting it propagate would return no verdict and emit no
+        # event, breaking both boundaries-never-raise and one-event-per-call.
+        # The type only reaches the audit trail: a third-party message could
+        # echo the arguments it was evaluating.
+        log.error("policy engine raised",
+                  extra={"tool": name, "policy": getattr(policy, "name", "unknown"),
+                         "error": str(e), **ctx.to_log_fields()})
+        return await emit_deny(
+            f"policy engine failed: {type(e).__name__}",
+            name, tool, ctx, emitter, start, tenant_id,
+            audit_tags=agent_config.audit_tags,
+        )
 
     if policy_decision.action == "deny":
         return await emit_deny(

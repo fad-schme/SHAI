@@ -180,8 +180,8 @@ homoglyph obfuscation up to `max_depth`.
   additional locale is a hand-written rule set. Treat non-English input as
   substantially less well covered, and gate it with tool-level controls rather
   than relying on content scanning.
-- We have **not yet published adversarial benchmark numbers.** Do not assume
-  detection rates without testing against your own threat scenarios.
+- Detection rates are workload-dependent. Validate against your own threat
+  scenarios before relying on a specific rate.
 
 ---
 
@@ -304,8 +304,8 @@ poisoned pattern catalog ships to users.
 **SHAI control:** the audit event schema **never** includes raw user text,
 LLM output, matched substrings, or scanner input. Only `finding_count`,
 `max_severity`, `boundary`, `decision`, `adapters`, and structured metadata.
-Every event is HMAC-SHA256 signed with a rotating secret. Redaction is
-applied to text before it leaves the scan boundary.
+Every event is HMAC-SHA256 signed with a single operator-supplied secret.
+Redaction is applied to text before it leaves the scan boundary.
 
 **Tests:** `tests/unit/test_core_events.py`, `tests/unit/test_audit_signing.py`,
 `tests/unit/test_scan_tool_result.py`.
@@ -318,6 +318,19 @@ applied to text before it leaves the scan boundary.
   and rule identifiers; audit your sinks accordingly.
 - Application logs from your agent framework (LangGraph, etc.) are not
   managed by SHAI. Configure their logging separately.
+- **Signing keys cannot be rotated in place.** `audit_signing.secret` is a
+  single key, events carry no key identifier, and `shai audit verify` accepts
+  one secret. Rotating the key makes every pre-rotation record verify as
+  *mismatched* — the same result a tampered record produces — and the command
+  exits non-zero on that file from then on. If you must rotate, do it at a file
+  boundary and keep each retired key with the segment it covers; SHAI does not
+  record which key signed which file, so that association is yours to maintain.
+- Signing makes the trail tamper-*evident*, not tamper-*proof*, and it says
+  nothing about records that no longer exist. `FileSink` rotation is bounded by
+  `max_bytes` × `backup_count` (default 100 MB × 10) and discards the oldest
+  file beyond it, so a high enough volume of decisions can age evidence out.
+  Size the bounds for your retention requirement, or ship to an append-only
+  sink.
 
 ---
 

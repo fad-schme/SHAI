@@ -11,8 +11,18 @@ with real scanners, real policy, and real audit events.
 """
 from __future__ import annotations
 
+# Windows consoles default to a legacy codepage (cp1252), and every example
+# below prints box-drawing characters. Without this the first print() raises
+# UnicodeEncodeError before any SHAI output appears. Safe on POSIX, where the
+# stream is already UTF-8.
+import sys
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncio
-import textwrap
+import tempfile
 from pathlib import Path
 
 _HARNESS_YAML = """\
@@ -82,10 +92,12 @@ def _gate(label: str, g) -> None:
 
 async def main() -> None:
     from harness.core.harness import SHAI
-    from harness.tools.tool import Tool
     from harness.core.types import Transport
+    from harness.tools.tool import Tool
 
-    tmp = Path("/tmp/shai-quickstart")
+    # tempfile.gettempdir(), not "/tmp": on Windows that literal resolves to the
+    # current drive root and leaves C:\tmp behind.
+    tmp = Path(tempfile.gettempdir()) / "shai-quickstart"
     tmp.mkdir(exist_ok=True)
     (tmp / "agents").mkdir(exist_ok=True)
     (tmp / "harness.yaml").write_text(_HARNESS_YAML)

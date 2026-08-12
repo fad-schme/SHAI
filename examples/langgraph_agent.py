@@ -13,6 +13,16 @@ Run:
 """
 from __future__ import annotations
 
+# Windows consoles default to a legacy codepage (cp1252), and every example
+# below prints box-drawing characters. Without this the first print() raises
+# UnicodeEncodeError before any SHAI output appears. Safe on POSIX, where the
+# stream is already UTF-8.
+import sys
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncio
 import logging
 import sys
@@ -21,9 +31,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))      # for display.py
 
-from display import (c, print_header, print_startup, print_user,
-                     print_thinking, print_agent, print_blocked,
-                     print_audit_summary, print_gate_summary)
+from display import (
+    print_agent,
+    print_audit_summary,
+    print_blocked,
+    print_gate_summary,
+    print_header,
+    print_startup,
+    print_thinking,
+    print_user,
+)
 
 CONFIG       = Path(__file__).parent.parent / "config"
 HARNESS_YAML = CONFIG / "harness.yaml"
@@ -36,7 +53,8 @@ for name in ("httpx", "harness", "langchain", "langgraph"):
 
 # ── Tools — defined once, used everywhere ─────────────────────────────────
 
-from harness.integrations.langgraph import shai_tool, HarnessToolNode
+from harness.integrations.langgraph import HarnessToolNode, shai_tool
+
 
 @shai_tool(tags=["read", "internal"])
 def search_docs(query: str) -> str:
@@ -70,9 +88,9 @@ tools = [search_docs, get_weather, write_file]
 
 async def main() -> None:
     try:
+        from langchain_core.messages import AIMessage, HumanMessage
         from langchain_ollama import ChatOllama
-        from langchain_core.messages import HumanMessage, AIMessage
-        from langgraph.graph import StateGraph, MessagesState, END
+        from langgraph.graph import END, MessagesState, StateGraph
     except ImportError as e:
         print(f"\nMissing dependency: {e}")
         print("Install:  pip install langgraph langchain-ollama langchain-core")

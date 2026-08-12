@@ -34,8 +34,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tool is denied** — there is deliberately no fallback to a weaker check.
 
   Approvers are recorded on the gate's allow event as `extra.approvers`, so the
-  audit trail can answer who authorised an irreversible action. Grants are not
-  propagated to subagents: a grant authorises one call, not what it delegates.
+  audit trail can answer who authorised an irreversible action.
+  `scope_context_for_subagent()` does not copy `approvals` onto the child
+  context, so a delegated call is approved on its own terms by default. A grant
+  binds a tool name and an `args_digest`, never a caller role — what a subagent
+  may invoke at all is decided earlier, by its `allowed_tool_names` and
+  `allowed_tags`.
 
   *Migration:* set `check_tool_call.approvals.secret`, then issue grants with
   `sign_grant()` / `encode_grant()` and pass them on `ctx.approvals`. Callers
@@ -244,6 +248,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   existing `policy.digest` would not have moved if an operator dropped it.
 
 ### Fixed
+- **A policy `redact` rule no longer drops the arguments it does not name.**
+  `RuleBasedPolicy` returned the rule's `redact:` dict as the complete
+  `redacted_args`, and the gate assigned it to the effective arguments whole, so
+  every argument the rule did not name was silently discarded before dispatch. A
+  rule written as `redact: {amount: "***"}` turned a call carrying
+  `{account, amount, currency}` into `{amount: "***"}`.
+
+  The masking case was the mild one. The arguments a redact rule does not name
+  are frequently the ones that *constrain* the call — a scope filter, a tenant
+  id, a row limit — so a rule written to narrow a dispatch widened it instead.
+
+  `redacted_args` is now `{**args, **rule.redact}`, which is what
+  `docs/configuration.md` already documented ("named args are replaced") and
+  what the gate's own layer-7 scanner redaction has always done. Behaviour
+  changes for any deployment with a `redact` rule: unnamed arguments now reach
+  the tool. A rule that relied on the old behaviour to strip arguments was
+  relying on a bug — express it as a `deny` rule or a narrower tool contract.
+
+- **THREAT_MODEL.md no longer claims audit events are signed with a rotating
+  secret.** They are signed with a single operator-supplied key. Nothing in SHAI
+  implements rotation: `audit_signing.secret` is one key, `AuditEvent` carries
+  no key identifier, and `shai audit verify` takes one secret. An operator who
+  rotated on the strength of that sentence would find every pre-rotation record
+  reported as *mismatched* — indistinguishable from tampering — and
+  `shai audit verify` exiting non-zero on that file permanently.
+
+  No behaviour changed; the claim was wrong, and it was wrong in the document
+  SHAI offers as its honest coverage claim. T10's residual risks now record the
+  rotation limitation and the workaround (rotate at a file boundary, keep each
+  retired key with the segment it covers), plus a second gap that was also
+  unstated: audit rotation discards evidence beyond `max_bytes` ×
+  `backup_count`, and signing says nothing about records that no longer exist.
+
 - **Large text no longer stalls a boundary.** `HeuristicScanner` is the
   always-on backstop on every text boundary, and its internal URL regex left
   the URL scheme repeat unbounded. On text where `://` never arrives — ordinary
@@ -345,6 +382,44 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.7.0] — 2026-08-05
 
 ### Added
+- **`policy.engine` selects the PolicyEngine by name.** Defaults to the
+  built-in `rules` evaluator, so no existing config changes behaviour. Any
+  other name resolves through the `harness.policy` entry-point group, which
+  makes an OPA or Cedar engine wirable from `harness.yaml`:
+
+  ```yaml
+  policy:
+    engine:
+      name: opa
+      config: {bundle_url: "${OPA_BUNDLE_URL}"}
+  ```
+
+  Unlike a scanner or sink that cannot be built, an engine that cannot be built
+  is fatal — a harness with no policy engine has no gate. Inline `policy.rules`
+  alongside a non-`rules` engine is rejected at load rather than silently
+  ignored: those rules reach the built-in evaluator only.
+
+- **`secrets:` selects the SecretsProvider by name.** Defaults to `env`
+  (`EnvVarProvider`), matching what every config did implicitly before. Any
+  other name resolves through the `harness.secrets` entry-point group, so a
+  Vault or KMS provider is a config change rather than an application-code
+  change:
+
+  ```yaml
+  secrets:
+    name: vault
+    config: {addr: "${VAULT_ADDR}"}
+  ```
+
+  The block is read before the rest of the config is validated, because this
+  provider is what resolves the config's own `secret://` URIs. `${ENV_VAR}`
+  expands inside it; a `secret://` inside it is rejected, since it would need
+  the provider it is defining.
+
+  Both groups were declared and resolvable but had no consumer: `from_yaml()`
+  constructed `RuleBasedPolicy` and `EnvVarProvider` directly, so a package
+  registering under either group could never be reached.
+
 - **Startup attestation** — `SHAI.from_yaml()` emits one `boundary=system`,
   `decision=startup` `AuditEvent` before returning, recording what the process
   actually wired: SHAI version, every scanner/sink/policy adapter with its
@@ -433,6 +508,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SIEM sinks gain one row per process.
 
 ### Security
+- **The tool-call gate denies when the policy engine raises anything.** Layer 5
+  caught `PolicyEvaluationError` only, which was sufficient while
+  `RuleBasedPolicy` — which wraps its own failures in that type — was the only
+  engine reachable. Now that `policy.engine` accepts an engine from outside the
+  package, any other exception (a bundle fetch timing out, a bad duck-type)
+  would have escaped `check_tool_call`, returning no verdict and emitting no
+  audit event. Such a call is now denied with exactly one event, and the reason
+  records the exception *type* only — a third-party message can quote the
+  arguments it was evaluating.
 - **`from_yaml()` fails when the startup event cannot be written.** If every
   configured sink rejects the emission, `AuditEmissionError` propagates and no
   harness is returned — a process that cannot record its own startup cannot

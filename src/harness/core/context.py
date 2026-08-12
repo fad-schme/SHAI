@@ -101,9 +101,13 @@ class AgentContext(BaseModel, frozen=True):
             fresh step budget and splits accumulated threat evidence in two.
 
         Note: turn_signals is NOT propagated to subagents. Subagent invocations
-        are separate turns from the parent's perspective. Neither are approvals:
-        a grant is bound to one tool call, so carrying the parent's grants down
-        would authorise a call nobody approved.
+        are separate turns from the parent's perspective. Neither are approvals,
+        so a delegated call is approved on its own terms by default. That is a
+        default, not an enforced boundary: a grant binds a tool name and an
+        args_digest, never a caller role, so a caller that passes the parent's
+        grants down explicitly gets them honoured for that same tool and those
+        same arguments. What a subagent may invoke at all is decided earlier, by
+        allowed_tool_names (L1) and allowed_tags (L4).
         """
         return AgentContext(
             agent_id=self.agent_id,

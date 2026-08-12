@@ -133,6 +133,40 @@ async def test_redact_rule():
     assert result.redacted_args == {"secret_arg": "***"}
 
 
+async def test_redact_rule_preserves_unnamed_args():
+    """A redact rule masks what it names and leaves every other argument intact.
+
+    The single-argument case above cannot tell replacement from merge — both
+    produce the same dict. This one can, and it is the case that matters: the
+    arguments a redact rule does not name are frequently the ones that
+    *constrain* the call, so dropping them widens a call at the moment the
+    operator meant to narrow it.
+
+    Two things fix the expected semantics as merge rather than replace:
+    `docs/configuration.md` documents the action as "named args are replaced",
+    and layer 7's scanner redaction in `check_tool_call` merges
+    (`{**effective_args, **scanned_redactions}`).
+    """
+    rule = RuleConfig(
+        id="r1",
+        match=RuleMatchConfig(tool_tags=["sensitive"]),
+        action="redact",
+        redact={"amount": "***"},
+    )
+    policy = RuleBasedPolicy(rules=[rule])
+    result = await policy.evaluate(
+        make_tool(tags=["sensitive"]),
+        {"account": "ACC-1", "amount": 5000, "currency": "USD"},
+        _CTX,
+    )
+    assert result.action == "redact"
+    assert result.redacted_args == {
+        "account":  "ACC-1",
+        "amount":   "***",
+        "currency": "USD",
+    }
+
+
 # ── Intersection model ────────────────────────────────────────────────────
 
 async def test_intersection_agent_deny_overrides_global_allow():

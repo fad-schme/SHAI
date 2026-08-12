@@ -383,9 +383,24 @@ class SourceConfig(BaseModel, frozen=True, extra="forbid"):
 class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
     """Inline policy configuration.
 
+    engine: which PolicyEngine adapter gates tool calls and source activation.
+            Defaults to the built-in `rules` evaluator. Any other name is
+            resolved through the `harness.policy` entry-point group, so an
+            enterprise or third-party engine (OPA, Cedar) is selected here:
+
+                policy:
+                  engine:
+                    name: opa
+                    config: {bundle_url: "${OPA_BUNDLE_URL}"}
+
+            Unlike a scanner or an audit sink, an engine that cannot be built
+            is fatal — a harness with no policy engine allows every tool call.
+
     rules:  global policy rules evaluated after agent-scoped rules.
             Defined inline in harness.yaml — no separate rules file needed.
-            Same schema as agent-level policy_rules.
+            Same schema as agent-level policy_rules. Only the `rules` engine
+            evaluates them; every other engine carries its own global rules,
+            so declaring both is rejected rather than silently dropping them.
 
     forbidden_tag_combinations:
             Tag sets no single agent may declare together. Each entry is a list
@@ -400,8 +415,20 @@ class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
                   forbidden_tag_combinations:
                     - [sensitive, external_write]
     """
+    engine: AdapterRef = Field(default_factory=lambda: AdapterRef(name="rules"))
     rules: list[dict[str, Any]] = Field(default_factory=list)
     forbidden_tag_combinations: list[list[str]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _rules_require_the_rules_engine(self) -> PolicyConfig:
+        if self.rules and self.engine.name != "rules":
+            raise ValueError(
+                f"policy.rules are evaluated by the built-in `rules` engine only, "
+                f"but engine is {self.engine.name!r}. That engine supplies its own "
+                f"global rules — move these rules into its policy source, or they "
+                f"would never be evaluated."
+            )
+        return self
 
     @field_validator("forbidden_tag_combinations")
     @classmethod
@@ -472,6 +499,11 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     check_tool_call:     ToolCallGateConfig      = Field(default_factory=ToolCallGateConfig)
     scan_output:         BoundaryConfig
     policy:          PolicyConfig = Field(default_factory=PolicyConfig)
+    # Declared here so `extra="forbid"` accepts the block and `shai validate`
+    # can see it. The provider itself is built from the *raw* block before
+    # validation (config/loader.build_secrets_provider) — it is what resolves
+    # the secret:// URIs the rest of this config holds.
+    secrets:         AdapterRef = Field(default_factory=lambda: AdapterRef(name="env"))
     audit_sinks:     list[AdapterRef] = Field(default_factory=list)
     sources:         list[SourceConfig]  = Field(default_factory=list)
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)

@@ -16,7 +16,6 @@ from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.adapters.scanners.rate_limiter import RateLimiter
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
-from harness.adapters.secrets.env import EnvVarProvider
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.agents.revocation import RevocationStore
@@ -26,8 +25,8 @@ from harness.boundaries.check_tool_call import emit_deny as emit_gate_deny
 from harness.boundaries.check_tool_call import run as run_gate
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
-from harness.config.loader import load_yaml
-from harness.config.schema import HarnessConfig, SourceConfig
+from harness.config.loader import build_secrets_provider, load_dict, read_yaml
+from harness.config.schema import HarnessConfig, PolicyConfig, SourceConfig
 from harness.connectors import resolve_source_config
 from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
@@ -48,6 +47,7 @@ if TYPE_CHECKING:
     from harness.agents.agent_config import SubAgentConfig
     from harness.core.events import AnyAuditEvent
     from harness.maintenance import Maintenance
+    from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class SHAI:
         arg_scanners: list,
         file_scanners: list[ConfiguredScanner],
         tool_result_scanners: list[ConfiguredScanner],
-        policy: RuleBasedPolicy,
+        policy: PolicyEngine,
         rate_limiter: RateLimiter | None,
         source_registry: SourceRegistry,
         connectivity_secret: bytes | None = None,
@@ -191,16 +191,16 @@ class SHAI:
           AuditEmissionError propagates and construction fails. A harness that
           cannot write its first audit record cannot write the rest either.
         """
-        # Always use EnvVarProvider for secret:// resolution.
-        # Enterprise providers can be swapped by subclassing or patching before
-        # calling from_yaml() — no config field needed since there is only one
-        # implementation in core.
-        provider = EnvVarProvider()
+        # The provider is named by the raw `secrets:` block and built before
+        # validation, because it is what resolves the secret:// URIs the rest
+        # of the config holds. Absent block → EnvVarProvider.
+        raw = read_yaml(path)
+        provider = build_secrets_provider(raw.get("secrets"))
 
         # The loader resolves ${ENV_VAR} and every secret:// URI in one pass —
         # it recurses the whole parsed tree, so no field reaches the config
         # models still holding a URI.
-        config = load_yaml(path, provider=provider)
+        config = load_dict(raw, provider=provider, source=str(path))
         log.info("harness config loaded", extra={"op": "from_yaml", "path": str(path)})
 
         # Signed pattern DB → extra rules merged onto every catalog scanner's
@@ -250,9 +250,7 @@ class SHAI:
             max_size_mb=config.scan_file.max_size_mb,
         )
 
-        # Inline policy rules from harness.yaml — no separate rules file
-        global_rules = config.policy.parsed_rules()
-        policy = RuleBasedPolicy(rules=global_rules)
+        policy = _build_policy(config.policy)
 
         sinks   = _build_sinks(config.audit_sinks)
 
@@ -1269,6 +1267,36 @@ def _build_file_scanners(
             FileContentScanner(text_scanners=text_scanners, max_size_mb=max_size_mb)
         ),
     ]
+
+
+def _build_policy(cfg: PolicyConfig) -> PolicyEngine:
+    """Build the PolicyEngine named by `policy.engine`.
+
+    Failure is fatal, unlike a scanner or sink that cannot be built: those
+    degrade to one fewer inspection, whereas a harness with no policy engine
+    has no gate at all and allows every tool call. AdapterDiscoveryError
+    propagates and a construction failure becomes ConfigError.
+
+    `policy.rules` reaches the built-in engine only — PolicyConfig rejects the
+    combination of inline rules and any other engine, so nothing is dropped here.
+    """
+    if cfg.engine.name == RuleBasedPolicy.name:
+        return RuleBasedPolicy(rules=cfg.parsed_rules())
+
+    from harness.adapters.discovery import resolve
+    cls = resolve("harness.policy", cfg.engine.name)
+    try:
+        return cls(**cfg.engine.config)
+    except Exception as e:
+        # Type only — engine config carries ${ENV_VAR}-expanded bundle
+        # credentials and a third-party message can echo them.
+        log.error("policy engine construction failed",
+                  extra={"adapter_name": cfg.engine.name}, exc_info=True)
+        raise ConfigError(
+            f"policy engine {cfg.engine.name!r} failed to construct: "
+            f"{type(e).__name__} (see logs for detail)",
+            op="from_yaml",
+        ) from e
 
 
 def _build_sinks(adapter_refs: list) -> list:
