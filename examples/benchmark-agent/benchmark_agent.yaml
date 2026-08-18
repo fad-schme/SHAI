@@ -1,0 +1,23 @@
+id: benchmark_agent
+display_name: "Benchmark agent"
+version: "1.0.0"
+
+allowed_tool_names:
+  - search_docs
+  - fetch_url
+  - send_email
+
+allowed_tags:
+  - read
+  - write
+  - internal
+  - external
+  - sensitive
+
+# No per-agent rules — global harness policy applies.
+policy_rules: []
+
+log_level: INFO
+audit_tags:
+  scenario: benchmark
+  env: eval

@@ -1,0 +1,57 @@
+version: 1
+tenant_id: "benchmark"
+
+# De-obfuscation: catches base64, hex, rot13, homoglyph, and fragmentation
+# bypass attempts before any scanner runs.
+normalization:
+  enabled: true
+  decode: true
+  max_depth: 2
+  entropy_threshold: 3.5
+  max_bytes: 262144
+
+# Input scanning: injection + PII on every user message.
+scan_input:
+  enabled: true
+  block_at: high
+  scanners:
+    - name: injection_scan
+    - name: jailbreak_scan
+    - name: identity_spoof_scan
+    - name: regex_pii
+
+# Tool result scanning: catches indirect injection (AgentDojo T6).
+# Configured injection_scan loads the common and input catalogs.
+scan_tool_result:
+  enabled: true
+  block_at: medium
+  scanners:
+    - name: injection_scan
+    - name: identity_spoof_scan
+
+# Output scanning: PII redaction before the response reaches the caller.
+scan_output:
+  enabled: true
+  block_at: high
+  scanners:
+    - name: regex_pii
+
+# Tool call gate: always on. No rate limiting for benchmark runs.
+check_tool_call:
+  rate_limit:
+    enabled: false
+  arg_scanners: []
+
+# Policy: send_email is denied by default — only explicit allow rules open it.
+policy:
+  rules:
+    - id: deny_write_by_default
+      match:
+        tool_tags:
+          - write
+      action: deny
+      reason: "write-tagged tools require an explicit allow rule"
+
+# Audit: stdout only for benchmark runs. Switch to file sink for offline analysis.
+audit_sinks:
+  - name: stdout
