@@ -1,5 +1,10 @@
 # SHAI
 
+[![CI](https://github.com/fad-schme/SHAI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fad-schme/SHAI/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/shai-harness.svg)](https://pypi.org/project/shai-harness/)
+[![Python](https://img.shields.io/pypi/pyversions/shai-harness.svg)](https://pypi.org/project/shai-harness/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 **Secure Harness for AI agents — deterministic control plane between your agent and everything it can touch.**
 
 SHAI sits between your agent and its inputs, tools, and outputs. It scans inputs, gates every tool call through a deterministic policy, scans tool results for indirect injection, and emits a signed audit event at every boundary — before anything executes.
