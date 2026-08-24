@@ -24,11 +24,9 @@ from harness.core.types import (
     BoundaryName,
     Decision,
     OnError,
-    ScanAction,
     ScanStatus,
-    Severity,
 )
-from tests.conftest import FailingScanner, RecordingSink
+from tests.conftest import FailingScanner, RecordingSink, boundary_config
 
 CTX = AgentContext(agent_id="test_agent")
 
@@ -63,10 +61,8 @@ async def test_fail_closed_scanner_failure_blocks(emitter, sink, state):
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.FAIL_CLOSED),
         emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.FAIL_CLOSED,
         state=state,
     )
     assert verdict.blocked
@@ -80,10 +76,8 @@ async def test_fail_closed_emits_blocked_event(emitter, sink, state):
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad)],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.FAIL_CLOSED),
         emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.FAIL_CLOSED,
         state=state,
     )
     # Should have the boundary BLOCKED event + a SYSTEM/DEGRADED event
@@ -105,10 +99,8 @@ async def test_fail_open_scanner_failure_allows(emitter, sink, state):
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.FAIL_OPEN),
         emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.FAIL_OPEN,
         state=state,
     )
     assert not verdict.blocked
@@ -122,10 +114,8 @@ async def test_fail_open_remaining_scanners_still_run(emitter, sink, state):
         "My SSN is 123-45-6789.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.FAIL_OPEN),
         emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.FAIL_OPEN,
         state=state,
     )
     # PII scanner should catch the SSN even though bad scanner failed
@@ -141,10 +131,8 @@ async def test_degrade_scanner_failure_warns(emitter, sink, state):
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.DEGRADE),
         emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.DEGRADE,
         state=state,
     )
     assert verdict.warned
@@ -158,10 +146,8 @@ async def test_degrade_audit_event_carries_degraded_flag(emitter, sink, state):
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad)],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.DEGRADE),
         emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.DEGRADE,
         state=state,
     )
     boundary_events = [e for e in sink.events if e.boundary == BoundaryName.INPUT_SCAN]
@@ -264,10 +250,9 @@ async def test_circuit_breaker_trips_after_repeated_failures(emitter, sink, stat
             "text", CTX,
             boundary=BoundaryName.INPUT_SCAN,
             scanners=[ConfiguredScanner(bad)],
-            boundary_action=ScanAction.BLOCK,
+            # don't short-circuit — let failures accumulate
+            config=boundary_config(on_error=OnError.FAIL_OPEN),
             emitter=emitter, tenant_id="test",
-            enabled=True, block_at=Severity.HIGH,
-            on_error=OnError.FAIL_OPEN,  # don't short-circuit — let failures accumulate
             state=state,
         )
     breaker = state.get_breaker(bad)
@@ -277,16 +262,15 @@ async def test_circuit_breaker_trips_after_repeated_failures(emitter, sink, stat
 # ── Default on_error ─────────────────────────────────────────────────────
 
 async def test_default_on_error_is_fail_closed(emitter, sink, state):
-    """run_scan defaults to fail_closed when on_error is not specified."""
+    """boundary_config() defaults to fail_closed when on_error is not specified."""
     bad = _bad_scanner()
     verdict = await run_scan(
         "clean text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad)],
-        boundary_action=ScanAction.BLOCK,
-        emitter=emitter, tenant_id="test",
-        enabled=True, block_at=Severity.HIGH,
         # on_error not passed — should default to FAIL_CLOSED
+        config=boundary_config(),
+        emitter=emitter, tenant_id="test",
         state=state,
     )
     assert verdict.blocked

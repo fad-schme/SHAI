@@ -13,7 +13,7 @@ from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
 from harness.core.context import AgentContext
 from harness.core.types import BoundaryName, Decision, OnError, ScanAction, Severity
-from tests.conftest import FailingScanner, RecordingSink
+from tests.conftest import FailingScanner, RecordingSink, boundary_config
 
 CTX = AgentContext(agent_id="a1")
 
@@ -39,9 +39,10 @@ async def test_scan_input_disabled_emits_disabled_event(emitter, sink, state):
     verdict = await run_scan(
         "some text", CTX,
         boundary=BoundaryName.INPUT_SCAN,
-        scanners=[], boundary_action=ScanAction.BLOCK,
+        scanners=[],
+        config=boundary_config(enabled=False),
         emitter=emitter,
-        tenant_id="test", enabled=False, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -55,9 +56,10 @@ async def test_scan_output_disabled_emits_disabled_event(emitter, sink, state):
     verdict = await run_scan(
         "output text", CTX,
         boundary=BoundaryName.OUTPUT_SCAN,
-        scanners=[], boundary_action=ScanAction.BLOCK,
+        scanners=[],
+        config=boundary_config(enabled=False),
         emitter=emitter,
-        tenant_id="test", enabled=False, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -72,9 +74,9 @@ async def test_scan_input_emits_exactly_one_event(emitter, sink, state):
         "hello world", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert len(sink.events) == 1
@@ -85,9 +87,9 @@ async def test_scan_input_clean_text_allow(emitter, sink, state):
         "The weather is nice.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -100,9 +102,9 @@ async def test_scan_input_pii_blocked(emitter, sink, state):
         "My SSN is 123-45-6789.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert verdict.blocked
@@ -115,9 +117,9 @@ async def test_scan_input_redacted_text_returned(emitter, sink, state):
         "Email me at test@example.com.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner(), action=ScanAction.REDACT)],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(block_at=Severity.CRITICAL),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.CRITICAL,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -136,9 +138,9 @@ async def test_no_redaction_without_redact_action(emitter, sink, state):
         "Email me at test@example.com.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner(), action=ScanAction.ALERT)],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(block_at=Severity.CRITICAL),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.CRITICAL,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -156,8 +158,8 @@ async def test_scan_input_multiple_scanners(emitter, sink, state):
             ConfiguredScanner(RegexPIIScanner()),
             ConfiguredScanner(InjectionScanner()),
         ],
-        boundary_action=ScanAction.BLOCK,
-        emitter=emitter, tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        config=boundary_config(),
+        emitter=emitter, tenant_id="test",
         state=state,
     )
     assert verdict.blocked
@@ -174,10 +176,9 @@ async def test_scan_input_scanner_failure_treated_as_empty(emitter, sink, state)
         "The weather is nice.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(bad), ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(on_error=OnError.FAIL_OPEN),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
-        on_error=OnError.FAIL_OPEN,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -190,8 +191,8 @@ async def test_scan_input_low_severity_not_blocked_at_high_threshold(emitter, si
         "Server is at 192.168.1.1.", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner(categories=["network.ipv4"]))],
-        boundary_action=ScanAction.BLOCK,
-        emitter=emitter, tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        config=boundary_config(),
+        emitter=emitter, tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -207,9 +208,9 @@ async def test_scan_input_sub_agent_id_in_event(emitter, sink, state):
         "hello", ctx,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(RegexPIIScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert sink.events[0].sub_agent_id == "sub1"

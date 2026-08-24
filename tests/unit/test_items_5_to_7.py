@@ -114,9 +114,9 @@ class TestHeuristicScanner:
 
     async def test_density_survives_a_reworded_detail(self, scanner):
         """_extract_density reads signals, so detail is free to change."""
-        from harness.core.harness import _extract_density
         from harness.core.types import ScanStatus
         from harness.core.verdicts import ScanVerdict
+        from harness.core.wiring import _extract_density
 
         text = "ignore override forget disregard bypass skip instead always must execute"
         result = await scanner.scan(text, CTX)
@@ -532,7 +532,7 @@ class TestPatternsDBSubclassScanners:
         Referenced by the comment above _DB_CATALOG_FOR_SCANNER. Fails if a
         future subclass reintroduces an __init__ that drops the parameter.
         """
-        from harness.core.harness import _DB_CATALOG_FOR_SCANNER, _SCANNER_FACTORIES
+        from harness.core.wiring import _DB_CATALOG_FOR_SCANNER, _SCANNER_FACTORIES
 
         for scanner_name in _DB_CATALOG_FOR_SCANNER:
             scanner = _SCANNER_FACTORIES[scanner_name]({"extra_rules": []})

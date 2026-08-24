@@ -24,6 +24,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from harness.boundaries._scan import ScanState, _scan_views
 from harness.boundaries.argument_policy import check_argument_rules, check_irreversibility
 from harness.core.approval import ApprovalPolicy
 from harness.core.errors import (
@@ -32,6 +33,7 @@ from harness.core.errors import (
     PolicyEvaluationError,
 )
 from harness.core.events import AuditEvent, now_ms
+from harness.core.normalize import canonicalize_config
 from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import GateDecision
 
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
     from harness.adapters.scanners.base import ConfiguredScanner
     from harness.agents.agent_config import AgentConfig, SubAgentConfig
     from harness.audit.emitter import AuditEmitter
+    from harness.config.schema import NormalizationConfig
     from harness.core.context import AgentContext
     from harness.core.turn_signals import TurnSignals
     from harness.policy.engine import PolicyEngine
@@ -70,6 +73,8 @@ async def run(
     source_name: str = "local",
     issue_token: Callable[[], tuple[str, str]] | None = None,
     approvals: ApprovalPolicy | None = None,
+    normalization: NormalizationConfig | None = None,
+    scan_state: ScanState | None = None,
 ) -> GateDecision:
     """Gate one tool call.
 
@@ -85,6 +90,21 @@ async def run(
     approvals:    resolved approval policy for layer 3. None means unconfigured,
                   which denies every SENSITIVE and IRREVERSIBLE tool — there is
                   no weaker check to fall back to.
+    normalization: same NormalizationConfig every other scan boundary applies
+                  before a scanner sees text (see core/normalize.canonicalize).
+                  Layer 7 uses it on each `key: value` argument text. None
+                  (the default for direct/test callers) means unnormalized —
+                  the harness call site always threads its configured value.
+    scan_state:   holds the per-scanner CircuitBreaker layer 7 shares with
+                  run_scan's breakers are keyed per scanner instance
+                  (ScanState.get_breaker), so a scanner passed to both
+                  check_tool_call and scan_input/scan_output/scan_tool_result
+                  shares one breaker across boundaries. None (the default)
+                  creates a fresh, call-scoped ScanState — breaker state then
+                  does not persist across gate calls, which only matters when
+                  arg_scanners is non-empty and the caller cares about
+                  cross-call trip state; the harness call site always passes
+                  its shared instance.
     """
     start = now_ms()
 
@@ -246,17 +266,52 @@ async def run(
             for key, value in effective_args.items()
             if value is not None
         ]
+        _state = scan_state if scan_state is not None else ScanState()
+
+        async def _guarded_arg_scan(configured: ConfiguredScanner, text: str) -> Any:
+            scanner = configured.scanner
+            breaker = _state.get_breaker(scanner)
+            if breaker.is_open:
+                raise RuntimeError(f"circuit breaker open for scanner '{scanner.name}'")
+            if normalization is not None and normalization.enabled:
+                views = canonicalize_config(text, normalization).views
+            else:
+                views = [text]
+            result = await _scan_views(scanner, views, ctx)
+            breaker.record_success()
+            return result
+
         scan_results = await asyncio.gather(
-            *[configured.scanner.scan(text, ctx) for configured, _, text in scan_targets],
+            *[_guarded_arg_scan(configured, text) for configured, _, text in scan_targets],
             return_exceptions=True,
         )
-        for (configured, key, _text), result in zip(scan_targets, scan_results, strict=True):
+        for (configured, key, text), result in zip(scan_targets, scan_results, strict=True):
             scanner = configured.scanner
             if isinstance(result, Exception):
-                log.warning("arg scanner failed — skipped",
-                            extra={"scanner": scanner.name, "tool": name,
-                                   **ctx.to_log_fields()})
-                continue
+                _state.get_breaker(scanner).record_failure()
+                log.error(
+                    "arg scanner failed — denying (fail-closed)",
+                    extra={"scanner": scanner.name, "tool": name,
+                           "error_type": type(result).__name__,
+                           # Bounded preview, not the exception message: a
+                           # third-party scanner's exception text can echo
+                           # the substring it choked on, but an operator
+                           # reading this line still needs to know what was
+                           # being scanned — a hash tells them nothing.
+                           "text_preview": text[:80],
+                           **ctx.to_log_fields()},
+                )
+                # ConfiguredScanner carries no per-layer on_error field, so there
+                # is no configured policy to honour here. Denying unconditionally
+                # is the fail-closed default every other boundary applies via
+                # run_scan's OnError.FAIL_CLOSED — a scanner exception must not
+                # read as "no finding" at the one boundary that can dispatch a
+                # tool.
+                return await emit_deny(
+                    f"arg scan failed: scanner '{scanner.name}' raised",
+                    name, tool, ctx, emitter, start, tenant_id,
+                    audit_tags=agent_config.audit_tags,
+                )
             blocking = [f for f in result.findings if f.severity >= Severity.HIGH]
             if not blocking:
                 continue

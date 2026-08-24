@@ -110,6 +110,12 @@ class Tool(BaseModel, frozen=True):
     transport:    Transport = Transport.LOCAL
     description:  str | None = None
 
+    # Which ToolSource produced this tool, set by the source itself at load()
+    # time. None for tools registered directly via register_tools() rather
+    # than discovered from a source. Read by Harness._resolve_tools() instead
+    # of guessing — see MCPSource._fetch_tools() for where MCP tools get theirs.
+    source_name:  str | None = None
+
     # Deterministic argument-level constraints. Evaluated before the policy
     # engine. First violation denies the call regardless of injection context.
     argument_rules: list[ArgumentRule] = Field(default_factory=list)

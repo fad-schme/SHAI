@@ -141,7 +141,7 @@ async def test_method_family_is_distinct_from_heuristic(scanner):
 def test_resolvable_by_name_for_every_text_boundary():
     """One factory entry makes it declarable at input, output, tool_result and the gate."""
     from harness.config.schema import AdapterRef
-    from harness.core.harness import _build_text_scanners
+    from harness.core.wiring import _build_text_scanners
 
     built = _build_text_scanners([AdapterRef(name="command_injection_scan")])
     assert any(c.scanner.name == "command_injection_scan" for c in built)

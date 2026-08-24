@@ -150,9 +150,9 @@ async def test_subagent_view_isolated_from_parent(tmp_path: Path):
     parent_ctx = AgentContext(agent_id="orchestrator_agent")
     child_ctx  = h.scope_context_for_subagent(parent_ctx, "research_sub")
 
-    # Tools resolved once at load_agent — same dict for all turns of same agent
-    tools = h._agent_tools.get("orchestrator_agent", {})
-    assert "search_docs" in tools
+    # Tools resolved once at load_agent — same set for all turns of same agent
+    names = {t.name for t in h.tools_for(parent_ctx)}
+    assert "search_docs" in names
     assert child_ctx.allowed_tags == ["read", "internal"]
 
 

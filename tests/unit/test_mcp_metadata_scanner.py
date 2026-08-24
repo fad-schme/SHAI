@@ -522,7 +522,7 @@ async def test_malicious_tool_among_clean_tools():
 
 def test_mcp_metadata_scan_in_scanner_factories():
     """mcp_metadata_scan must be in _SCANNER_FACTORIES — no magic strings."""
-    from harness.core.harness import _SCANNER_FACTORIES
+    from harness.core.wiring import _SCANNER_FACTORIES
     assert "mcp_metadata_scan" in _SCANNER_FACTORIES, (
         "mcp_metadata_scan not in _SCANNER_FACTORIES — "
         "it won't be buildable from harness.yaml config"
@@ -531,7 +531,7 @@ def test_mcp_metadata_scan_in_scanner_factories():
 
 def test_mcp_metadata_scan_factory_returns_scanner():
     from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
-    from harness.core.harness import _SCANNER_FACTORIES
+    from harness.core.wiring import _SCANNER_FACTORIES
     scanner = _SCANNER_FACTORIES["mcp_metadata_scan"]({})
     assert isinstance(scanner, MCPMetadataScanner)
 

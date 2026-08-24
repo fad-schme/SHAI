@@ -21,7 +21,7 @@ from harness.core.context import AgentContext
 from harness.core.harness import SHAI
 from harness.core.types import BoundaryName, Transport
 from harness.tools.tool import Tool
-from tests.conftest import RecordingSink
+from tests.conftest import RecordingSink, resolved_tool_names
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -70,11 +70,11 @@ async def test_10_concurrent_agents_all_succeed(tmp_path: Path):
 async def test_concurrent_tools_resolved_once(tmp_path: Path):
     """Tools for an agent are resolved once at load_agent() — verify the dict."""
     h = await _build_harness(tmp_path)
-    tools = h._agent_tools.get("orchestrator_agent", {})
-    assert "search_docs" in tools
-    assert "list_inbox" in tools
+    names = resolved_tool_names(h, "orchestrator_agent")
+    assert "search_docs" in names
+    assert "list_inbox" in names
     # send_email has external_write — it's in allowed_tool_names and allowed_tags
-    assert "send_email" in tools
+    assert "send_email" in names
 
 
 async def test_concurrent_audit_events_carry_correct_ids(tmp_path: Path):
@@ -254,9 +254,9 @@ async def test_parent_and_subagent_tool_sets_distinct(tmp_path: Path):
     child_ctx  = h.scope_context_for_subagent(parent_ctx, "research_sub")
 
     # Parent tool set is resolved at load_agent time — shared for all turns
-    tools = h._agent_tools["orchestrator_agent"]
-    assert "search_docs" in tools
-    assert "send_email"  in tools  # in parent's allowed set
+    names = resolved_tool_names(h, "orchestrator_agent")
+    assert "search_docs" in names
+    assert "send_email"  in names  # in parent's allowed set
 
     # research_sub is gated by ctx.allowed_tags at check_tool_call time
     assert child_ctx.allowed_tags == ["read", "internal"]

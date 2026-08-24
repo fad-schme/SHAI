@@ -857,10 +857,16 @@ async def test_irreversible_tool_denied_without_approval(tmp_path: Path):
         name="wipe_account", tags=["read"], transport=Transport.LOCAL,
         irreversibility=Irreversibility.IRREVERSIBLE,
     )])
-    cfg = h._agent_registry.get("orchestrator_agent")
-    object.__setattr__(cfg, "allowed_tool_names",
-                       [*cfg.allowed_tool_names, "wipe_account"])
-    h._agent_tools["orchestrator_agent"] = h._resolve_tools(cfg)
-    ctx = AgentContext(agent_id="orchestrator_agent")
+    # Reload the agent from a copy of its fixture with wipe_account added to
+    # allowed_tool_names — the public path for widening what an agent may
+    # call, rather than mutating AgentConfig and _agent_tools directly.
+    agent_yaml = tmp_path / "orchestrator_with_wipe.yaml"
+    agent_yaml.write_text(
+        AGENT_YAML.read_text().replace(
+            "allowed_tool_names:\n  - search_docs",
+            "allowed_tool_names:\n  - wipe_account\n  - search_docs",
+        )
+    )
+    ctx = await h.maintenance.reload_agent(agent_yaml)
 
     assert (await h.check_tool_call("wipe_account", {}, ctx)).allowed is False

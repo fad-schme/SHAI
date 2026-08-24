@@ -59,18 +59,16 @@ async def test_enabled_boundary_with_no_scanners_blocks(tmp_path):
     """Not limited to the narrow helpers — any enabled boundary with an empty
     scanner list fails closed at the canonical pipeline."""
     from harness.boundaries._scan import ScanState, run_scan
-    from harness.core.types import ScanAction, Severity
+    from tests.conftest import boundary_config
 
     sink = RecordingSink()
     verdict = await run_scan(
         "anything at all", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=AuditEmitter([sink]),
         tenant_id="t",
-        enabled=True,
-        block_at=Severity.HIGH,
         state=ScanState(str(tmp_path / "p.db")),
     )
 
@@ -111,18 +109,16 @@ async def test_disabled_boundary_still_allows(tmp_path):
     """Turning a boundary off is an explicit choice and stays an ALLOW —
     distinct from an enabled boundary with nothing to run."""
     from harness.boundaries._scan import ScanState, run_scan
-    from harness.core.types import ScanAction, Severity
+    from tests.conftest import boundary_config
 
     sink = RecordingSink()
     verdict = await run_scan(
         "anything at all", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(enabled=False),
         emitter=AuditEmitter([sink]),
         tenant_id="t",
-        enabled=False,
-        block_at=Severity.HIGH,
         state=ScanState(str(tmp_path / "p.db")),
     )
 

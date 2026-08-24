@@ -383,8 +383,8 @@ async def test_jailbreak_blocked_via_run_scan():
     """End-to-end through run_scan: a jailbreak payload is blocked at HIGH."""
     from harness.audit.emitter import AuditEmitter
     from harness.boundaries._scan import ScanState, run_scan
-    from harness.core.types import BoundaryName, ScanAction, Severity
-    from tests.conftest import RecordingSink
+    from harness.core.types import BoundaryName
+    from tests.conftest import RecordingSink, boundary_config
 
     sink    = RecordingSink()
     emitter = AuditEmitter([sink])
@@ -394,9 +394,9 @@ async def test_jailbreak_blocked_via_run_scan():
         CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(JailbreakScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=emitter,
-        tenant_id="t", enabled=True, block_at=Severity.HIGH,
+        tenant_id="t",
         state=ScanState(),
     )
     assert verdict.blocked
@@ -407,8 +407,8 @@ async def test_jailbreak_blocked_via_run_scan():
 async def test_benign_allowed_via_run_scan():
     from harness.audit.emitter import AuditEmitter
     from harness.boundaries._scan import ScanState, run_scan
-    from harness.core.types import BoundaryName, ScanAction, Severity
-    from tests.conftest import RecordingSink
+    from harness.core.types import BoundaryName
+    from tests.conftest import RecordingSink, boundary_config
 
     sink    = RecordingSink()
     emitter = AuditEmitter([sink])
@@ -417,9 +417,9 @@ async def test_benign_allowed_via_run_scan():
         "What is the capital of France?", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(JailbreakScanner())],
-        boundary_action=ScanAction.BLOCK,
+        config=boundary_config(),
         emitter=emitter,
-        tenant_id="t", enabled=True, block_at=Severity.HIGH,
+        tenant_id="t",
         state=ScanState(),
     )
     assert not verdict.blocked

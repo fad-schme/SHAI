@@ -9,13 +9,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from harness.adapters.audit_sinks.stdout import StdoutSink
 from harness.adapters.scanners.base import ConfiguredScanner
-from harness.adapters.scanners.heuristic_scan import HeuristicScanner
-from harness.adapters.scanners.injection_scan import InjectionScanner
-from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.adapters.scanners.rate_limiter import RateLimiter
-from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.agents.agent_config import AgentConfig
 from harness.agents.registry import AgentRegistry
 from harness.agents.revocation import RevocationStore
@@ -26,8 +21,9 @@ from harness.boundaries.check_tool_call import run as run_gate
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import build_secrets_provider, load_dict, read_yaml
-from harness.config.schema import HarnessConfig, PolicyConfig, SourceConfig
+from harness.config.schema import HarnessConfig, SourceConfig
 from harness.connectors import resolve_source_config
+from harness.core import wiring
 from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
@@ -36,7 +32,6 @@ from harness.core.events import AuditEvent, now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.types import BoundaryName, Decision, ScanStatus
 from harness.core.verdicts import GateDecision, ScanVerdict
-from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
 from harness.tools.tool import Tool
@@ -216,7 +211,7 @@ class SHAI:
 
             db_secret = config.patterns_db.secret.encode()
 
-            for scanner_name, catalog in _DB_CATALOG_FOR_SCANNER.items():
+            for scanner_name, catalog in wiring._DB_CATALOG_FOR_SCANNER.items():
                 raw_rules = load_verified_rules(
                     config.patterns_db.path, db_secret, catalog=catalog
                 )
@@ -236,23 +231,23 @@ class SHAI:
                 },
             )
 
-        input_scanners  = _build_text_scanners(config.scan_input.scanners, extra_rules=db_extra_rules)
-        output_scanners = _build_text_scanners(config.scan_output.scanners, extra_rules=db_extra_rules)
+        input_scanners  = wiring._build_text_scanners(config.scan_input.scanners, extra_rules=db_extra_rules)
+        output_scanners = wiring._build_text_scanners(config.scan_output.scanners, extra_rules=db_extra_rules)
         # Configured pairs, not bare instances: layer 7 honours each scanner's
         # declared action exactly as every other boundary does. Stripping the
         # pairing here made `action: redact` on a check_tool_call scanner load
         # without complaint and do nothing.
-        arg_scanners    = _build_text_scanners(
+        arg_scanners    = wiring._build_text_scanners(
             config.check_tool_call.scanners, extra_rules=db_extra_rules
         )
-        file_scanners   = _build_file_scanners(
+        file_scanners   = wiring._build_file_scanners(
             config.scan_file.scanners,
             max_size_mb=config.scan_file.max_size_mb,
         )
 
-        policy = _build_policy(config.policy)
+        policy = wiring._build_policy(config.policy)
 
-        sinks   = _build_sinks(config.audit_sinks)
+        sinks   = wiring._build_sinks(config.audit_sinks)
 
         # Connectivity: resolve token secret if configured
         connectivity_secret: bytes | None = None
@@ -268,7 +263,7 @@ class SHAI:
 
         emitter = AuditEmitter(sinks, signing_secret=signing_secret)
 
-        tool_result_scanners = _build_text_scanners(
+        tool_result_scanners = wiring._build_text_scanners(
             config.scan_tool_result.scanners,
             extra_rules=db_extra_rules,
         )
@@ -277,7 +272,7 @@ class SHAI:
         # through run_scan — instances only. They take signed-DB rules like
         # every other catalog scanner.
         mcp_metadata_scanners = [
-            c.scanner for c in _build_text_scanners(
+            c.scanner for c in wiring._build_text_scanners(
                 config.scan_mcp_metadata.scanners, extra_rules=db_extra_rules
             )
         ]
@@ -612,15 +607,12 @@ class SHAI:
             text, ctx,
             boundary=BoundaryName.INPUT_SCAN,
             scanners=self._input_scanners,
-            boundary_action=self._config.scan_input.action,
+            config=self._config.scan_input,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._config.scan_input.enabled,
-            block_at=self._config.scan_input.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_input.on_error,
         )
 
         # Record signals from the input scan
@@ -632,7 +624,7 @@ class SHAI:
         if verdict.status == ScanStatus.BLOCK:
             if self._threat_accumulator is not None:
                 categories = [f.category for f in verdict.findings]
-                density = _extract_density(verdict)
+                density = wiring._extract_density(verdict)
                 turn_risk = ctx.turn_signals.compute_risk()
                 await self._threat_accumulator.record(
                     session_id, text, verdict.status.value, categories,
@@ -714,6 +706,8 @@ class SHAI:
                 else None
             ),
             approvals=self._approvals,
+            normalization=self._config.normalization,
+            scan_state=self._scan_state,
         )
 
         # Record gate outcome to TurnSignals for downstream boundaries
@@ -739,11 +733,9 @@ class SHAI:
             # scan_file has no per-scanner overrides — FileScanConfig rejects
             # them, so the boundary action applies to the whole content chain.
             scanners=self._file_scanners,
-            boundary_action=self._config.scan_file.action,
+            config=self._config.scan_file,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._config.scan_file.enabled,
-            block_at=self._config.scan_file.block_at,
             state=self._scan_state,
             # No normalization: the text this boundary carries is a *path*, not
             # content. De-obfuscating it produces views that are different paths
@@ -753,7 +745,6 @@ class SHAI:
             # content is normalized where it is extracted, not here.
             normalization=None,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_file.on_error,
         )
 
     async def scan_tool_result(
@@ -770,15 +761,12 @@ class SHAI:
         verdict = await run_tool_result_scan(
             result, ctx,
             scanners=self._tool_result_scanners,
-            boundary_action=self._config.scan_tool_result.action,
+            config=self._config.scan_tool_result,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._config.scan_tool_result.enabled,
-            block_at=self._config.scan_tool_result.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_tool_result.on_error,
         )
 
         # Record signals from the tool result scan. The raw result is digested,
@@ -792,36 +780,48 @@ class SHAI:
     async def scan_output(self, text: str, ctx: AgentContext) -> ScanVerdict:
         session_id = ctx.conversation_id or ctx.agent_id
 
+        # Option A: consolidated risk-based block. Even if no individual
+        # scanner blocks, if the accumulated turn risk crosses RISK_HIGH,
+        # block at scan_output — the last boundary with the full picture.
+        # Computed from TurnSignals recorded by earlier boundaries, so it is
+        # known before this call's own scan runs and can be folded into that
+        # scan's single audit event rather than emitting a second one after
+        # the fact (Invariant 1: exactly one event per boundary call).
+        turn_risk = 0.0
+        forced_block_reason: str | None = None
+        forced_block_extra:  dict[str, Any] | None = None
+        if ctx.turn_signals is not None:
+            turn_risk = ctx.turn_signals.compute_risk()
+            if turn_risk >= RISK_HIGH:
+                forced_block_reason = (
+                    f"consolidated turn risk {turn_risk:.2f} exceeds high "
+                    f"threshold ({RISK_HIGH:.2f})"
+                )
+                forced_block_extra = {
+                    "turn_risk":     round(turn_risk, 4),
+                    "signal_source": "consolidated",
+                }
+
         verdict = await run_scan(
             text, ctx,
             boundary=BoundaryName.OUTPUT_SCAN,
             scanners=self._output_scanners,
-            boundary_action=self._config.scan_output.action,
+            config=self._config.scan_output,
             emitter=self._emitter,
             tenant_id=self._tenant_id,
-            enabled=self._config.scan_output.enabled,
-            block_at=self._config.scan_output.block_at,
             state=self._scan_state,
             normalization=self._config.normalization,
             audit_tags=self._audit_tags_for(ctx),
-            on_error=self._config.scan_output.on_error,
+            forced_block_reason=forced_block_reason,
+            forced_block_extra=forced_block_extra,
         )
-
-        # Option A: consolidated risk-based block. Even if no individual
-        # scanner blocked, if the accumulated turn risk crosses RISK_HIGH,
-        # block at scan_output — the last boundary with the full picture.
-        turn_risk = 0.0
-        if ctx.turn_signals is not None:
-            turn_risk = ctx.turn_signals.compute_risk()
-            if turn_risk >= RISK_HIGH and verdict.status != ScanStatus.BLOCK:
-                verdict = await self._emit_risk_block(ctx, turn_risk)
 
         # Accumulator record — moved from scan_input to scan_output so the
         # session score reflects the full-turn consolidated risk, not just
         # the input scan verdict.
         if self._threat_accumulator is not None:
             categories = [f.category for f in verdict.findings]
-            density = _extract_density(verdict)
+            density = wiring._extract_density(verdict)
             await self._threat_accumulator.record(
                 session_id, text, verdict.status.value, categories,
                 density=density, turn_risk=turn_risk,
@@ -831,34 +831,6 @@ class SHAI:
         ctx._clear_signals()
 
         return verdict
-
-    async def _emit_risk_block(
-        self, ctx: AgentContext, turn_risk: float
-    ) -> ScanVerdict:
-        """Emit an audit event for a consolidated-risk block. Called by
-        scan_output when compute_risk() crosses RISK_HIGH.
-        """
-        from harness.core.events import AuditEvent
-
-        deny_reason = (
-            f"consolidated turn risk {turn_risk:.2f} exceeds high threshold "
-            f"({RISK_HIGH:.2f})"
-        )
-        event = AuditEvent.build(
-            boundary=BoundaryName.OUTPUT_SCAN,
-            decision=Decision.BLOCKED,
-            ctx=ctx,
-            tenant_id=self._tenant_id,
-            duration_ms=0,
-            deny_reason=deny_reason,
-            audit_tags=self._audit_tags_for(ctx),
-            extra={
-                "turn_risk":     round(turn_risk, 4),
-                "signal_source": "consolidated",
-            },
-        )
-        await self._emitter.emit(event)
-        return ScanVerdict(status=ScanStatus.BLOCK)
 
 
     def collect_events(self) -> AbstractContextManager[list[AnyAuditEvent]]:
@@ -1012,32 +984,6 @@ class SHAI:
             ctx.turn_signals.record_gate(False, tool_name)
         return gate
 
-    def _source_name_for_tool(self, tool_name: str, tool: Tool) -> str:
-        """Return the source name for a Tool object.
-
-        Uses the Tool's transport to determine the source type:
-        - LOCAL/SKILL → 'local'
-        - MCP → look up via connector_tool_specs or tool_names on source configs
-
-        Called once per tool at _resolve_tools() time — no per-turn overhead.
-        """
-        from harness.core.types import Transport
-        if tool.transport != Transport.MCP:
-            return "local"
-        # Check connector manifests first — most precise
-        for src_cfg in self._config.sources:
-            if src_cfg.transport != "mcp":
-                continue
-            if tool_name in src_cfg.connector_tool_specs:
-                return src_cfg.name
-            if src_cfg.tool_names and tool_name in src_cfg.tool_names:
-                return src_cfg.name
-        # Fall back to first unrestricted MCP source
-        for src_cfg in self._config.sources:
-            if src_cfg.transport == "mcp" and not src_cfg.tool_names:
-                return src_cfg.name
-        return "local"
-
     def _resolve_tools(self, cfg: AgentConfig) -> dict[str, tuple[str, Tool]]:
         """Build the {tool_name: (source_name, Tool)} dict for an agent at startup.
 
@@ -1055,14 +1001,12 @@ class SHAI:
         for name, tool in all_tools.items():
             if name not in agent_names:
                 continue
-            source_name = self._source_name_for_tool(name, tool)
-            resolved[name] = (source_name, tool)
+            resolved[name] = (tool.source_name or "local", tool)
 
         # Apply enriched overrides — replaces registry entry for this agent only
         for name, tool in overrides.items():
             if name in agent_names:
-                source_name = self._source_name_for_tool(name, tool)
-                resolved[name] = (source_name, tool)
+                resolved[name] = (tool.source_name or "local", tool)
 
         return resolved
 
@@ -1116,206 +1060,3 @@ class SHAI:
             loop_similarity_threshold=effective.loop_similarity_threshold,
         )
 
-
-# ── Module-level adapter builders ─────────────────────────────────────────
-#
-# Each scanner is a named, standalone class. _build_text_scanners resolves
-# them from AdapterRef declarations in harness.yaml. The named factories
-# below make the mapping explicit — no magic string dispatch.
-
-def _extract_density(verdict) -> float:
-    """Instruction-density sub-score from the heuristic scanner, or 0.0.
-
-    Reads Finding.signals rather than parsing Finding.detail — the detail
-    string is for humans and rewording it must not change what the threat
-    accumulator scores.
-    """
-    for f in verdict.findings:
-        if f.scanner == "heuristic_scan" and "density" in f.signals:
-            return f.signals["density"]
-    return 0.0
-
-
-def _make_file_injection_scanner(cfg: dict) -> InjectionScanner:
-    """Build the common + input + document catalog union for file content."""
-    doc_patterns = Path(__file__).parent.parent / "adapters/scanners/l10n/patterns_for_doc.yaml"
-    return InjectionScanner(
-        additional_patterns_files=(doc_patterns,),
-        **cfg,
-    )
-
-
-# Signed-DB catalog name per injection-family scanner. Explicit rather than
-# derived from the scanner name: the catalog names are an operator-facing
-# contract in the bundle format and must not shift if a scanner is renamed.
-# Only InjectionScanner and its subclasses appear here — they share one
-# __init__, so every name in this table accepts extra_rules. A subclass that
-# overrides __init__ without forwarding the kwarg breaks that and is rejected
-# by test_db_catalog_scanners_accept_extra_rules.
-_DB_CATALOG_FOR_SCANNER: dict[str, str] = {
-    "injection_scan":      "injection",
-    "jailbreak_scan":      "jailbreak",
-    "identity_spoof_scan": "identity_spoof",
-    "mcp_metadata_scan":   "mcp_metadata",
-}
-
-
-# Named registry — explicit, no magic strings
-_SCANNER_FACTORIES: dict[str, Any] = {
-    "regex_pii":           lambda cfg: RegexPIIScanner(**cfg),
-    "injection_scan":      lambda cfg: InjectionScanner(**cfg),
-    "heuristic_scan":      lambda cfg: HeuristicScanner(**cfg),
-    "mcp_metadata_scan":   lambda cfg: MCPMetadataScanner(**cfg),
-    "jailbreak_scan":      lambda cfg: __import__(
-        "harness.adapters.scanners.jailbreak_scan", fromlist=["JailbreakScanner"]
-    ).JailbreakScanner(**cfg),
-    "identity_spoof_scan": lambda cfg: __import__(
-        "harness.adapters.scanners.identity_spoof_scan", fromlist=["IdentitySpoofScanner"]
-    ).IdentitySpoofScanner(**cfg),
-    "command_injection_scan": lambda cfg: __import__(
-        "harness.adapters.scanners.command_injection_scan",
-        fromlist=["CommandInjectionScanner"],
-    ).CommandInjectionScanner(**cfg),
-}
-
-
-def _build_text_scanners(
-    adapter_refs: list,
-    *,
-    extra_rules: dict[str, list] | None = None,
-    include_document_patterns: bool = False,
-) -> list[ConfiguredScanner]:
-    """Build text scanners from AdapterRef declarations in harness.yaml.
-
-    Built-in scanners (regex_pii, injection_scan) are resolved via the
-    named factory table above. Custom scanners are resolved via entry points.
-
-    Each scanner is paired with the action / redact_with of the ref that
-    produced it, so a ref that fails to resolve drops out with its own
-    overrides and cannot shift another scanner's action onto it.
-
-    extra_rules maps scanner name → compiled rules from the signed pattern DB
-    (see _DB_CATALOG_FOR_SCANNER). Only injection-family names appear in it, so
-    scanners that do not accept extra_rules never receive the kwarg.
-
-    HeuristicScanner is the always-on structural backstop: appended here with
-    no override (the boundary action governs it) unless an explicit
-    `heuristic_scan` ref already placed it. Declaring it in harness.yaml only
-    controls its position and per-scanner action.
-    """
-    scanners: list[ConfiguredScanner] = []
-    for ref in adapter_refs:
-        factory = _SCANNER_FACTORIES.get(ref.name)
-        if factory:
-            cfg = ref.config
-            if extra_rules and ref.name in extra_rules:
-                # Copy: ref.config is shared across every boundary's build call.
-                cfg = {**cfg, "extra_rules": extra_rules[ref.name]}
-            scanner = (
-                _make_file_injection_scanner(cfg)
-                if include_document_patterns and ref.name == "injection_scan"
-                else factory(cfg)
-            )
-        else:
-            try:
-                from harness.adapters.discovery import resolve
-                cls = resolve("harness.scanners", ref.name)
-                scanner = cls(**ref.config)
-            except Exception as e:
-                log.warning("scanner adapter not found — skipped",
-                            extra={"adapter_name": ref.name, "error": str(e)})
-                continue
-        scanners.append(ConfiguredScanner(scanner, ref.action, ref.redact_with))
-    if not any(getattr(c.scanner, "name", "") == HeuristicScanner.name for c in scanners):
-        scanners.append(ConfiguredScanner(HeuristicScanner()))
-    return scanners
-
-
-def _build_file_scanners(
-    adapter_refs: list, *, max_size_mb: float
-) -> list[ConfiguredScanner]:
-    """Build the scan_file scanner list.
-
-    Two independent scanners, so a failing content scanner cannot discard the
-    structural findings and each is governed by on_error on its own:
-
-      FileScanner        — structural pass (MIME, size, extension, PDF JS, SVG,
-                           EXIF, ZIP, Office macros)
-      FileContentScanner — the configured chain over extracted text and image
-                           metadata
-
-    `scan_file.scanners` is that content chain and is authoritative, exactly as
-    `scan_input.scanners` is for input — declared scanners are what run over
-    extracted content.
-    """
-    from harness.adapters.scanners.file_scanner import (
-        FileContentScanner,
-        FileScanner,
-    )
-
-    refs = [r for r in adapter_refs if r.name != "file_scanner"]
-    # The content chain runs inside FileContentScanner, which calls the
-    # scanners directly — FileScanConfig rejects per-scanner overrides, so
-    # only the instances travel down.
-    text_scanners = [
-        c.scanner
-        for c in _build_text_scanners(refs, include_document_patterns=True)
-    ]
-    return [
-        ConfiguredScanner(FileScanner(max_size_mb=max_size_mb)),
-        ConfiguredScanner(
-            FileContentScanner(text_scanners=text_scanners, max_size_mb=max_size_mb)
-        ),
-    ]
-
-
-def _build_policy(cfg: PolicyConfig) -> PolicyEngine:
-    """Build the PolicyEngine named by `policy.engine`.
-
-    Failure is fatal, unlike a scanner or sink that cannot be built: those
-    degrade to one fewer inspection, whereas a harness with no policy engine
-    has no gate at all and allows every tool call. AdapterDiscoveryError
-    propagates and a construction failure becomes ConfigError.
-
-    `policy.rules` reaches the built-in engine only — PolicyConfig rejects the
-    combination of inline rules and any other engine, so nothing is dropped here.
-    """
-    if cfg.engine.name == RuleBasedPolicy.name:
-        return RuleBasedPolicy(rules=cfg.parsed_rules())
-
-    from harness.adapters.discovery import resolve
-    cls = resolve("harness.policy", cfg.engine.name)
-    try:
-        return cls(**cfg.engine.config)
-    except Exception as e:
-        # Type only — engine config carries ${ENV_VAR}-expanded bundle
-        # credentials and a third-party message can echo them.
-        log.error("policy engine construction failed",
-                  extra={"adapter_name": cfg.engine.name}, exc_info=True)
-        raise ConfigError(
-            f"policy engine {cfg.engine.name!r} failed to construct: "
-            f"{type(e).__name__} (see logs for detail)",
-            op="from_yaml",
-        ) from e
-
-
-def _build_sinks(adapter_refs: list) -> list:
-    sinks = []
-    for ref in adapter_refs:
-        if ref.name == "stdout":
-            sinks.append(StdoutSink())
-        elif ref.name == "file":
-            from harness.adapters.audit_sinks.file import FileSink
-            sinks.append(FileSink(**ref.config))
-        else:
-            try:
-                from harness.adapters.discovery import resolve
-                cls = resolve("harness.audit_sinks", ref.name)
-                sinks.append(cls(**ref.config))
-            except Exception as e:
-                log.warning("audit sink not found — skipped",
-                            extra={"adapter_name": ref.name, "error": str(e)})
-    if not sinks:
-        log.warning("no audit sinks configured — falling back to stdout")
-        sinks = [StdoutSink()]
-    return sinks

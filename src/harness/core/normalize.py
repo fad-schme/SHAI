@@ -19,6 +19,10 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from harness.config.schema import NormalizationConfig
 
 # Confusables that regularly appear in homoglyph attacks. Kept as an explicit,
 # auditable map rather than the full Unicode TR39 table: the long tail adds
@@ -470,3 +474,19 @@ def canonicalize(
             depth += 1
 
     return NormalizationResult(views=views, transforms=transforms)
+
+
+def canonicalize_config(text: str, config: NormalizationConfig) -> NormalizationResult:
+    """canonicalize() driven directly by a NormalizationConfig.
+
+    Every boundary that normalizes text reads the same four fields off its
+    NormalizationConfig one at a time; this is that projection in one place
+    instead of copied at each call site.
+    """
+    return canonicalize(
+        text,
+        decode=config.decode,
+        max_depth=config.max_depth,
+        entropy_threshold=config.entropy_threshold,
+        max_bytes=config.max_bytes,
+    )

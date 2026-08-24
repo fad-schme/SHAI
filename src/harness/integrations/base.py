@@ -360,6 +360,44 @@ async def execute_gated_tool_call(
     )
 
 
+def make_gated_tool(
+    tool: Any,
+    *,
+    harness: SHAI,
+    ctx: AgentContext,
+    tool_name: str | None = None,
+    render: Callable[[GatedCall], Any] | None = None,
+) -> Callable[..., Awaitable[Any]]:
+    """Build the async closure every framework integration wraps a tool in.
+
+    Runs `tool` through execute_gated_tool_call and hands the resulting
+    GatedCall to `render`. The default render is the one shared by CrewAI,
+    the OpenAI Agents SDK, and PydanticAI — none of them has a denial
+    artifact, so the message *is* the tool output: `call.message` when denied
+    or blocked, `call.text` when allowed. A framework with a richer artifact
+    (ToolException, a Command) passes its own `render`.
+
+    Accepts positional or keyword arguments — a lone positional argument is
+    treated as {"input": ...}, matching how PydanticAI presents single-arg
+    tool calls.
+    """
+    name = tool_name or getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+    render = render or (lambda call: call.message if not call.allowed else call.text)
+
+    async def gated(*args: Any, **kwargs: Any) -> Any:
+        tool_args = kwargs or ({"input": args[0]} if args else {})
+        call = await execute_gated_tool_call(
+            harness=harness,
+            ctx=ctx,
+            tool_name=name,
+            tool_args=tool_args,
+            invoke=lambda a: invoke_tool(tool, a),
+        )
+        return render(call)
+
+    return gated
+
+
 def extract_shai_tools(tools: Sequence[Any]) -> list[Tool]:
     """Extract SHAI Tool descriptors from a mixed list of ShaiTool and Tool."""
     result: list[Tool] = []

@@ -36,8 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
     ShaiTool,
-    execute_gated_tool_call,
-    invoke_tool,
+    make_gated_tool,
     shai_tool,
 )
 
@@ -55,8 +54,6 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
     Note: does not call register_tools(). Use wrap_tools() for that.
     """
-    harness_  = harness
-    ctx_      = ctx
     tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
     original_fn = (getattr(tool, "_fn", None) or getattr(tool, "fn", None)
                    or (tool if callable(tool) else None))
@@ -66,17 +63,11 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
     base_fn = original_fn._fn if isinstance(original_fn, ShaiTool) else original_fn
 
-    @functools.wraps(base_fn)
-    async def gated(**kwargs: Any) -> Any:
-        call = await execute_gated_tool_call(
-            harness=harness_,
-            ctx=ctx_,
-            tool_name=tool_name,
-            tool_args=kwargs,
-            invoke=lambda a: invoke_tool(original_fn, a),
-        )
-        # The SDK has no denial artifact — the message is the tool output.
-        return call.message if not call.allowed else call.text
+    # The SDK has no denial artifact — the shared default render (message on
+    # denial/block, text otherwise) is exactly the tool output it expects.
+    gated = functools.wraps(base_fn)(
+        make_gated_tool(original_fn, harness=harness, ctx=ctx, tool_name=tool_name)
+    )
 
     try:
         from agents import function_tool

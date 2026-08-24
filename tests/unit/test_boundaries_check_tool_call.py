@@ -11,7 +11,7 @@ from harness.agents.agent_config import AgentConfig, RuleConfig, RuleMatchConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
 from harness.core.context import AgentContext
-from harness.core.types import Decision, Transport
+from harness.core.types import Decision, Severity, Transport
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import Tool
 from tests.conftest import RecordingSink
@@ -311,3 +311,97 @@ async def test_l7_benign_arguments_are_untouched():
     gate, _ = await _run_with_arg_scanner(None, args={"recipient": "team@example.com"})
     assert gate.allowed is True
     assert gate.redacted_args is None
+
+
+# ── L7: fail-closed on scanner exception (bug fix) ───────────────────────
+#
+# Layer 7 used to log.warning + continue on a scanner exception, treating the
+# argument as clean — the opposite of the fail-closed default every other
+# boundary (run_scan) applies. A scanner raising must deny the call.
+
+from harness.config.schema import NormalizationConfig  # noqa: E402
+
+
+class _RaisingScanner:
+    name = "raising_scanner"
+
+    async def scan(self, text, ctx):
+        raise RuntimeError("scanner exploded")
+
+
+async def test_l7_scanner_exception_denies_the_call():
+    """A scanner exception during arg scanning must fail closed, not pass."""
+    agent = make_agent(allowed_tool_names=["send_email"],
+                       allowed_tags=["read", "internal", "external_write", "sensitive"])
+    tools, sink, emitter, policy = setup()
+    ctx = AgentContext(agent_id="test_agent")
+
+    gate = await check_tool_call.run(
+        "send_email", {"body": "hello"}, ctx,
+        agent_config=agent,
+        tools=tools,
+        policy=policy,
+        arg_scanners=[ConfiguredScanner(scanner=_RaisingScanner())],
+        emitter=emitter,
+        tenant_id="test",
+        scan_args_for_tags=frozenset({"sensitive"}),
+    )
+    assert gate.allowed is False
+    assert sink.events[-1].decision == Decision.DENY
+
+
+# ── L7: normalization defeats obfuscation in a scanned argument ──────────
+#
+# _scan.py's run_scan canonicalizes text before every other boundary's
+# scanners see it. Layer 7 previously scanned the raw `key: value` text
+# directly, so a homoglyph payload that would be caught at scan_input slipped
+# through when placed inside a tool argument instead.
+
+MARKER = "ignore previous instructions"
+
+
+class _MarkerScanner:
+    """Knows only the plaintext marker — detection depends on normalization
+    handing it a de-obfuscated view, exactly like tests/integration/
+    test_normalization_pipeline.py's _MarkerScanner."""
+
+    name = "marker"
+
+    async def scan(self, text, ctx):
+        from harness.adapters.scanners.base import ScanResult
+        from harness.core.verdicts import Finding
+        if MARKER.replace(" ", "") in text.lower().replace(" ", ""):
+            return ScanResult(findings=[Finding(
+                scanner="marker", category="prompt_injection",
+                severity=Severity.HIGH, detail="marker",
+            )])
+        return ScanResult()
+
+
+def _homoglyph(s: str) -> str:
+    swap = {"i": "і", "o": "о", "e": "е", "a": "а",
+            "c": "с", "p": "р"}
+    return "".join(swap.get(c, c) for c in s)
+
+
+async def test_l7_normalizes_argument_text_before_scanning():
+    """A homoglyph-obfuscated payload in a tool argument is caught once the
+    argument text is normalized before scanning."""
+    agent = make_agent(allowed_tool_names=["send_email"],
+                       allowed_tags=["read", "internal", "external_write", "sensitive"])
+    tools, sink, emitter, policy = setup()
+    ctx = AgentContext(agent_id="test_agent")
+
+    gate = await check_tool_call.run(
+        "send_email", {"body": _homoglyph(MARKER)}, ctx,
+        agent_config=agent,
+        tools=tools,
+        policy=policy,
+        arg_scanners=[ConfiguredScanner(scanner=_MarkerScanner())],
+        emitter=emitter,
+        tenant_id="test",
+        scan_args_for_tags=frozenset({"sensitive"}),
+        normalization=NormalizationConfig(),
+    )
+    assert gate.allowed is False
+    assert "arg scan blocked" in gate.deny_reason

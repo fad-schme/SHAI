@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import harness.tools.source as source_module
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
 from harness.config.schema import SourceConfig
 from harness.core.context import AgentContext
@@ -291,6 +292,82 @@ async def test_mcp_source_close_when_not_connected():
     assert not src._connected
 
 
+# ── Source attribution (ticket: fix source attribution loss) ──────────────
+
+async def test_mcp_fetch_tools_stamps_own_source_name(monkeypatch):
+    """_fetch_tools() must stamp source_name=self.name on every tool it
+
+    builds — the one place remote tool identity is established. Nothing
+    downstream should have to guess it back.
+    """
+    src = MCPSource(_mcp("weather_api"))
+
+    async def fake_post(payload, dispatch_token=None):
+        return {"result": {"tools": [{"name": "get_forecast", "description": "d"}]}}
+
+    monkeypatch.setattr(src, "_post", fake_post)
+    tools = await src._fetch_tools()
+
+    assert len(tools) == 1
+    assert tools[0].source_name == "weather_api"
+
+
+async def test_two_unrestricted_mcp_sources_resolve_independently(tmp_path: Path, monkeypatch):
+    """Regression: two unrestricted MCP sources (no tool_names, no connector
+
+    manifest) used to be indistinguishable to the old heuristic, which always
+    picked "the first unrestricted MCP source" for every MCP tool regardless
+    of which source actually produced it. With source_name carried from
+    MCPSource._fetch_tools(), a tool from the second source must resolve to
+    the second source — not the first, and not "local".
+    """
+    from harness.core.harness import SHAI
+
+    async def fake_connect(self):
+        self._connected = True
+
+    async def fake_fetch_tools(self):
+        return [Tool(name=f"{self.name}_tool", tags=["read"], transport=Transport.MCP,
+                     source_name=self.name)]
+
+    monkeypatch.setattr(MCPSource, "_connect", fake_connect)
+    monkeypatch.setattr(MCPSource, "_fetch_tools", fake_fetch_tools)
+
+    cfg_file = tmp_path / "h.yaml"
+    cfg_file.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "policy:\n  rules: []\n"
+        "sources:\n"
+        "  - name: source_a\n"
+        "    transport: mcp\n"
+        "    url: http://a.example/sse\n"
+        "  - name: source_b\n"
+        "    transport: mcp\n"
+        "    url: http://b.example/sse\n"
+    )
+    agent_file = tmp_path / "agent.yaml"
+    agent_file.write_text(
+        "id: test_agent\n"
+        "sources:\n  - source_a\n  - source_b\n"
+        "allowed_tool_names:\n  - source_a_tool\n  - source_b_tool\n"
+        "allowed_tags:\n  - read\n"
+    )
+
+    harness = await SHAI.from_yaml(cfg_file)
+    ctx = await harness.load_agent(agent_file)
+
+    gate_a = await harness.check_tool_call("source_a_tool", {}, ctx)
+    gate_b = await harness.check_tool_call("source_b_tool", {}, ctx)
+
+    assert gate_a.source_name == "source_a"
+    assert gate_b.source_name == "source_b"
+    assert gate_b.source_name != "local"
+
+    await harness.close()
+
+
 # ── MCPSource header building ─────────────────────────────────────────────
 
 def test_mcp_token_credential_becomes_bearer():
@@ -313,24 +390,62 @@ def test_mcp_custom_header_passed_through():
     assert headers["X-Custom-Header"] == "value"
 
 
-# ── SSE helpers ───────────────────────────────────────────────────────────
+# ── SSE session establishment ─────────────────────────────────────────────
+#
+# Exercised through _open_sse_session() — the behavioral unit that actually
+# owns "parse the endpoint event, fail loudly if it carries no sessionId" —
+# rather than importing the private sessionId-string-parsing helper directly.
+# SSE parsing itself (_parse_sse) is faked so no real network/stream is needed.
 
-def test_extract_session_id_from_path():
-    from harness.tools.source import _extract_session_id
-    result = _extract_session_id("/message?sessionId=abc123")
-    assert result == "abc123"
-
-
-def test_extract_session_id_from_full_url():
-    from harness.tools.source import _extract_session_id
-    result = _extract_session_id("https://server.com/message?sessionId=xyz")
-    assert result == "xyz"
+class _FakeSSEResponse:
+    status_code = 200
 
 
-def test_extract_session_id_missing_returns_none():
-    from harness.tools.source import _extract_session_id
-    result = _extract_session_id("/message?foo=bar")
-    assert result is None
+class _FakeStreamCtx:
+    async def __aenter__(self):
+        return _FakeSSEResponse()
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+class _FakeClient:
+    def stream(self, method, path):
+        return _FakeStreamCtx()
+
+
+def _mcp_source_with_fake_transport(monkeypatch, endpoint_data: str):
+    src = MCPSource(_mcp())
+    src._client = _FakeClient()
+
+    async def fake_parse_sse(response):
+        yield ("endpoint", endpoint_data)
+
+    monkeypatch.setattr(source_module, "_parse_sse", fake_parse_sse)
+    return src
+
+
+async def test_open_sse_session_extracts_session_id_from_path(monkeypatch):
+    src = _mcp_source_with_fake_transport(monkeypatch, "/message?sessionId=abc123")
+    assert await src._open_sse_session() == "abc123"
+
+
+async def test_open_sse_session_extracts_session_id_from_full_url(monkeypatch):
+    src = _mcp_source_with_fake_transport(
+        monkeypatch, "https://server.com/message?sessionId=xyz"
+    )
+    assert await src._open_sse_session() == "xyz"
+
+
+async def test_open_sse_session_raises_when_sessionid_missing(monkeypatch):
+    """A malformed endpoint event fails loudly rather than connecting with
+
+    no session id — the same contract _extract_session_id's return-None
+    used to leave the caller to enforce.
+    """
+    src = _mcp_source_with_fake_transport(monkeypatch, "/message?foo=bar")
+    with pytest.raises(ConfigError, match="no sessionId"):
+        await src._open_sse_session()
 
 
 # ── SourceConfig schema ───────────────────────────────────────────────────
@@ -407,8 +522,8 @@ async def test_shai_source_tools_available_at_load_agent(tmp_path: Path):
         Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
     ])
     ctx = await harness.load_agent(agent_file)
-    tools = harness._agent_tools.get("test_agent", {})
-    assert "search_docs" in tools
+    names = {t.name for t in harness.tools_for(ctx)}
+    assert "search_docs" in names
     await harness.close()
 
 
@@ -460,11 +575,10 @@ async def test_source_tags_visible_in_agent_tool_set(tmp_path):
     ctx = await harness.load_agent(agent_file)
 
     # The agent's resolved tool set must have the source-enriched tags
-    resolved = harness._agent_tools["test_agent"]
+    resolved = {t.name: t for t in harness.tools_for(ctx)}
     assert "search_docs" in resolved, "search_docs not in agent tool set"
 
-    _, resolved_tool = resolved["search_docs"]   # unpack (source_name, Tool)
-    tool_tags = set(resolved_tool.tags)
+    tool_tags = set(resolved["search_docs"].tags)
     assert "read"      in tool_tags, "base tag 'read' missing"
     assert "sensitive" in tool_tags, \
         f"source tag 'sensitive' silently dropped — gate sees {tool_tags}"
@@ -510,11 +624,11 @@ async def test_other_agents_not_affected_by_source_override(tmp_path):
         Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
     ])
 
-    await harness.load_agent(agent_a)
-    await harness.load_agent(agent_b)
+    ctx_a = await harness.load_agent(agent_a)
+    ctx_b = await harness.load_agent(agent_b)
 
-    _, tool_a = harness._agent_tools["agent_a"]["search_docs"]
-    _, tool_b = harness._agent_tools["agent_b"]["search_docs"]
+    tool_a = {t.name: t for t in harness.tools_for(ctx_a)}["search_docs"]
+    tool_b = {t.name: t for t in harness.tools_for(ctx_b)}["search_docs"]
     tags_a = set(tool_a.tags)
     tags_b = set(tool_b.tags)
 

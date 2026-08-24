@@ -484,16 +484,16 @@ async def _mcp_harness(tmp_path: Path) -> tuple[SHAI, AgentContext, _FakeMCPSour
     )
     h = await SHAI.from_yaml(cfg)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
-    await h.register_tools([
-        Tool(name="search_docs", tags=["read", "internal"], transport=Transport.MCP),
-    ])
     source = _FakeMCPSource()
     h._source_registry.register(source)
+    # source_name stamped on the Tool itself — register_tools() re-resolves
+    # every loaded agent's tool set from the registry, so the fake source's
+    # ownership is picked up the same way a real MCPSource's would be.
+    await h.register_tools([
+        Tool(name="search_docs", tags=["read", "internal"], transport=Transport.MCP,
+             source_name=source.name),
+    ])
     ctx = AgentContext(agent_id="orchestrator_agent")
-    # Route the tool to the fake source, as load_agent would for a real one.
-    h._agent_tools[ctx.agent_id]["search_docs"] = (
-        source.name, h._agent_tools[ctx.agent_id]["search_docs"][1],
-    )
     return h, ctx, source
 
 

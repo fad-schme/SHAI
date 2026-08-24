@@ -12,8 +12,10 @@ from pathlib import Path
 import pytest
 
 from harness.adapters.scanners.base import ScanResult
+from harness.config.schema import AdapterRef, BoundaryConfig, ToolResultScanConfig
 from harness.core.context import AgentContext
 from harness.core.events import AnyAuditEvent
+from harness.core.types import OnError, ScanAction, Severity
 
 FIXTURES = Path(__file__).parent / "fixtures"
 AGENTS   = FIXTURES / "agents"
@@ -64,6 +66,43 @@ class FailingScanner:
 
     async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
         raise RuntimeError(self._error)
+
+
+def boundary_config(*, cls: type = BoundaryConfig, **overrides) -> BoundaryConfig:
+    """Build a BoundaryConfig (or ToolResultScanConfig via cls=) for tests that
+
+    call run_scan()/run_tool_result_scan() directly. Defaults match what most
+    such tests want: enabled, block, HIGH, fail-closed. run_scan reads
+    scanners as its own separate argument, not from config.scanners — the
+    dummy AdapterRef here exists only to satisfy the config's own "enabled
+    needs scanners" validator.
+    """
+    defaults: dict = dict(
+        enabled=True,
+        block_at=Severity.HIGH,
+        action=ScanAction.BLOCK,
+        on_error=OnError.FAIL_CLOSED,
+    )
+    defaults.update(overrides)
+    if defaults["enabled"] and "scanners" not in defaults:
+        defaults["scanners"] = [AdapterRef(name="dummy")]
+    return cls(**defaults)
+
+
+def tool_result_scan_config(**overrides) -> ToolResultScanConfig:
+    return boundary_config(cls=ToolResultScanConfig, **overrides)
+
+
+def resolved_tool_names(h, agent_id: str) -> frozenset[str]:
+    """Tool names resolved for an agent at load_agent() time — the raw
+
+    allowed_tool_names ∩ registry intersection, before the gate's per-call L4
+    tag narrowing. tools_for() applies that narrowing and is what production
+    code should use; some tests specifically assert on resolution *before*
+    it (tag filtering happens at gate time, not at resolution time), which
+    only SHAI._agent_tools can answer. Test-only: not a product surface.
+    """
+    return frozenset(h._agent_tools.get(agent_id, {}))
 
 
 @pytest.fixture

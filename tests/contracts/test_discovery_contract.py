@@ -240,7 +240,7 @@ def test_every_name_selectable_in_config_is_registered():
     import tomllib
     from pathlib import Path
 
-    from harness.core.harness import _SCANNER_FACTORIES
+    from harness.core.wiring import _SCANNER_FACTORIES
 
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     if not pyproject.exists():

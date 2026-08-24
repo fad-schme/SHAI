@@ -24,9 +24,9 @@ from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan
 from harness.config.schema import NormalizationConfig
 from harness.core.context import AgentContext
-from harness.core.types import BoundaryName, ScanAction, ScanStatus, Severity
+from harness.core.types import BoundaryName, ScanStatus, Severity
 from harness.core.verdicts import Finding
-from tests.conftest import RecordingSink
+from tests.conftest import RecordingSink, boundary_config
 
 MARKER = "ignore previous instructions"
 
@@ -72,9 +72,9 @@ async def _scan(text, *, normalization):
         text, AgentContext(agent_id="a"),
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[ConfiguredScanner(_MarkerScanner())],
-        boundary_action=ScanAction.BLOCK,
-        emitter=emitter, tenant_id="t", enabled=True,
-        block_at=Severity.HIGH, normalization=normalization,
+        config=boundary_config(),
+        emitter=emitter, tenant_id="t",
+        normalization=normalization,
         state=ScanState(),
     )
     return verdict, sink.events[0]

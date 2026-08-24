@@ -31,8 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
     ShaiTool,
-    execute_gated_tool_call,
-    invoke_tool,
+    make_gated_tool,
     shai_tool,
 )
 
@@ -52,21 +51,11 @@ def harness_tool(*, harness: SHAI, ctx: AgentContext) -> Callable:
     Does not call register_tools() — register separately if needed.
     """
     def decorator(fn: Callable) -> Callable:
-        tool_name = fn.__name__
-
-        @functools.wraps(fn)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            tool_args = kwargs or ({"input": args[0]} if args else {})
-            call = await execute_gated_tool_call(
-                harness=harness,
-                ctx=ctx,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                invoke=lambda a: invoke_tool(fn, a),
-            )
-            # PydanticAI has no denial artifact — the message is the output.
-            return call.message if not call.allowed else call.text
-
+        # PydanticAI has no denial artifact — the shared default render
+        # (message on denial/block, text otherwise) is the output it expects.
+        wrapper = functools.wraps(fn)(
+            make_gated_tool(fn, harness=harness, ctx=ctx, tool_name=fn.__name__)
+        )
         return wrapper
     return decorator
 
@@ -85,24 +74,10 @@ async def create_tools(
     result = []
     for tool in tools:
         tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
-        harness_  = harness
-        ctx_      = ctx
-        original  = tool
-
-        @functools.wraps(original._fn if isinstance(original, ShaiTool) else original)
-        async def gated(*args: Any, _name: str = tool_name,
-                        _orig: Any = original, **kwargs: Any) -> Any:
-            tool_args = kwargs or ({"input": args[0]} if args else {})
-            call = await execute_gated_tool_call(
-                harness=harness_,
-                ctx=ctx_,
-                tool_name=_name,
-                tool_args=tool_args,
-                invoke=lambda a, _t=_orig: invoke_tool(_t, a),
-            )
-            return call.message if not call.allowed else call.text
-
-        gated.__name__ = tool_name
+        base_fn = tool._fn if isinstance(tool, ShaiTool) else tool
+        gated = functools.wraps(base_fn)(
+            make_gated_tool(tool, harness=harness, ctx=ctx, tool_name=tool_name)
+        )
         result.append(gated)
     return result
 
@@ -128,16 +103,9 @@ def _patch_tool(tool_obj: Any, *, harness: SHAI, ctx: AgentContext) -> None:
         return
     tool_name = getattr(tool_obj, "name", original_fn.__name__)
 
-    @functools.wraps(original_fn)
-    async def gated(*args: Any, **kwargs: Any) -> Any:
-        call = await execute_gated_tool_call(
-            harness=harness,
-            ctx=ctx,
-            tool_name=tool_name,
-            tool_args=kwargs or {},
-            invoke=lambda a: invoke_tool(original_fn, a),
-        )
-        return call.message if not call.allowed else call.text
+    gated = functools.wraps(original_fn)(
+        make_gated_tool(original_fn, harness=harness, ctx=ctx, tool_name=tool_name)
+    )
 
     for attr in ("function", "_function"):
         if hasattr(tool_obj, attr):

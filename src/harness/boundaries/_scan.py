@@ -54,12 +54,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from harness.adapters.circuit_breaker import CircuitBreaker
 from harness.adapters.scanners.base import ScanResult
 from harness.core.events import AuditEvent, now_ms
-from harness.core.normalize import canonicalize
+from harness.core.normalize import canonicalize_config
 from harness.core.types import (
     BoundaryName,
     Decision,
@@ -73,10 +73,25 @@ from harness.core.verdicts import Finding, ScanVerdict
 if TYPE_CHECKING:
     from harness.adapters.scanners.base import ConfiguredScanner, Scanner
     from harness.audit.emitter import AuditEmitter
-    from harness.config.schema import NormalizationConfig
+    from harness.config.schema import NormalizationConfig, ToolResultScanConfig
     from harness.core.context import AgentContext
 
 log = logging.getLogger(__name__)
+
+
+class ScanBoundaryConfig(Protocol):
+    """What run_scan needs from a boundary's own config section.
+
+    BoundaryConfig, FileScanConfig, and ToolResultScanConfig all satisfy this
+    structurally — run_scan takes the config object itself instead of four
+    separate keyword arguments that were always a straight projection of it,
+    so a caller can no longer pair one boundary's block_at with another's
+    action by hand-copying the wrong field.
+    """
+    enabled:  bool
+    block_at: Severity
+    action:   ScanAction
+    on_error: OnError
 
 _DEFAULT_REDACT_TEMPLATE = "[REDACTED:{category}]"
 
@@ -160,24 +175,30 @@ async def _emit_system_event(
     ctx: AgentContext,
     tenant_id: str,
     scanner_name: str,
-    error: str,
+    reason: str,
     circuit_state: str,
     boundary: BoundaryName,
     audit_tags: dict[str, str] | None = None,
 ) -> None:
-    """Emit a structured SYSTEM/DEGRADED audit event for scanner failures."""
+    """Emit a structured SYSTEM/DEGRADED audit event for scanner failures.
+
+    reason is signed and carries no raw text on any path: an exception
+    type name ("ValueError") or a fixed phrase ("circuit breaker open"),
+    never str(exception) — a third-party scanner's exception message can
+    echo the text it choked on.
+    """
     event = AuditEvent.build(
         boundary=BoundaryName.SYSTEM,
         decision=Decision.DEGRADED,
         ctx=ctx,
         tenant_id=tenant_id,
         duration_ms=0,
-        deny_reason=f"scanner '{scanner_name}' failed: {error}",
+        deny_reason=f"scanner '{scanner_name}' failed: {reason}",
         adapters=[scanner_name],
         audit_tags=audit_tags or {},
         extra={
             "scanner": scanner_name,
-            "error": error,
+            "reason": reason,
             "circuit_state": circuit_state,
             "origin_boundary": str(boundary),
         },
@@ -231,15 +252,14 @@ async def run_scan(
     *,
     boundary: BoundaryName,
     scanners: list[ConfiguredScanner],
-    boundary_action: ScanAction,
+    config: ScanBoundaryConfig,
     emitter: AuditEmitter,
     tenant_id: str,
-    enabled: bool,
-    block_at: Severity,
     state: ScanState,
     normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
-    on_error: OnError = OnError.FAIL_CLOSED,
+    forced_block_reason: str | None = None,
+    forced_block_extra: dict[str, Any] | None = None,
 ) -> ScanVerdict:
     """Run scanners concurrently, apply action logic, emit one AuditEvent.
 
@@ -247,15 +267,41 @@ async def run_scan(
     - Exactly one AuditEvent per call, on every code path.
     - Disabled boundary → ScanStatus.ALLOW, disabled=True audit event.
     - Enabled boundary with no scanner to run → ScanStatus.BLOCK.
-    - Scanner exceptions handled per on_error policy.
+    - Scanner exceptions handled per config.on_error policy.
     - No raw text in the audit event.
     - Scanner action overrides boundary action for that scanner's findings only.
+
+    forced_block_reason / forced_block_extra: let a caller with evidence this
+    call cannot see on its own (scan_output's cross-boundary consolidated
+    turn-risk check) fold a block into *this* call's single event instead of
+    emitting a second one after the fact. Applied only when the scanners
+    themselves did not already block — it raises the floor, never lowers it.
     """
     start = now_ms()
+    on_error = config.on_error
 
-    if not enabled:
+    if not config.enabled:
         # Turning a boundary off is an explicit operator decision, and the
-        # event records it as such. Distinct from the case below.
+        # event records it as such — unless a forced block applies. That
+        # floor comes from evidence outside this boundary's own scanners
+        # (scan_output's cross-boundary turn-risk check) and must still hold
+        # when there is nothing here to scan.
+        if forced_block_reason is not None:
+            # disabled=True requires decision=allow (AuditEvent's own
+            # invariant) — the block did not come from this boundary being
+            # on, so it is not recorded as this boundary's own scan.
+            event = AuditEvent.build(
+                boundary=boundary,
+                decision=Decision.BLOCKED,
+                ctx=ctx,
+                tenant_id=tenant_id,
+                duration_ms=0,
+                deny_reason=forced_block_reason,
+                audit_tags=audit_tags or {},
+                extra=forced_block_extra,
+            )
+            await emitter.emit(event)
+            return ScanVerdict(status=ScanStatus.BLOCK)
         event = AuditEvent.build(
             boundary=boundary,
             decision=Decision.ALLOW,
@@ -292,13 +338,7 @@ async def run_scan(
         return ScanVerdict(status=ScanStatus.BLOCK)
 
     if normalization is not None and normalization.enabled:
-        norm = canonicalize(
-            text,
-            decode=normalization.decode,
-            max_depth=normalization.max_depth,
-            entropy_threshold=normalization.entropy_threshold,
-            max_bytes=normalization.max_bytes,
-        )
+        norm = canonicalize_config(text, normalization)
         views = norm.views
         transforms = norm.transforms
     else:
@@ -366,21 +406,29 @@ async def run_scan(
         # ── Scanner raised an exception ───────────────────────────────────
         if isinstance(result, Exception):
             breaker.record_failure()
-            error_str = str(result)
+            error_type = type(result).__name__
             log.error(
                 "scanner failed",
                 extra={
                     "scanner": scanner.name,
                     "boundary": boundary,
                     "on_error": on_error,
-                    "error": error_str,
+                    "error_type": error_type,
+                    # Bounded preview, not the exception message: a
+                    # third-party scanner's exception text can echo the
+                    # substring it choked on, but an operator reading this
+                    # line still needs to know what was being scanned — a
+                    # hash tells them nothing.
+                    "text_preview": text[:80],
                     **ctx.to_log_fields(),
                 },
             )
-            # Emit structured system event for observability
+            # Emit structured system event for observability. Type only, not
+            # the exception message — this event is signed and carries no
+            # raw text on any path.
             await _emit_system_event(
                 emitter, ctx, tenant_id, scanner.name,
-                error_str, breaker.state,
+                error_type, breaker.state,
                 boundary, audit_tags,
             )
 
@@ -412,7 +460,7 @@ async def run_scan(
         # ── Scanner succeeded ─────────────────────────────────────────────
         # No declared override → the boundary action governs this scanner.
         effective_action = (
-            configured.action if configured.action is not None else boundary_action
+            configured.action if configured.action is not None else config.action
         )
         redact_with      = configured.redact_with
         # Stamp the producing scanner's detection technique onto its findings.
@@ -454,7 +502,7 @@ async def run_scan(
 
     # ── Apply action per scanner ──────────────────────────────────────────
     for findings, result, action, redact_with in per_scanner_data:
-        triggering = [f for f in findings if f.severity >= block_at]
+        triggering = [f for f in findings if f.severity >= config.block_at]
         if not triggering:
             continue
 
@@ -474,6 +522,12 @@ async def run_scan(
 
     redacted_text = current_text if current_text != text else None
 
+    # A caller-supplied block floor — never overrides a block the scanners
+    # themselves already produced, only raises ALLOW/WARN to BLOCK.
+    forced = forced_block_reason is not None and final_status != ScanStatus.BLOCK
+    if forced:
+        final_status = ScanStatus.BLOCK
+
     # ── Map status to audit Decision ──────────────────────────────────────
     if final_status == ScanStatus.BLOCK:
         decision = Decision.BLOCKED
@@ -491,6 +545,8 @@ async def run_scan(
         extra["normalization"] = transforms
     if degraded:
         extra["degraded"] = True
+    if forced and forced_block_extra:
+        extra.update(forced_block_extra)
 
     event = AuditEvent.build(
         boundary=boundary,
@@ -501,6 +557,7 @@ async def run_scan(
         adapters=adapter_names,
         finding_count=len(all_findings),
         max_severity=max_sev,
+        deny_reason=forced_block_reason if forced else None,
         audit_tags=audit_tags or {},
         extra=extra or None,
     )
@@ -627,15 +684,12 @@ async def run_tool_result_scan(
     ctx: AgentContext,
     *,
     scanners: list[ConfiguredScanner],
-    boundary_action: ScanAction,
+    config: ToolResultScanConfig,
     emitter: AuditEmitter,
     tenant_id: str,
-    enabled: bool,
-    block_at: Severity,
     state: ScanState,
     normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
-    on_error: OnError = OnError.FAIL_CLOSED,
 ) -> ScanVerdict:
     """Scan a tool return value. Delegates to run_scan with TOOL_RESULT_SCAN.
 
@@ -644,27 +698,26 @@ async def run_tool_result_scan(
     result now has elevated scrutiny because we know an attack chain is in
     progress.
     """
-    effective_block_at = block_at
+    effective_config = config
     signals = ctx.turn_signals
     if (signals is not None
             and signals.input_has_injection
             and signals.gate_tool_name is not None):
-        effective_block_at = _one_lower(block_at)
+        effective_config = config.model_copy(
+            update={"block_at": _one_lower(config.block_at)}
+        )
 
     return await run_scan(
         result,
         ctx,
         boundary=BoundaryName.TOOL_RESULT_SCAN,
         scanners=scanners,
-        boundary_action=boundary_action,
+        config=effective_config,
         emitter=emitter,
         tenant_id=tenant_id,
-        enabled=enabled,
-        block_at=effective_block_at,
         state=state,
         normalization=normalization,
         audit_tags=audit_tags,
-        on_error=on_error,
     )
 
 

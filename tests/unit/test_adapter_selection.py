@@ -22,7 +22,8 @@ from harness.agents.agent_config import AgentConfig
 from harness.config.loader import build_secrets_provider, load_dict
 from harness.config.schema import AdapterRef, PolicyConfig
 from harness.core.errors import AdapterDiscoveryError, ConfigError
-from harness.core.harness import SHAI, _build_policy
+from harness.core.harness import SHAI
+from harness.core.wiring import _build_policy
 from harness.policy.engine import PolicyDecision, SourceDecision
 
 _RULE = {

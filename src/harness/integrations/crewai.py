@@ -27,8 +27,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
-    execute_gated_tool_call,
-    invoke_tool,
+    make_gated_tool,
     shai_tool,
 )
 
@@ -46,20 +45,11 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
     Note: does not call register_tools(). Use wrap_tools() for that.
     """
-    harness_  = harness
-    ctx_      = ctx
     tool_name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
 
-    async def _gated_async(**kwargs: Any) -> Any:
-        call = await execute_gated_tool_call(
-            harness=harness_,
-            ctx=ctx_,
-            tool_name=tool_name,
-            tool_args=kwargs,
-            invoke=lambda a: invoke_tool(tool, a),
-        )
-        # CrewAI has no denial artifact — the message is the tool output.
-        return call.message if not call.allowed else call.text
+    # CrewAI has no denial artifact — the shared default render (message on
+    # denial/block, text otherwise) is exactly the tool output it expects.
+    _gated_async = make_gated_tool(tool, harness=harness, ctx=ctx, tool_name=tool_name)
 
     def _gated_sync(**kwargs: Any) -> Any:
         return asyncio.run(_gated_async(**kwargs))

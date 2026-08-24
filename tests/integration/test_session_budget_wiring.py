@@ -186,7 +186,6 @@ async def test_failed_load_leaves_no_half_registered_agent(tmp_path: Path):
 
     assert AGENT not in [a.id for a in h.maintenance.registered_agents()]
     assert AGENT not in h._agent_limits
-    assert AGENT not in h._agent_tools
 
 
 async def test_failed_reload_keeps_the_previous_definition(tmp_path: Path):

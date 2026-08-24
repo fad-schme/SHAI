@@ -5,7 +5,6 @@ import re
 import unicodedata
 from collections import Counter
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 try:

@@ -9,6 +9,7 @@ from harness.core.context import AgentContext
 from harness.core.harness import SHAI
 from harness.core.types import Transport
 from harness.tools.tool import Tool
+from tests.conftest import resolved_tool_names
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -40,23 +41,23 @@ async def wired_harness(harness: SHAI) -> SHAI:
 # ── Tools resolved at load_agent time ────────────────────────────────────
 
 async def test_agent_tools_resolved_at_load(wired_harness: SHAI):
-    tools = wired_harness._agent_tools.get("orchestrator_agent", {})
-    assert "search_docs" in tools
-    assert "list_inbox"  in tools
+    names = resolved_tool_names(wired_harness, "orchestrator_agent")
+    assert "search_docs" in names
+    assert "list_inbox"  in names
 
 
 async def test_agent_tools_filtered_by_allowed_tool_names(wired_harness: SHAI):
     """Only tools whose name is in allowed_tool_names are resolved.
     Tag filtering happens at gate time, not at resolution time.
     """
-    tools = wired_harness._agent_tools.get("orchestrator_agent", {})
+    names = resolved_tool_names(wired_harness, "orchestrator_agent")
     cfg   = wired_harness._agent_registry.get("orchestrator_agent")
     # Every resolved tool must be in allowed_tool_names
-    for name in tools:
+    for name in names:
         assert name in cfg.allowed_tool_names
     # send_email is in allowed_tool_names and must be resolved even though
     # it carries the 'sensitive' tag (a scanner hint, not a capability gate)
-    assert "send_email" in tools
+    assert "send_email" in names
 
 
 # ── scan_input ────────────────────────────────────────────────────────────

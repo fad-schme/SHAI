@@ -167,9 +167,9 @@ class TestExtractDensity:
         The detail string is for people. Parsing it meant a reworded message
         silently changed what the threat accumulator scored.
         """
-        from harness.core.harness import _extract_density
         from harness.core.types import ScanStatus
         from harness.core.verdicts import Finding, ScanVerdict
+        from harness.core.wiring import _extract_density
 
         verdict = ScanVerdict(
             status=ScanStatus.ALLOW,
@@ -185,9 +185,9 @@ class TestExtractDensity:
 
     def test_ignores_a_detail_string_with_no_signals(self):
         """A finding carrying only prose contributes nothing — it is not parsed."""
-        from harness.core.harness import _extract_density
         from harness.core.types import ScanStatus
         from harness.core.verdicts import Finding, ScanVerdict
+        from harness.core.wiring import _extract_density
 
         verdict = ScanVerdict(
             status=ScanStatus.ALLOW,
@@ -201,17 +201,17 @@ class TestExtractDensity:
         assert _extract_density(verdict) == 0.0
 
     def test_returns_zero_when_no_heuristic(self):
-        from harness.core.harness import _extract_density
         from harness.core.types import ScanStatus
         from harness.core.verdicts import ScanVerdict
+        from harness.core.wiring import _extract_density
 
         verdict = ScanVerdict(status=ScanStatus.ALLOW)
         assert _extract_density(verdict) == 0.0
 
     def test_returns_zero_when_no_density_in_detail(self):
-        from harness.core.harness import _extract_density
         from harness.core.types import ScanStatus
         from harness.core.verdicts import Finding, ScanVerdict
+        from harness.core.wiring import _extract_density
 
         verdict = ScanVerdict(
             status=ScanStatus.ALLOW,

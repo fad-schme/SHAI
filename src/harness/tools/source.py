@@ -726,6 +726,7 @@ class MCPSource:
                 tags=tool_tags,
                 transport=Transport.MCP,
                 description=description,
+                source_name=self.name,
             ))
 
         log.debug("mcp tools fetched",

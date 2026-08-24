@@ -21,7 +21,7 @@ from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
 from harness.core.context import AgentContext
 from harness.core.turn_signals import RISK_ELEVATED, RISK_HIGH, TurnSignals
-from harness.core.types import Decision, ScanStatus, Severity, Transport
+from harness.core.types import BoundaryName, Decision, ScanStatus, Severity, Transport
 from harness.core.verdicts import Finding, ScanVerdict
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.tool import Tool
@@ -436,15 +436,14 @@ class TestToolResultBlockAtAdjustment:
         signals.gate_tool_name = "search_docs"
         ctx._attach_signals(signals)
 
-        from harness.boundaries._scan import ScanAction
+        from tests.conftest import tool_result_scan_config
         verdict = await run_tool_result_scan(
             "attacker embedded content", ctx,
             scanners=[ConfiguredScanner(scanner)],
-            boundary_action=ScanAction.BLOCK,
+            # HIGH would NOT block MEDIUM by default
+            config=tool_result_scan_config(block_at=Severity.HIGH),
             emitter=emitter,
             tenant_id="test",
-            enabled=True,
-            block_at=Severity.HIGH,   # would NOT block MEDIUM by default
             state=ScanState(),
         )
 
@@ -453,7 +452,8 @@ class TestToolResultBlockAtAdjustment:
 
     async def test_medium_finding_passes_without_input_injection(self, tmp_path):
         """Without input injection signal, block_at stays HIGH — MEDIUM passes."""
-        from harness.boundaries._scan import ScanAction, ScanState, run_tool_result_scan
+        from harness.boundaries._scan import ScanState, run_tool_result_scan
+        from tests.conftest import tool_result_scan_config
 
         scanner = FakeScanner(
             "injection_scan", "regex_catalog",
@@ -467,11 +467,9 @@ class TestToolResultBlockAtAdjustment:
         verdict = await run_tool_result_scan(
             "some result", ctx,
             scanners=[ConfiguredScanner(scanner)],
-            boundary_action=ScanAction.BLOCK,
+            config=tool_result_scan_config(block_at=Severity.HIGH),
             emitter=emitter,
             tenant_id="test",
-            enabled=True,
-            block_at=Severity.HIGH,
             state=ScanState(),
         )
         # MEDIUM < HIGH block_at → does not block
@@ -528,16 +526,16 @@ class TestOptionARiskBlock:
         verdict = await h.scan_output("perfectly clean output", ctx)
 
         assert verdict.status == ScanStatus.BLOCK
-        # Find the risk-block audit event
-        risk_events = [
-            e for e in rec.events
-            if e.deny_reason and "consolidated turn risk" in e.deny_reason
-        ]
-        assert len(risk_events) == 1
-        # extra.turn_risk should be present and above RISK_HIGH
-        assert risk_events[0].extra.get("turn_risk") is not None
-        assert risk_events[0].extra["turn_risk"] >= RISK_HIGH
-        assert risk_events[0].extra.get("signal_source") == "consolidated"
+        # Invariant 1: exactly one audit event for this scan_output call, not
+        # a disabled/allow event from the scan plus a second block event
+        # bolted on afterward — regression test for the double-emit bug.
+        output_events = [e for e in rec.events if e.boundary == BoundaryName.OUTPUT_SCAN]
+        assert len(output_events) == 1
+        event = output_events[0]
+        assert event.deny_reason and "consolidated turn risk" in event.deny_reason
+        assert event.extra.get("turn_risk") is not None
+        assert event.extra["turn_risk"] >= RISK_HIGH
+        assert event.extra.get("signal_source") == "consolidated"
 
     async def test_below_risk_high_no_forced_block(self, tmp_path):
         """A turn with elevated but not-high risk should NOT be forced to block."""

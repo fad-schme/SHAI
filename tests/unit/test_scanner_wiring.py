@@ -14,9 +14,9 @@ from harness.adapters.scanners.regex_pii import RegexPIIScanner
 from harness.boundaries.ensemble import promote_findings
 from harness.config.schema import AdapterRef
 from harness.core.context import AgentContext
-from harness.core.harness import _build_text_scanners
 from harness.core.types import ScanAction, Severity
 from harness.core.verdicts import Finding
+from harness.core.wiring import _build_text_scanners
 
 CTX = AgentContext(agent_id="test")
 

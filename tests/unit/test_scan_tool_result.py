@@ -10,8 +10,8 @@ from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_tool_result_scan
 from harness.core.context import AgentContext
-from harness.core.types import BoundaryName, Decision, ScanAction, Severity
-from tests.conftest import RecordingSink
+from harness.core.types import BoundaryName, Decision
+from tests.conftest import RecordingSink, tool_result_scan_config
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 CTX = AgentContext(agent_id="a1")
@@ -40,9 +40,10 @@ def scanner():
 async def test_disabled_returns_allow(emitter, sink, state):
     verdict = await run_tool_result_scan(
         "clean tool result", CTX,
-        scanners=[], boundary_action=ScanAction.BLOCK,
+        scanners=[],
+        config=tool_result_scan_config(enabled=False),
         emitter=emitter,
-        tenant_id="test", enabled=False, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -56,9 +57,10 @@ async def test_disabled_returns_allow(emitter, sink, state):
 async def test_clean_result_allowed(emitter, sink, scanner, state):
     verdict = await run_tool_result_scan(
         "Here are the search results for your query about onboarding.", CTX,
-        scanners=[ConfiguredScanner(scanner)], boundary_action=ScanAction.BLOCK,
+        scanners=[ConfiguredScanner(scanner)],
+        config=tool_result_scan_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert not verdict.blocked
@@ -76,9 +78,10 @@ async def test_injection_in_result_blocked(emitter, sink, scanner, state):
     )
     verdict = await run_tool_result_scan(
         injected, CTX,
-        scanners=[ConfiguredScanner(scanner)], boundary_action=ScanAction.BLOCK,
+        scanners=[ConfiguredScanner(scanner)],
+        config=tool_result_scan_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert verdict.blocked
@@ -91,9 +94,10 @@ async def test_injection_in_result_blocked(emitter, sink, scanner, state):
 async def test_exactly_one_event(emitter, sink, scanner, state):
     await run_tool_result_scan(
         "clean result", CTX,
-        scanners=[ConfiguredScanner(scanner)], boundary_action=ScanAction.BLOCK,
+        scanners=[ConfiguredScanner(scanner)],
+        config=tool_result_scan_config(),
         emitter=emitter,
-        tenant_id="test", enabled=True, block_at=Severity.HIGH,
+        tenant_id="test",
         state=state,
     )
     assert len(sink.events) == 1
