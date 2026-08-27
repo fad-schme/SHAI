@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 _REQUIRED_META = ("severity", "category", "threat_level")
-_VALID_SEVERITIES = {"low", "medium", "high"}
+_VALID_SEVERITIES = {"low", "medium", "high", "critical"}
 # Every key the compiler reads out of a `match` mapping. Anything else is
 # silently dropped by _compile_signal_groups, so an author who writes an
 # unimplemented or misspelled key gets a rule that lints clean, compiles, and
@@ -251,7 +251,7 @@ def lint_catalog(data: Any) -> list[CatalogLintIssue]:
                     "invalid-meta",
                     rule_name,
                     None,
-                    "meta.severity must be low, medium, or high",
+                    "meta.severity must be low, medium, high, or critical",
                 )
             )
         category = meta.get("category")
