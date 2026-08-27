@@ -214,20 +214,5 @@ candidate is no longer needed — the regex rule is the permanent fix.
 
 ---
 
-## What candidates do NOT do
-
-- **No auto-learning.** Open candidates never affect scans. Only human-promoted
-  candidates enter the read path.
-- **No raw text storage.** Fingerprints contain bucketed scores and a MinHash
-  signature. Skeletons contain only structural markers and control tokens.
-- **No blocking on their own.** Promoted candidate findings are MEDIUM. They
-  never trigger a boundary block directly — the action loop reads the
-  per-scanner results, and a synthetic finding is never one of them. Ensemble
-  promotion raises their recorded severity in the verdict and the audit
-  event's `max_severity`; it does not feed the block decision.
-- **No replacement for regex rules.** Candidates are similarity-based discovery.
-  Regex rules are precise permanent fixes. Candidates find the attack shape.
-  Rules lock it down.
-
 → See `04-boundaries.md` for how findings flow through the ensemble.
 → See `02-harness-yaml.md` for the pattern-DB CLI workflow.

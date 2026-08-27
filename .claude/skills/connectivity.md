@@ -1,6 +1,6 @@
 # Connectivity Reference
 
-Network-layer enforcement for MCP tool calls. Phases 1 and 2 are complete.
+Network-layer enforcement for MCP tool calls.
 
 ---
 
@@ -155,19 +155,12 @@ WHERE h.agent_id = 'orchestrator'
 
 ---
 
-## Phases
+## Components
 
-**Phase 1 (done):** Token issuance in Python harness. `DispatchToken`,
-`GateDecision.dispatch_token`, `ConnectivityConfig`.
-
-**Phase 2 (done):** `ShaiTransport` — in-process httpx enforcement.
-`NetworkAuditEvent`. Wired into `MCPSource._connect()`.
-
-**Phase 3 (planned):** External `shai-gateway` — HTTPS proxy for non-MCP
-traffic, L7 policy rules.
-
-**Phase 4 (planned):** `shai-inference-router` — LLM credential isolation,
-model allowlist per agent.
+Token issuance happens in the Python harness (`DispatchToken`,
+`GateDecision.dispatch_token`, `ConnectivityConfig`). `ShaiTransport` enforces
+it in-process at the httpx layer and emits `NetworkAuditEvent`; it is wired
+into `MCPSource._connect()`.
 
 ---
 

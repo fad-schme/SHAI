@@ -124,7 +124,7 @@ detail, that folder is more thorough than `docs/`.
 
 SHAI is a **harness** — the enforcement layer that wraps an agent. That's a different category from most of the "AI safety" projects you'll find.
 
-The security surface of a production agent has several distinct problems: is the user input hostile, is the LLM about to call a tool it shouldn't, is the tool result carrying instructions the LLM will treat as authoritative, is the response leaking data, is the whole session drifting adversarially over multiple turns. Different projects solve different subsets. SHAI covers the full lifecycle in one place.
+The security surface of a production agent has several distinct problems: is the user input hostile, is the LLM about to call a tool it shouldn't, is the tool result carrying instructions the LLM will treat as authoritative, is the response leaking data, is the whole session drifting adversarially over multiple turns. Different projects solve different subsets; SHAI addresses each of them as boundaries in one package — see below.
 
 **LLM guardrails — text classifiers**
 ([Guardrails AI](https://github.com/guardrails-ai/guardrails), [NVIDIA NeMo Guardrails](https://github.com/NVIDIA/NeMo-Guardrails), [Meta LlamaFirewall / PromptGuard](https://github.com/meta-llama/PurpleLlama), [Protect AI Rebuff](https://github.com/protectai/rebuff), [Lakera Guard](https://www.lakera.ai/))
@@ -149,12 +149,7 @@ SHAI treats the **whole agent lifecycle** as the unit of enforcement, not just i
 
 Prompt injection defence is one of the things a harness has to do. It is not the whole job, and it is not what makes SHAI different.
 
-### Where SHAI is not
-
-- Not a replacement for prompt-level safety fine-tuning
-- Not a runtime sandbox for tool execution — it gates dispatch; a compromised tool implementation is still dangerous
-- Not sufficient on its own against a well-resourced adaptive adversary — no single layer is
-- Not a substitute for network egress controls at the infrastructure layer
+Scope boundaries and residual risks are covered in [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ---
 

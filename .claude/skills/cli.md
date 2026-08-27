@@ -364,41 +364,18 @@ its promoted-candidate cache when immediate pickup is required.
 ## Building a bundle from pattern YAML
 
 `shai patterns apply` consumes an *already-signed* bundle JSON. Producing one
-is a separate step: HMAC-SHA256 the canonical JSON encoding of the rule's
+is a separate step: HMAC-SHA256 the canonical JSON encoding of each rule's
 `{rule_id, catalog, payload}` (`json.dumps(..., sort_keys=True)`) using the
-same secret the `apply` and `verify` commands read.
-
-`make_bundle.py` (shipped with the extended-patterns delivery) does this
-end-to-end from catalog-format YAML:
-
-```bash
-export PATTERNS_SIGNING_KEY='...'    # same value shai patterns apply will use
-
-python make_bundle.py \
-    --secret PATTERNS_SIGNING_KEY \
-    --out patterns-2026-07-21.json \
-    new_injection_patterns.yaml \
-    new_jailbreak_patterns.yaml \
-    injection:new_output_prompt_leakage.yaml
-#   signed  4 rule(s) from new_injection_patterns.yaml  -> catalog=injection
-#   signed  2 rule(s) from new_jailbreak_patterns.yaml  -> catalog=jailbreak
-#   signed  4 rule(s) from new_output_prompt_leakage.yaml -> catalog=injection
-#
-# wrote 10 signed rows to patterns-2026-07-21.json
-```
-
-**Positional arguments** are `CATALOG:PATH` or just `PATH`. When only a path is
-given, the catalog is inferred from a filename shaped like
-`new_<catalog>_patterns.yaml`. Prefix `CATALOG:` explicitly when the filename
-doesn't follow that convention (e.g. `injection:new_output_prompt_leakage.yaml`).
+same secret the `apply` and `verify` commands read, and write out the row
+shape shown in "Bundle format" below.
 
 **One combined bundle is fine.** Each row carries its own `catalog` field —
 a single bundle can carry rules for all four catalogs (`injection`, `jailbreak`,
 `identity_spoof`, `mcp_metadata`).
 
-**Same secret both sides.** `make_bundle.py` and `shai patterns apply` both
-read the secret from `os.environ[ENV_VAR]`. Rotating the secret means
-re-signing every bundle before the next apply.
+**Same secret both sides.** Whatever signs the bundle and `shai patterns
+apply` must both read the secret from the same environment variable.
+Rotating the secret means re-signing every bundle before the next apply.
 
 ---
 
@@ -431,49 +408,17 @@ For reference — the JSON schema `apply` expects:
   re-split to route elsewhere. Bundles signed before 0.4.0 must be re-signed.
 - `version` — informational; defaults to `1`.
 
-Never author bundles by hand — use `make_bundle.py` from YAML.
+Never author bundles by hand — sign them programmatically from YAML.
 
 ---
 
-## Common workflows
+## CI: fail the build if config drifts
 
-**Deploy a new pattern release:**
-```bash
-# 1. Author or receive catalog YAML
-# 2. Sign
-python make_bundle.py --secret PATTERNS_SIGNING_KEY --out release.json *.yaml
-# 3. Apply
-shai patterns apply --bundle release.json --db state/patterns.db --secret PATTERNS_SIGNING_KEY
-# 4. Verify
-shai patterns verify --db state/patterns.db --secret PATTERNS_SIGNING_KEY
-# 5. Restart / redeploy so from_yaml() reloads
-```
-
-**On-call: something is being denied — figure out what:**
-```bash
-# Denies on the tool-call gate, live
-shai audit tail --file logs/audit.jsonl --follow --boundary tool_call_gate --decision deny
-```
-
-**On-call: session escalations firing — check the accumulator:**
-```bash
-shai audit tail --file logs/audit.jsonl --decision blocked --last 100 | grep session_escalation
-```
-
-**CI: fail the build if config drifts:**
 ```yaml
 # .github/workflows/validate.yml
 - uses: actions/checkout@v4
 - run: pip install shai-harness
 - run: shai validate --config config/harness.yaml --agents-dir agents/
-```
-
-**Weekly: promote heuristic candidates the on-call team reviewed:**
-```bash
-shai patterns candidates --db state/patterns.db --status open
-# review, then:
-shai patterns promote --db state/patterns.db --id 42
-shai patterns dismiss --db state/patterns.db --id 43
 ```
 
 ---
@@ -482,13 +427,13 @@ shai patterns dismiss --db state/patterns.db --id 43
 
 **`error: environment variable 'PATTERNS_SIGNING_KEY' not set`**
 The secret env var is empty in the current shell. `shai patterns apply/verify`
-and `make_bundle.py` all read the secret from the environment; export before
-running, or source your secret manager first.
+read the secret from the environment; export before running, or source your
+secret manager first.
 
 **`signature verification failed for rule_id=...`**
 The bundle was signed with a different secret than the one `apply` is using,
-or the bundle JSON was edited after signing. Re-sign with `make_bundle.py`
-against the current secret.
+or the bundle JSON was edited after signing. Re-sign against the current
+secret.
 
 **`invalid YAML in agent-xx.yaml: ...`** (from `validate`)
 An agent file doesn't parse or fails Pydantic validation. The first error is

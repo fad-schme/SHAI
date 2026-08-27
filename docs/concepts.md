@@ -175,14 +175,7 @@ Invariants that hold on every code path:
 - **`disabled=True` implies `decision=allow`, `finding_count=0`.** A disabled boundary is not a silent boundary.
 - **`tenant_id` comes from config, never from the caller.** A caller cannot spoof tenancy.
 
-## What SHAI does not do
-
-Being explicit:
-
-- **Not a runtime sandbox for tools.** SHAI gates dispatch. A compromised tool implementation is still dangerous after the gate allows.
-- **Not a network egress control.** The optional connectivity layer (dispatch tokens + `ShaiTransport`) enforces on outbound MCP calls, but network policy at the infrastructure layer is your problem.
-- **Not a replacement for model-side safety.** Prompt-level fine-tuning, constitutional AI, RLHF safety layers are complementary.
-- **Not sufficient against a well-resourced adaptive adversary on its own.** Regex catalogs are public and can be studied. This is one layer. See [../THREAT_MODEL.md](../THREAT_MODEL.md) for the honest coverage matrix.
+Scope boundaries and residual risks are covered in [../THREAT_MODEL.md](../THREAT_MODEL.md).
 
 ## What next
 

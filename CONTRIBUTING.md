@@ -40,7 +40,7 @@ Before filing, check that:
 
 Include:
 
-- SHAI version (`pip show shai`)
+- SHAI version (`pip show shai-harness`)
 - Python version and OS
 - Minimal reproduction (a `harness.yaml` snippet + a short Python script beats
   a description every time)

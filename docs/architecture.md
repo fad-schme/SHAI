@@ -163,12 +163,12 @@ Every boundary call emits exactly one `AuditEvent` to `AuditEmitter`, which fans
 
 ## Adapter extension points
 
-| Protocol | Reference impl | Production impl (enterprise) |
-|---|---|---|
-| `Scanner` | Regex PII, injection patterns | Purview, Nightfall, Lakera |
-| `PolicyEngine` | YAML rule evaluator | OPA bundle loader, Cedar |
-| `AuditSink` | stdout JSONL, rotating file | Splunk, Sentinel, Elastic, S3+WORM |
-| `ToolRegistry` | In-memory dict | Redis, central registry |
-| `SecretsProvider` | Env vars | Vault, AWS KMS, GCP Secret Manager |
+| Protocol | Reference impl |
+|---|---|
+| `Scanner` | Regex PII, injection patterns |
+| `PolicyEngine` | YAML rule evaluator |
+| `AuditSink` | stdout JSONL, rotating file |
+| `ToolRegistry` | In-memory dict |
+| `SecretsProvider` | Env vars |
 
-Adapters are discovered via Python entry points and selected by name in `harness.yaml`.
+Adapters are discovered via Python entry points and selected by name in `harness.yaml`. A custom implementation of any protocol can be registered the same way.

@@ -258,30 +258,21 @@ to pick up a newly applied bundle.
 `extended_patterns` is not a config field — `HarnessConfig` forbids unknown
 keys, so adding it fails validation.
 
-`make_bundle.py` is not part of the base source checkout; it is supplied with
-the extended-pattern delivery. `shai patterns apply` consumes its signed JSON
-output.
+`shai patterns apply` consumes a signed bundle JSON file — HMAC-SHA256 each
+row's `{rule_id, catalog, payload}` with `SHAI_PATTERN_SECRET` to produce one.
+See `cli.md` for the bundle format.
 
 **CLI workflow:**
 
 ```bash
-# 1. Sign catalog-format YAML into a bundle (all rules for all catalogs
-#    can go in a single bundle; each row carries its catalog name)
-python make_bundle.py --secret SHAI_PATTERN_SECRET --out bundle.json \
-    new_injection_patterns.yaml \
-    injection:new_output_prompt_leakage.yaml \
-    new_jailbreak_patterns.yaml \
-    new_identity_spoof_patterns.yaml \
-    new_mcp_metadata_patterns.yaml
-
-# 2. Apply — re-verifies every row's HMAC, INSERT OR REPLACE by rule_id
+# 1. Apply — re-verifies every row's HMAC, INSERT OR REPLACE by rule_id
 shai patterns apply --bundle bundle.json --db state/patterns.db \
                     --secret SHAI_PATTERN_SECRET
 
-# 3. Verify — walks every row, confirms signature
+# 2. Verify — walks every row, confirms signature
 shai patterns verify --db state/patterns.db --secret SHAI_PATTERN_SECRET
 
-# 4. List — no secret needed, no verification
+# 3. List — no secret needed, no verification
 shai patterns list --db state/patterns.db
 ```
 
@@ -360,8 +351,8 @@ sources:
 - `required: false` — logs and skips. Use for optional enrichment.
 
 **Important:** `secret://` references are resolved at `from_yaml()` time,
-including for `required: false` sources. Use `""` for credentials in
-dev/demo contexts where no token is available.
+including for `required: false` sources — see "Secret resolution" below for
+the dev/demo workaround.
 
 ---
 

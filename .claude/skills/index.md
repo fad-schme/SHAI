@@ -17,10 +17,10 @@ for what an assistant should tell a developer.
 |---|---|
 | "how do I get started"                     | `quickstart.md` |
 | "configure the harness"                    | `harness-yaml.md` |
-| "configure an agent"                       | `agent-yaml.md` |
+| "configure an agent"                       | `agents.md` |
 | "how does the gate work"                   | `boundaries.md` |
 | "what is a Verdict / AuditEvent"           | `verdicts-events.md`, then `audit-schema.md` if fields need detail |
-| "register tools" / "add a tool source"     | `tools-sources.md` |
+| "register tools" / "add a tool source"     | `sources.md` |
 | "write a policy rule"                      | `policy.md` |
 | "integrate with LangGraph / LangChain"     | `integrations.md` |
 | "add a connector" / "Slack / GitHub / Jira"| `connectors.md` |

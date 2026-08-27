@@ -139,7 +139,7 @@ call caps. Loop detection triggers on similarity within `loop_detection_window`.
 
 **Residual risk:**
 - Limits are per SHAI instance. A distributed agent fleet needs a shared
-  state backend (planned Enterprise feature) to enforce cross-process budgets.
+  state backend to enforce cross-process budgets, which SHAI does not provide.
 - Budgets key on `ctx.conversation_id`, which the calling application supplies
   and SHAI cannot verify. An integrator that derives it from attacker-influenced
   input, or rotates it per call, voids both this control and the session
@@ -288,9 +288,9 @@ poisoned pattern catalog ships to users.
   attested digest.
 - Entry points that are installed but not referenced by `harness.yaml` are not
   attested — deliberately, since enumerating them would import them.
-- We do not yet ship an SBOM with releases. Planned.
-- We do not yet sign PyPI releases (planned — Sigstore). Verify checksums
-  from the GitHub release page for now.
+- We do not ship an SBOM with releases.
+- We do not sign PyPI releases. Verify checksums from the GitHub release
+  page.
 - Pattern-DB signing exists, but the trust root (whose keys are trusted) is
   currently a manual operator decision. There is no built-in key-distribution
   mechanism.
@@ -333,36 +333,6 @@ Redaction is applied to text before it leaves the scan boundary.
   sink.
 
 ---
-
-## What SHAI does *not* attempt to solve
-
-Being explicit about scope:
-
-- **Fine-tuned model safety** — use the provider's safety layers (Anthropic's
-  constitutional AI, OpenAI's moderation endpoint, Meta's Llama Guard, etc.).
-- **Content moderation** for toxicity, hate speech, adult content — out of
-  scope. Compose with a moderation layer.
-- **Bias, fairness, factual accuracy** — evaluation problems, not enforcement
-  problems.
-- **DDoS or network-level attacks** — infrastructure layer.
-- **Physical-access threats** — infrastructure layer.
-
----
-
-## Known open threats we are actively working on
-
-Tracked in the roadmap; contributions welcome.
-
-1. **Adversarial benchmark numbers.** We need public detection-rate numbers
-   against a standard benchmark (AgentDojo, InjecAgent, or similar) with a
-   straight face. Publishing 60% is more useful than staying silent.
-2. **ML-based scanner (Enterprise slot).** Fine-tuned classifier for
-   prompt-injection to complement the regex catalog. Ensemble aggregator
-   in `boundaries/ensemble.py` is the integration point.
-3. **Distributed budget state.** `SessionBudget` and `RateLimiter` are
-   per-process. Shared state backend for multi-worker deployments is
-   planned.
-4. **SBOM + signed releases.** In-flight. See CI configuration.
 
 ---
 

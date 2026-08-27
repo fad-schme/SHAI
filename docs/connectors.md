@@ -6,7 +6,7 @@ For the wire itself, SHAI can enforce a **dispatch-token** protocol — every al
 
 Both features are opt-in and independent. You can use connectors without connectivity, connectivity with hand-rolled sources, or both.
 
-## Tier A connectors
+## Built-in connectors
 
 Instead of configuring every field yourself:
 
@@ -35,7 +35,7 @@ sources:
 
 The manifest supplies `url`, `allowed_urls`, `allowed_methods`, source-level tags, and per-tool tags. Fields you declare in your config override the manifest, so you can tighten anything you disagree with. Fields you leave out keep the manifest's value — a source that names only `connector:` and `credentials:` gets the manifest's transport, url, tags, and allow-lists intact.
 
-### Available Tier A connectors
+### Available connectors
 
 | `connector:` | Service | Notable security defaults |
 |---|---|---|

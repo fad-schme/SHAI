@@ -39,7 +39,7 @@ perform, sublicense, and distribute Your Contributions and derivative works.
 ## 3. Grant of Patent License
 
 Subject to the terms and conditions of this Agreement, You hereby grant
-to Fernanda Analia Diaz-Schmeier nd all recipients of the Project a perpetual,
+to Fernanda Analia Diaz-Schmeier and all recipients of the Project a perpetual,
 worldwide, non‑exclusive, royalty‑free, irrevocable (except as below) patent
 license to make, have made, use, sell, offer to sell, import, and otherwise
 transfer Your Contributions alone or in combination with the Project.

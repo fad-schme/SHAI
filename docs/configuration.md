@@ -7,7 +7,7 @@ SHAI is configured through two YAML files:
 
 Both files are validated at load time. A malformed field is a startup error, not a runtime crash — you find configuration mistakes immediately, not in production.
 
-For the exhaustive field-by-field schemas see [`.claude/skills/harness-yaml.md`](../.claude/skills/harness-yaml.md), [`.claude/skills/agent-yaml.md`](../.claude/skills/agent-yaml.md), and [`.claude/skills/policy.md`](../.claude/skills/policy.md). This page walks through what you actually need to configure to get running.
+For the exhaustive field-by-field schemas see [`.claude/skills/harness-yaml.md`](../.claude/skills/harness-yaml.md), [`.claude/skills/agents.md`](../.claude/skills/agents.md), and [`.claude/skills/policy.md`](../.claude/skills/policy.md). This page walks through what you actually need to configure to get running.
 
 ## `harness.yaml`
 

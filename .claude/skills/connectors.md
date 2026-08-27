@@ -36,7 +36,7 @@ and per-tool security specs.
 
 ---
 
-## Available Tier A connectors
+## Available connectors
 
 | `connector:` | Service | Key security notes |
 |---|---|---|

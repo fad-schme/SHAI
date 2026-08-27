@@ -125,9 +125,9 @@ is in motion — treat lower-severity result findings as blocking evidence
 they are not yet the top of the funnel. Transparent to the caller; the
 audit event records the effective severity used.
 
-**No per-tool opt-out.** Every result is scanned. There is no `tool_name`
-parameter and no manifest field to exempt a tool — a tool whose output looks
-like control-plane data is exactly where an injection payload arrives unnoticed.
+Every result is scanned, with no per-tool exemption — a tool whose output
+looks like control-plane data is exactly where an injection payload arrives
+unnoticed.
 
 ---
 
@@ -142,8 +142,8 @@ if out_verdict.blocked:
 return out_verdict.redacted_text or llm_response
 ```
 
-**Runs:** configured scanners (typically `regex_pii`, optionally the output
-prompt-leakage catalog from the extended DB) on the LLM response.
+**Runs:** configured scanners (typically `regex_pii`, optionally an output
+prompt-leakage catalog loaded via `patterns_db`) on the LLM response.
 **Catches:** PII leakage in responses (T11), data exfiltration via
 markdown/HTML beacons (T16), assistant-side prompt-echo leakage.
 **Audit:** `boundary="output_scan"`.
@@ -341,9 +341,8 @@ Two safe deployments:
    (`enabled: false`) and compensate with a content-security-policy that
    forbids external image/link fetches with query parameters.
 
-The `markdown_exfiltration` rule in the extended DB catches the payload
-shape, but the deployment discipline above is what ensures the finding
-arrives before the render.
+A `markdown_exfiltration` rule catches the payload shape, but the deployment
+discipline above is what ensures the finding arrives before the render.
 
 ---
 

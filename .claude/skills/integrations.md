@@ -44,7 +44,7 @@ tools = [search_docs]
 
 harness   = await SHAI.from_yaml("config/harness.yaml")
 agent_ctx = await harness.load_agent("config/agents/my_agent.yaml")
-llm       = ChatOllama(model="qwen2.5:3b").bind_tools(tools)
+llm       = your_chat_model.bind_tools(tools)  # any LangChain-compatible chat model
 tool_node = await HarnessToolNode.create(tools, harness, agent_ctx)
 
 # HarnessToolNode.create() calls register_tools() internally
@@ -85,7 +85,7 @@ agent_ctx   = await harness.load_agent("config/agents/my_agent.yaml")
 gated_tools = await wrap_tools(tools, harness=harness, ctx=agent_ctx)
 
 # wrap_tools() registers tools AND returns gated LangChain-compatible wrappers
-llm = ChatOllama(model="qwen2.5:3b").bind_tools(gated_tools)
+llm = your_chat_model.bind_tools(gated_tools)  # any LangChain-compatible chat model
 ```
 
 Denied calls raise `ToolException` — the agent sees the denial and continues.
@@ -213,7 +213,7 @@ from pydantic_ai import Agent
 @harness_tool(tags=["read", "internal"])
 async def search_docs(query: str) -> str: ...
 
-agent = Agent(model="openai:gpt-4o", tools=[search_docs])
+agent = Agent(model="<your-model>", tools=[search_docs])
 add_harness_middleware(agent, harness=harness, ctx=ctx)
 ```
 
