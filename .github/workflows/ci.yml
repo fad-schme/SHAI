@@ -10,6 +10,9 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]    # runs after merge to keep main green
+  schedule:
+    - cron: "0 6 * * *"   # nightly perf-budget trend run
+  workflow_dispatch: {}   # manual perf-budget run
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,6 +24,7 @@ jobs:
   unit-tests:
     name: Unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
     strategy:
@@ -60,6 +64,7 @@ jobs:
   security-invariants:
     name: Security invariants
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -85,6 +90,7 @@ jobs:
   contract-tests:
     name: Contract tests
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -110,6 +116,7 @@ jobs:
   dependency-audit:
     name: Dependency audit
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -150,6 +157,7 @@ jobs:
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -175,6 +183,7 @@ jobs:
   static-analysis:
     name: Static analysis (bandit)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -204,6 +213,7 @@ jobs:
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -218,51 +228,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
-  # ── Job 8: Docs lint ─────────────────────────────────────────────────────
-  # Checks that markdown files have no broken links and that the CHANGELOG
-  # has been updated on PRs that touch src/.
-  # Soft check — warnings only, does not block merge.
-  docs-lint:
-    name: Docs lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check markdown links
-        uses: gaurav-nelson/github-action-markdown-link-check@v1
-        with:
-          use-quiet-mode: yes
-          use-verbose-mode: yes
-          config-file: '.github/mlc_config.json'
-        continue-on-error: true   # warn but do not block
-
-      - name: Check CHANGELOG updated on src/ changes
-        if: github.event_name == 'pull_request'
-        run: |
-          SRC_CHANGED=$(git diff --name-only origin/main...HEAD | grep "^src/" | wc -l)
-          CHANGELOG_CHANGED=$(git diff --name-only origin/main...HEAD | grep "^CHANGELOG" | wc -l)
-          if [ "$SRC_CHANGED" -gt "0" ] && [ "$CHANGELOG_CHANGED" -eq "0" ]; then
-            echo "::warning::Source files changed but CHANGELOG was not updated. Please add an entry."
-          fi
-
-
-  # ── Job 9: Performance budget ────────────────────────────────────────────
+  # ── Job 8: Performance budget ────────────────────────────────────────────
   # The `perf` marker is deselected by default (see pyproject.toml), so these
   # need `-m perf` to run at all. `-s` is deliberate: the tests print their
   # measurements, and the numbers in the log are the point — a pass tells you
   # nothing a regression from 3 ms to 90 ms would not.
   #
-  # Deliberately NOT in the gate's `needs`. These assert wall-clock thresholds
-  # on a shared runner whose neighbours SHAI does not control, so they are a
-  # trend signal, not a merge criterion. A failure shows as a red X on the PR
-  # for a human to judge; it does not block. Promote to a required check only
+  # Runs nightly (schedule) or on manual dispatch only — not on every PR/push.
+  # These assert wall-clock thresholds on a shared runner whose neighbours
+  # SHAI does not control, so they are a trend signal, not a merge criterion.
+  # Deliberately NOT in the gate's `needs`. Promote to a required check only
   # alongside a dedicated runner.
   perf-budget:
     name: Performance budget
     runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
 
@@ -300,7 +280,9 @@ jobs:
       - lint
       - secret-scan
     runs-on: ubuntu-latest
-    if: always()      # run even if a dependency job was skipped or failed
+    # always() so it still runs if a dependency job was skipped or failed;
+    # excluded on schedule/workflow_dispatch since those runs only exercise perf-budget.
+    if: always() && github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
 

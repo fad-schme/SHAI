@@ -34,6 +34,7 @@ for what an assistant should tell a developer.
 | "build a new ToolSource"                   | `sources.md` |
 | "write tests against SHAI"                 | `testing.md` |
 | "system overview" / "how is SHAI built"    | `architecture.md` |
+| "how do I contribute" / "open a PR"        | `contributions.md` |
 
 **When multiple skills apply**, load `boundaries.md` first — it establishes
 the trust envelope every other skill assumes.

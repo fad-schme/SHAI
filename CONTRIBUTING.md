@@ -1,7 +1,18 @@
 # Contributing to SHAI
 
+Thank you for your interest in contributing to SHAI! This guide outlines the process for contributing to the project and our development conventions.
+
 **Feature proposals and bug reports are welcome and genuinely appreciated.**
 **Code PRs are not being accepted at this stage.**
+**External contributions are by invitation only.**
+
+The team may invite an external contributor to submit a pull request when:
+
+- the problem is well understood,
+- the proposed approach aligns with the intended solution, and
+- the issue is high-impact and high-priority.
+
+Pull requests that have not been explicitly invited will be closed without review.
 
 ---
 
@@ -22,10 +33,6 @@ For now, the highest-leverage things you can do are:
 - **Share analysis in an existing thread.** Root-cause hypotheses, adjacent
   design considerations, and prior-art references genuinely help.
 - **Test SHAI in your own agent stack** and tell me what broke.
-
-Unsolicited pull requests will be closed without review. This is not a
-statement about the quality of the contribution — it is a statement about
-review capacity.
 
 ---
 
@@ -71,13 +78,7 @@ We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
 
 ---
 
-## Invited contributions (rare, by explicit invitation only)
-
-Occasionally I may invite a contributor to submit a PR — typically when we've
-converged on an approach in an issue thread and the change is clearly scoped.
-If that happens, here is how the workflow looks.
-
-### Development workflow
+### Development workflow (once invited)
 
 Contributors work from a source checkout, not the PyPI release:
 
