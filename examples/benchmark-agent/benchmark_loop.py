@@ -36,14 +36,13 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from harness.core.context import AgentContext
+from harness.core.events import AuditEvent
+
 # ── SHAI public API only — nothing from internal modules ─────────────────
 from harness.core.harness import SHAI
-from harness.core.context import AgentContext
-from harness.core.verdicts import GateDecision
-from harness.core.types import BoundaryName, Decision, Transport
-from harness.core.events import AuditEvent
+from harness.core.types import Decision, Transport
 from harness.tools.tool import Tool
-
 
 # ── Config ────────────────────────────────────────────────────────────────
 
