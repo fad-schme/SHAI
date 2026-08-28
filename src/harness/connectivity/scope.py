@@ -137,3 +137,62 @@ def is_ip_in_scope(
         or address.is_reserved
         or address.is_unspecified
     )
+
+
+def _is_ip_literal(host: str) -> bool:
+    """True if host (already run through canonicalize_host) is an IP address."""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def check_scope_policy(
+    value: str,
+    *,
+    allowed_hosts: list[str] | None = None,
+    allowed_domains: list[str] | None = None,
+    allow_subdomains: bool = False,
+    allowed_cidrs: list[str] | None = None,
+) -> str | None:
+    """Return a violation reason, or None if value's canonical host is in scope.
+
+    value is canonicalized as a URL first (see canonicalize_host) — a
+    malformed URL or one carrying userinfo is denied outright, never
+    compared against any of the lists below.
+
+    An IP-literal destination can be granted *only* through allowed_cidrs,
+    never through allowed_hosts or allowed_domains — otherwise an operator
+    typing a literal IP into allowed_hosts (e.g. "127.0.0.1") would bypass
+    is_ip_in_scope's private/loopback/link-local/multicast/reserved/
+    unspecified default-deny entirely, undermining the deliberate
+    extra-opt-in friction that check exists to enforce.
+
+    allowed_hosts    Canonical host must exactly match one of these.
+    allowed_domains  Canonical host must equal one of these, or (with
+                     allow_subdomains) be a proper subdomain of one.
+    allow_subdomains Widen allowed_domains to match subdomains.
+    allowed_cidrs    If the canonical host is an IP literal, it must fall
+                     inside one of these ranges.
+    """
+    host = canonicalize_host(value)
+    if host is None:
+        return "does not resolve to a permitted destination"
+
+    if _is_ip_literal(host):
+        if is_ip_in_scope(host, allowed_cidrs or []):
+            return None
+        return "does not resolve to a permitted destination"
+
+    if allowed_hosts and host in {h.lower() for h in allowed_hosts}:
+        return None
+
+    if allowed_domains:
+        for domain in (d.lower() for d in allowed_domains):
+            if host == domain:
+                return None
+            if allow_subdomains and host.endswith(f".{domain}"):
+                return None
+
+    return "does not resolve to a permitted destination"

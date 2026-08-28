@@ -9,7 +9,49 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from harness.connectivity.scope import check_scope_policy
 from harness.core.types import Irreversibility, Transport
+
+
+class ScopeRulePolicy(BaseModel, frozen=True):
+    """Host/IP-aware scope constraint for a URL-typed argument.
+
+    Unlike `pattern` (a raw regex on the string value), this canonicalizes
+    the value as a URL first — see connectivity.scope.canonicalize_host —
+    so case, IDNA, and IP-literal encoding differences that resolve to the
+    same destination don't slip past the check, and a value that fails to
+    canonicalize (malformed URL, userinfo present) is denied outright.
+
+    A pure data holder — the matching logic lives in
+    connectivity.scope.check_scope_policy, since this module is metadata
+    only (see module docstring).
+
+    allowed_hosts    Canonical host must exactly match one of these.
+    allowed_domains  Canonical host must equal one of these, or (with
+                     allow_subdomains) be a proper subdomain of one.
+    allow_subdomains Widen allowed_domains to match subdomains.
+    allowed_cidrs    If the canonical host is an IP literal, it must fall
+                     inside one of these ranges — see
+                     connectivity.scope.is_ip_in_scope for the default-deny
+                     posture on private/loopback/link-local/multicast/
+                     reserved/unspecified addresses. An IP-literal value
+                     can only be granted this way, never via allowed_hosts
+                     or allowed_domains.
+    """
+    allowed_hosts:    list[str] | None = None
+    allowed_domains:  list[str] | None = None
+    allow_subdomains: bool = False
+    allowed_cidrs:    list[str] | None = None
+
+    def violation(self, value: str) -> str | None:
+        """Return a violation reason, or None if value is in scope."""
+        return check_scope_policy(
+            value,
+            allowed_hosts=self.allowed_hosts,
+            allowed_domains=self.allowed_domains,
+            allow_subdomains=self.allow_subdomains,
+            allowed_cidrs=self.allowed_cidrs,
+        )
 
 
 class ArgumentRule(BaseModel, frozen=True):
@@ -20,13 +62,17 @@ class ArgumentRule(BaseModel, frozen=True):
 
     Fields
     ------
-    arg         Name of the argument this rule applies to.
-    max_value   Numeric upper bound (inclusive).
-    min_value   Numeric lower bound (inclusive).
-    allowlist   Value must be one of these strings (exact match).
-    pattern     Value must match this regex (re.search semantics).
-    required    Argument must be present and non-None.
-    user_origin Value must trace to the user, not to text a tool returned.
+    arg          Name of the argument this rule applies to.
+    max_value    Numeric upper bound (inclusive).
+    min_value    Numeric lower bound (inclusive).
+    allowlist    Value must be one of these strings (exact match).
+    pattern      Value must match this regex (re.search semantics).
+    scope_policy Value must be a URL whose canonical host/IP is in scope —
+                 see ScopeRulePolicy. For destination-typed arguments
+                 (webhook URLs, fetch targets); use instead of a
+                 hand-written pattern, which can't safely canonicalize.
+    required     Argument must be present and non-None.
+    user_origin  Value must trace to the user, not to text a tool returned.
 
     Every field above except `user_origin` is evaluated by `evaluate()` against
     the arguments alone. `user_origin` is not: deciding it needs the turn's
@@ -38,13 +84,14 @@ class ArgumentRule(BaseModel, frozen=True):
     (a body, a summary, an address resolved out of a contact list) will trip it,
     so leaving it undeclared there is the correct configuration, not a gap.
     """
-    arg:         str
-    max_value:   float | None = None
-    min_value:   float | None = None
-    allowlist:   list[str] | None = None
-    pattern:     str | None = None
-    required:    bool = False
-    user_origin: bool = False
+    arg:          str
+    max_value:    float | None = None
+    min_value:    float | None = None
+    allowlist:    list[str] | None = None
+    pattern:      str | None = None
+    scope_policy: ScopeRulePolicy | None = None
+    required:     bool = False
+    user_origin:  bool = False
 
     def evaluate(self, args: dict[str, Any]) -> str | None:
         """Return a violation message, or None if the rule passes.
@@ -95,6 +142,11 @@ class ArgumentRule(BaseModel, frozen=True):
                     )
             except re.error as exc:
                 return f"argument '{self.arg}' pattern is invalid: {exc}"
+
+        if self.scope_policy is not None:
+            reason = self.scope_policy.violation(str(value))
+            if reason is not None:
+                return f"argument '{self.arg}' {reason}"
 
         return None
 

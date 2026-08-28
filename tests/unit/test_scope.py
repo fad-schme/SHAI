@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness.connectivity.scope import canonicalize_host, is_ip_in_scope
+from harness.connectivity.scope import canonicalize_host, check_scope_policy, is_ip_in_scope
 
 # ── canonicalize_host: hostnames ────────────────────────────────────────────
 
@@ -133,3 +133,68 @@ def test_is_ip_in_scope_caches_parsed_cidrs_across_calls():
     is_ip_in_scope("8.8.8.8", ["8.8.8.0/24"])
     is_ip_in_scope("8.8.8.9", ["8.8.8.0/24"])
     assert _parse_network.cache_info().hits >= 1
+
+
+# ── check_scope_policy ───────────────────────────────────────────────────────
+
+def test_check_scope_policy_allows_exact_domain():
+    assert check_scope_policy(
+        "https://example.test/hook", allowed_domains=["example.test"]
+    ) is None
+
+
+def test_check_scope_policy_allows_subdomain_when_enabled():
+    assert check_scope_policy(
+        "https://api.example.test/hook",
+        allowed_domains=["example.test"], allow_subdomains=True,
+    ) is None
+
+
+def test_check_scope_policy_rejects_subdomain_when_disabled():
+    assert check_scope_policy(
+        "https://api.example.test/hook", allowed_domains=["example.test"]
+    ) is not None
+
+
+def test_check_scope_policy_rejects_concatenated_lookalike():
+    """evilexample.test has no dot boundary before "example.test" — a bare
+    suffix check would wrongly admit it."""
+    assert check_scope_policy(
+        "https://evilexample.test/hook",
+        allowed_domains=["example.test"], allow_subdomains=True,
+    ) is not None
+
+
+def test_check_scope_policy_rejects_prefix_lookalike():
+    assert check_scope_policy(
+        "https://example.test.evil.test/hook",
+        allowed_domains=["example.test"], allow_subdomains=True,
+    ) is not None
+
+
+def test_check_scope_policy_ip_literal_in_allowed_hosts_does_not_bypass_default_deny():
+    """An operator typing a loopback/private IP into allowed_hosts must not
+    bypass is_ip_in_scope's default-deny — only allowed_cidrs can grant an
+    IP-literal destination, preserving the intentional extra opt-in."""
+    assert check_scope_policy(
+        "http://127.0.0.1/hook", allowed_hosts=["127.0.0.1"]
+    ) is not None
+    assert check_scope_policy(
+        "http://127.0.0.1/hook", allowed_domains=["127.0.0.1"]
+    ) is not None
+
+
+def test_check_scope_policy_allows_ip_via_allowed_cidrs():
+    assert check_scope_policy(
+        "http://8.8.8.8/hook", allowed_cidrs=["8.8.8.0/24"]
+    ) is None
+
+
+def test_check_scope_policy_rejects_userinfo_smuggling():
+    assert check_scope_policy(
+        "https://good.test@evil.test/hook", allowed_domains=["good.test"]
+    ) is not None
+
+
+def test_check_scope_policy_empty_policy_denies_everything():
+    assert check_scope_policy("https://example.test/hook") is not None

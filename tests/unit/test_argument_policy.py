@@ -21,7 +21,7 @@ from harness.core.context import AgentContext
 from harness.core.errors import ArgumentViolationError, IrreversibleActionError
 from harness.core.types import Decision, Irreversibility
 from harness.policy.rules import RuleBasedPolicy
-from harness.tools.tool import ArgumentRule, Tool
+from harness.tools.tool import ArgumentRule, ScopeRulePolicy, Tool
 from tests.conftest import RecordingSink
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -126,6 +126,49 @@ def test_nan_string_passes_silently():
     # float("nan") is valid Python — nan comparisons are always False, so
     # nan never exceeds a numeric bound. This is expected behaviour.
     assert ArgumentRule(arg="amount", max_value=100).evaluate({"amount": "nan"}) is None
+
+
+# ── scope_policy: ArgumentRule wiring (matching logic itself is tested in
+# test_scope.py, which owns connectivity.scope.check_scope_policy) ─────────
+
+_DOMAIN_POLICY = ScopeRulePolicy(allowed_domains=["example.test"], allow_subdomains=True)
+
+
+def test_scope_policy_pass_returns_none():
+    rule = ArgumentRule(arg="url", scope_policy=_DOMAIN_POLICY)
+    assert rule.evaluate({"url": "https://api.example.test/hook"}) is None
+
+
+def test_scope_policy_violation_names_the_argument():
+    rule = ArgumentRule(arg="url", scope_policy=_DOMAIN_POLICY)
+    result = rule.evaluate({"url": "https://evil.test/hook"})
+    assert result is not None and "url" in result
+
+
+def test_scope_policy_absent_leaves_other_fields_unaffected():
+    rule = ArgumentRule(arg="vendor", allowlist=["acme"])
+    assert rule.evaluate({"vendor": "acme"}) is None
+
+
+def test_scope_policy_violation_message_carries_no_raw_url():
+    """Unlike allowlist/pattern, the scope_policy violation message must not
+    embed the raw argument value — it can reach a signed audit field."""
+    rule = ArgumentRule(arg="url", scope_policy=_DOMAIN_POLICY)
+    result = rule.evaluate({"url": "https://secret-token-abc123@evil.test/hook"})
+    assert result is not None
+    assert "secret-token-abc123" not in result
+    assert "evil.test" not in result
+
+
+def test_scope_policy_ip_in_allowed_hosts_does_not_bypass_default_deny():
+    """Regression: an IP literal in allowed_hosts must not skip
+    is_ip_in_scope's private-range default-deny (see test_scope.py for the
+    full corpus) — confirms the ArgumentRule path carries the same posture."""
+    rule = ArgumentRule(
+        arg="url", scope_policy=ScopeRulePolicy(allowed_hosts=["127.0.0.1"])
+    )
+    result = rule.evaluate({"url": "http://127.0.0.1/hook"})
+    assert result is not None
 
 
 # ── Section 2: check_argument_rules() ────────────────────────────────────
