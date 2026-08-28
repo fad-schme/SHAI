@@ -23,6 +23,7 @@ import dataclasses
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from urllib.parse import urlsplit, urlunsplit
 
 from harness.connectivity.scope import canonicalize_host
@@ -53,6 +54,7 @@ class DispatchToken:
 
 # ── URL matching ────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=512)
 def _canonicalize_url(url: str) -> str | None:
     """Rebuild url with its host canonicalized, leaving scheme, port, path,
     query, and fragment untouched — so the prefix/exact matching below keeps
@@ -60,6 +62,10 @@ def _canonicalize_url(url: str) -> str | None:
 
     Returns None (deny) if the host fails to canonicalize (see
     canonicalize_host) or the URL carries a malformed port.
+
+    Cached: matches_allowed_url calls this on the same small set of
+    allowlist patterns on every dispatch, same rationale as
+    connectivity.scope._parse_network caching CIDR parses.
     """
     canonical_host = canonicalize_host(url)
     if canonical_host is None:
