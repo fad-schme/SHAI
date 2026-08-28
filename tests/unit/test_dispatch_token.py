@@ -174,6 +174,53 @@ def test_matches_allowed_url(url, patterns, expected):
     assert matches_allowed_url(url, patterns) == expected
 
 
+# ── URL matching: canonicalization hardening (SHAI-scope-canonicalization) ─
+
+def test_matches_allowed_url_is_case_insensitive_on_host():
+    assert matches_allowed_url(
+        "https://SLACK.COM/api/x", ["https://slack.com/api/*"]
+    )
+    assert matches_allowed_url(
+        "https://slack.com/api/x", ["https://SLACK.COM/api/*"]
+    )
+
+
+def test_matches_allowed_url_denies_userinfo_smuggling():
+    """A userinfo-bearing URL is denied outright — it never falls back to a
+    raw-string comparison against either the pre-@ or post-@ substring."""
+    assert not matches_allowed_url(
+        "https://good.test@slack.com.evil.test/api/x",
+        ["https://slack.com/api/*"],
+    )
+    # Even when the post-@ host would otherwise match the allowlist.
+    assert not matches_allowed_url(
+        "https://x@slack.com/api/y", ["https://slack.com/api/*"]
+    )
+
+
+def test_matches_allowed_url_denies_malformed_url_without_raw_fallback():
+    """A url that fails to canonicalize is denied, never compared as a raw
+    string — even against a pattern that would trivially string-match it."""
+    assert not matches_allowed_url("not a url", ["not a url"])
+
+
+def test_matches_allowed_url_skips_uncanonicalizable_pattern():
+    """A malformed allowlist entry is skipped, not treated as matching
+    everything and not treated as denying everything else in the list."""
+    assert matches_allowed_url(
+        "https://slack.com/api/x", ["not a pattern", "https://slack.com/api/*"]
+    )
+
+
+def test_matches_allowed_url_preserves_port_and_query():
+    assert matches_allowed_url(
+        "https://SLACK.COM:8443/api/x?q=1", ["https://slack.com:8443/api/*"]
+    )
+    assert not matches_allowed_url(
+        "https://slack.com:9999/api/x", ["https://slack.com:8443/api/*"]
+    )
+
+
 # ── default_allowed_urls ──────────────────────────────────────────────────
 
 def test_default_allowed_urls_from_source_url():

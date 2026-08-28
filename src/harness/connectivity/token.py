@@ -23,7 +23,9 @@ import dataclasses
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit, urlunsplit
 
+from harness.connectivity.scope import canonicalize_host
 from harness.core.signing import claims_of, decode, encode, sign
 
 # ── Token dataclass ────────────────────────────────────────────────────────
@@ -51,6 +53,29 @@ class DispatchToken:
 
 # ── URL matching ────────────────────────────────────────────────────────────
 
+def _canonicalize_url(url: str) -> str | None:
+    """Rebuild url with its host canonicalized, leaving scheme, port, path,
+    query, and fragment untouched — so the prefix/exact matching below keeps
+    comparing what it always compared, on everything except the host.
+
+    Returns None (deny) if the host fails to canonicalize (see
+    canonicalize_host) or the URL carries a malformed port.
+    """
+    canonical_host = canonicalize_host(url)
+    if canonical_host is None:
+        return None
+
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return None
+
+    netloc_host = f"[{canonical_host}]" if ":" in canonical_host else canonical_host
+    netloc = f"{netloc_host}:{port}" if port is not None else netloc_host
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
 def matches_allowed_url(url: str, patterns: list[str]) -> bool:
     """Return True if url matches any pattern in patterns.
 
@@ -58,14 +83,29 @@ def matches_allowed_url(url: str, patterns: list[str]) -> bool:
     matches any URL starting with "https://slack.com/api/".
     Exact match (no wildcard) is also supported.
 
+    Both url and each pattern have their host canonicalized before
+    comparison (lowercased, IDNA-encoded, IP-literal forms normalized) so
+    a case or encoding difference that resolves to the same destination
+    isn't judged as a mismatch — see connectivity.scope.canonicalize_host.
+    A url whose host fails to canonicalize is denied outright; it never
+    falls back to a raw-string comparison. A pattern that fails to
+    canonicalize is skipped, not treated as a wildcard match.
+
     An empty patterns list → False (no destinations allowed).
     """
+    canonical_url = _canonicalize_url(url)
+    if canonical_url is None:
+        return False
+
     for pattern in patterns:
-        if pattern.endswith("/*"):
-            prefix = pattern[:-1]   # strip the *
-            if url.startswith(prefix):
+        canonical_pattern = _canonicalize_url(pattern)
+        if canonical_pattern is None:
+            continue
+        if canonical_pattern.endswith("/*"):
+            prefix = canonical_pattern[:-1]   # strip the *
+            if canonical_url.startswith(prefix):
                 return True
-        elif url == pattern:
+        elif canonical_url == canonical_pattern:
             return True
     return False
 
