@@ -1,8 +1,8 @@
 # SHAI Threat Model
 
 This document is the honest coverage claim for SHAI. It maps threats to the
-controls that mitigate them, the tests that demonstrate those controls, and —
-critically — the **residual risks** each control does not close.
+controls that mitigate them, the tests that demonstrate those controls, and
+critically
 
 Read this **before** you deploy SHAI as the sole security layer for anything
 that matters.
@@ -75,13 +75,6 @@ boundary (structural + content scan).
 
 **Tests:** `tests/unit/test_scan_tool_result.py`, `tests/integration/test_end_to_end_turn.py`.
 
-**Residual risk:**
-- SHAI does not inspect memory *inside* your retrieval store — it only scans
-  content as it crosses a SHAI boundary. If poisoned content is written
-  directly to a vector DB by a process outside SHAI's reach, SHAI cannot
-  see it.
-- Semantic attacks with no injection markers (e.g. subtly biased factual
-  content) are not detected.
 
 ---
 
@@ -98,12 +91,6 @@ scoping.
 **Tests:** `tests/unit/test_boundaries_check_tool_call.py`, `tests/unit/test_argument_policy.py`,
 `tests/contracts/test_policy_contract.py`.
 
-**Residual risk:**
-- The gate protects tool *dispatch*. It does not protect against a compromised
-  tool implementation that ignores its declared side-effect surface.
-- Argument rules are declared per tool; a misspecified rule (e.g. missing
-  a required `denied_pattern`) is a coverage gap you own, not one SHAI closes.
-
 ---
 
 ### T3 — Privilege compromise (subagent scope escalation)
@@ -119,11 +106,6 @@ are intersected in layer 5.
 
 **Tests:** `tests/unit/test_boundaries_check_tool_call.py::test_subagent_*`.
 
-**Residual risk:**
-- SHAI enforces at the boundary. If the parent agent voluntarily returns
-  restricted data to the subagent through its own reasoning, SHAI does not
-  intervene — this is a design choice for the parent agent to make.
-
 ---
 
 ### T4 — Resource overload / runaway execution
@@ -136,14 +118,6 @@ call caps. Loop detection triggers on similarity within `loop_detection_window`.
 
 **Tests:** `tests/unit/test_session_budget.py`,
 `tests/integration/test_session_budget_wiring.py`, `tests/unit/test_rate_limiter.py`.
-
-**Residual risk:**
-- Limits are per SHAI instance. A distributed agent fleet needs a shared
-  state backend to enforce cross-process budgets, which SHAI does not provide.
-- Budgets key on `ctx.conversation_id`, which the calling application supplies
-  and SHAI cannot verify. An integrator that derives it from attacker-influenced
-  input, or rotates it per call, voids both this control and the session
-  threat accumulator.
 
 ---
 
@@ -161,28 +135,6 @@ homoglyph obfuscation up to `max_depth`.
 **Tests:** `tests/unit/test_jailbreak_scan.py`, `tests/unit/test_identity_spoof_scan.py`,
 `tests/unit/test_heuristic_candidates.py`, `tests/integration/test_normalization_pipeline.py`.
 
-**Residual risk:**
-- **The catalog is public.** Anyone reading the SHAI source knows exactly
-  which patterns we look for. Crafted bypasses that avoid our tokens are
-  possible.
-- Novel jailbreak techniques appear faster than we can update patterns. The
-  `patterns_dir` and signed pattern-DB mechanisms are how we intend to keep
-  up; they are not a silver bullet.
-- The heuristic scanner catches structural anomalies, not semantic attacks.
-  A grammatically clean, semantically hostile prompt (e.g. a role-play with
-  no override tokens) may pass.
-- **Pattern coverage is English plus four localized languages** — French,
-  Spanish, German, and Mandarin Chinese. A payload written in any other
-  language is matched only where it happens to contain Latin-script tokens the
-  English catalog recognises (`system prompt`, a tool name, an attacker URL).
-  Translation is a live and inexpensive bypass, and the catalog approach does
-  not scale to it: an attacker chooses from every written language, while each
-  additional locale is a hand-written rule set. Treat non-English input as
-  substantially less well covered, and gate it with tool-level controls rather
-  than relying on content scanning.
-- Detection rates are workload-dependent. Validate against your own threat
-  scenarios before relying on a specific rate.
-
 ---
 
 ### T6 — Prompt injection (indirect / ClawJacked-style)
@@ -198,14 +150,6 @@ and the gate then allowed a tool.
 
 **Tests:** `tests/unit/test_scan_tool_result.py`, `tests/unit/test_turn_signals.py`.
 
-**Residual risk:**
-- Same catalog-visibility problem as T5. An attacker who owns a webpage the
-  agent will fetch can craft a payload that evades our patterns.
-- MCP metadata scanning (`MCPMetadataScanner`) covers injection in tool
-  *descriptions* returned by an MCP server, but a hostile MCP server can
-  poison many surfaces — parameter schemas, tool names, output shapes — and
-  we do not exhaustively scan all of them.
-
 ---
 
 ### T7 — Misaligned / deceptive behaviour
@@ -219,13 +163,6 @@ single scanner blocked. Audit trail is tamper-evident so
 post-hoc investigation is possible.
 
 **Tests:** `tests/unit/test_turn_signals.py`, `tests/unit/test_audit_signing.py`.
-
-**Residual risk:**
-- SHAI does not evaluate the model's internal reasoning; it evaluates only
-  the observable actions the model proposes. Deception that produces only
-  benign actions passes.
-- Alignment is a model-level and process-level problem. SHAI's contribution
-  here is limited to **making misbehaviour auditable**, not preventing it.
 
 ---
 
@@ -243,18 +180,12 @@ adds HMAC-signed short-TTL tokens to every outbound MCP call, bound to
 **Tests:** `tests/unit/test_agent_registry.py`, `tests/unit/test_dispatch_token.py`,
 `tests/unit/test_shai_transport.py`.
 
-**Residual risk:**
-- Agent registration is a process-local trust decision. If an attacker can
-  make in-process calls to `SHAI.load_agent()`, they are already past the
-  perimeter. SHAI assumes the calling process is trusted.
-- Dispatch tokens defend outbound MCP calls. Inbound authentication (someone
-  calling *your* MCP server) is your server's problem, not SHAI's.
 
 ---
 
 ### T9 — Supply chain
 
-**Attack:** a malicious dependency, a compromised connector manifest, or a
+**Attack:** a malicious dependency, a compromised MCP manifest, or a
 poisoned pattern catalog ships to users.
 
 **SHAI control:** partial and pragmatic.
@@ -264,11 +195,14 @@ poisoned pattern catalog ships to users.
 - `gitleaks` secret scanning on every PR (full history).
 - The signed pattern-DB feature lets operators verify catalog updates against
   a public key before applying.
-- Connector manifests are YAML in-tree and reviewed like code.
+- MCP manifests are not bundled with the package — each is entirely
+  operator-authored and external, and its source must be declared by name
+  under `sources:` (`transport: mcp`) before the harness will look for it;
+  the manifest itself is resolved by convention from `mcp_manifests_dir`. 
 - `from_yaml()` emits a `system`/`startup` attestation event — signed like every
   other event when `audit_signing.enabled` — recording
   the component set the process wired: each scanner, sink, and policy adapter
-  with the SHA256 of its defining source file, connector manifest digests, the
+  with the SHA256 of its defining source file, MCP manifest digests, the
   pattern-DB rule count and digest, the policy digest, and every declared
   source. This is a **record**, not a check — SHAI compares it against nothing.
   Its value is that a SIEM holding these events can answer "what was this
@@ -278,24 +212,7 @@ poisoned pattern catalog ships to users.
 **Tests:** CI configuration (`.github/workflows/ci.yml`),
 `tests/integration/test_startup_attestation.py`.
 
-**Residual risk:**
-- The attestation records what was loaded; it does not verify it. An adapter
-  replaced before the process started is attested faithfully under its new
-  digest, and nothing rejects it. Detecting that requires an expected-digest
-  baseline held outside the process — SHAI does not ship one.
-- Adapter digests cover the file a class was defined in, not its transitive
-  imports. A compromised library a scanner calls into does not change the
-  attested digest.
-- Entry points that are installed but not referenced by `harness.yaml` are not
-  attested — deliberately, since enumerating them would import them.
-- We do not ship an SBOM with releases.
-- We do not sign PyPI releases. Verify checksums from the GitHub release
-  page.
-- Pattern-DB signing exists, but the trust root (whose keys are trusted) is
-  currently a manual operator decision. There is no built-in key-distribution
-  mechanism.
 
----
 
 ### T10 — Data / audit leakage
 
@@ -309,30 +226,6 @@ Redaction is applied to text before it leaves the scan boundary.
 
 **Tests:** `tests/unit/test_core_events.py`, `tests/unit/test_audit_signing.py`,
 `tests/unit/test_scan_tool_result.py`.
-
-**Residual risk:**
-- Third-party audit sinks (SIEM, S3, Kafka) are outside SHAI's trust boundary.
-  If the sink logs the raw event payload verbatim, no data leaks — but if a
-  downstream processor extracts the `deny_reason` field, expect that field
-  to appear in downstream systems. `deny_reason` may contain tool names
-  and rule identifiers; audit your sinks accordingly.
-- Application logs from your agent framework (LangGraph, etc.) are not
-  managed by SHAI. Configure their logging separately.
-- **Signing keys cannot be rotated in place.** `audit_signing.secret` is a
-  single key, events carry no key identifier, and `shai audit verify` accepts
-  one secret. Rotating the key makes every pre-rotation record verify as
-  *mismatched* — the same result a tampered record produces — and the command
-  exits non-zero on that file from then on. If you must rotate, do it at a file
-  boundary and keep each retired key with the segment it covers; SHAI does not
-  record which key signed which file, so that association is yours to maintain.
-- Signing makes the trail tamper-*evident*, not tamper-*proof*, and it says
-  nothing about records that no longer exist. `FileSink` rotation is bounded by
-  `max_bytes` × `backup_count` (default 100 MB × 10) and discards the oldest
-  file beyond it, so a high enough volume of decisions can age evidence out.
-  Size the bounds for your retention requirement, or ship to an append-only
-  sink.
-
----
 
 ---
 

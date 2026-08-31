@@ -29,7 +29,6 @@ async def _harness(tmp_path: Path, **limits) -> SHAI:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     limit_lines = "".join(f"  {k}: {v}\n" for k, v in limits.items())
@@ -135,7 +134,6 @@ def _bare_harness_yaml(tmp_path: Path) -> Path:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     return cfg

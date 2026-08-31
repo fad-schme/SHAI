@@ -406,3 +406,53 @@ async def test_reversible_tool_with_no_rules_unaffected():
     assert gate.allowed
     assert len(sink.events) == 1
     assert sink.events[0].decision == Decision.ALLOW
+
+
+# ── Invariant 3: no violation message may carry the argument value ────────
+#
+# `evaluate()` returns the text that becomes ArgumentViolationError, which the
+# gate passes verbatim to emit_deny and thence to AuditEvent.deny_reason — a
+# signed, durable field. The rule scope_policy has always been held to this
+# (see test_scope_policy_violation_message_carries_no_raw_url); these extend it
+# to the branches that used to interpolate the value.
+
+_ARG_VALUE = "AKIAIOSFODNN7EXAMPLE_hunter2"
+
+
+def test_allowlist_violation_carries_no_raw_value():
+    result = ArgumentRule(arg="vendor", allowlist=["acme"]).evaluate({"vendor": _ARG_VALUE})
+    assert result is not None and "vendor" in result
+    assert _ARG_VALUE not in result
+
+
+def test_pattern_violation_carries_no_raw_value():
+    """The widest leak: pattern echoed the whole value on any non-match."""
+    result = ArgumentRule(arg="body", pattern=r"^SAFE:").evaluate({"body": _ARG_VALUE})
+    assert result is not None and "body" in result
+    assert _ARG_VALUE not in result
+
+
+def test_max_value_violation_carries_no_raw_value():
+    result = ArgumentRule(arg="amount", max_value=1_000).evaluate({"amount": 999_999.99})
+    assert result is not None and "amount" in result
+    assert "999999.99" not in result and "999_999.99" not in result
+
+
+def test_min_value_violation_carries_no_raw_value():
+    result = ArgumentRule(arg="qty", min_value=10).evaluate({"qty": -4242})
+    assert result is not None and "qty" in result
+    assert "-4242" not in result and "4242" not in result
+
+
+def test_violation_messages_still_distinguish_the_constraint():
+    """Stripping the value must not make every violation read the same — an
+    operator triages on which constraint fired, not just which argument."""
+    arg = "field"
+    msgs = [
+        ArgumentRule(arg=arg, allowlist=["ok"]).evaluate({arg: "no"}),
+        ArgumentRule(arg=arg, pattern=r"^ok$").evaluate({arg: "no"}),
+        ArgumentRule(arg=arg, max_value=1).evaluate({arg: 2}),
+        ArgumentRule(arg=arg, min_value=5).evaluate({arg: 1}),
+    ]
+    assert all(m is not None and arg in m for m in msgs)
+    assert len(set(msgs)) == len(msgs)

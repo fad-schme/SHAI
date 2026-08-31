@@ -16,9 +16,9 @@ answer to different callers on different schedules, and mixing them made the
 per-turn contract harder to find than the thing it protects.
 
 `scanners` is here rather than on the facade for a second reason. Scanners are
-selected by name in `harness.yaml` and resolved through the `harness.scanners`
-entry-point group — an operator enables them, nobody constructs or calls one.
-Handing live scanner instances back out of the facade contradicted that, and
+selected by name in `harness.yaml` — an operator enables them, nobody
+constructs or calls one. Handing live scanner instances back out of the
+facade contradicted that, and
 the only thing the property is good for is inspection, which is what this class
 is.
 

@@ -55,10 +55,10 @@ It is signed like any other event when `audit_signing.enabled`.
 |---|---|
 | `shai_version` | Installed package version |
 | `adapters` | One entry per wired scanner, sink and policy engine: `group`, `name`, `module`, `sha256` of the defining source file. Installed-but-unconfigured adapters are absent by design |
-| `connectors` | `id` and content digest of each connector manifest backing a source |
+| `mcp_manifests` | `id`, `url` (stripped of userinfo, query and fragment), and content digest of each `transport: mcp` name declared in `sources:` — whether or not it currently has a valid baseline. Offline-safe: read and hashed, not checked against the baseline store or connected to |
 | `patterns_db` | `path`, `rule_count`, `digest` — `null` when `patterns_db.enabled` is false |
 | `policy` | `rule_count` and digest of the global rule list, plus `forbidden_tag_combinations` — enforced at agent load, so the rule digest does not move when it changes |
-| `sources` | Per declared source: `name`, `transport`, `tags`, `connector`, and `url` stripped of userinfo, query and fragment |
+| `sources` | Per declared source, local and MCP alike: `name`, `transport`, `tags` — MCP manifest content itself is reported separately under `mcp_manifests`, see `connectors.md` |
 
 Unlike the degrade event, this emission is not best-effort: if every sink fails,
 `from_yaml()` raises `AuditEmissionError` rather than starting unaudited.

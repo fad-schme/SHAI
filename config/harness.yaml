@@ -78,18 +78,6 @@ check_tool_call:
   scan_args_for_tags:
     - sensitive
 
-policy:
-  rules:
-    - id: allow_local_tools
-      match:
-        transport: [local, skill]
-      action: allow
-    - id: deny_mcp_by_default
-      match:
-        transport: [mcp]
-      action: deny
-      reason: "MCP tools require explicit agent-level allow rule"
-
 audit_sinks:
   - name: file
     config:

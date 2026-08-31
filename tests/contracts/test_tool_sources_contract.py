@@ -63,9 +63,17 @@ async def test_local_name_and_transport():
 
 
 async def test_local_source_rejects_mcp_transport():
-    """A registry-backed source must not claim to be MCP."""
+    """A registry-backed source must not claim to be MCP.
+
+    `transport: mcp` is now a valid SourceConfig declaration (see
+    config.schema.SourceConfig, harness.mcp.discovery) — the harness build
+    loop routes it to MCPSource, never LocalSource. This is LocalSource's
+    own defense-in-depth check for the case where it's constructed with one
+    anyway.
+    """
     from harness.core.errors import ConfigError
-    cfg = SourceConfig(name="wrong", transport=Transport.MCP, url="http://x")
+    cfg = SourceConfig(name="wrong", transport=Transport.MCP,
+                        tags=[], tool_names=[], required=True)
     with pytest.raises(ConfigError, match="cannot serve mcp"):
         LocalSource(cfg, registry=ToolRegistry())
 
@@ -223,7 +231,7 @@ async def test_source_registry_policy_suppress():
         action="suppress",
         reason="suppressed for test",
     )
-    policy = RuleBasedPolicy(rules=[suppress_rule])
+    policy = RuleBasedPolicy(source_rules=[suppress_rule])
     src_registry = SourceRegistry(policy=policy)
     src_registry.register(local_src)
     ctx  = AgentContext(

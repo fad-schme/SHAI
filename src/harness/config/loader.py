@@ -66,6 +66,15 @@ def _resolve_string(s: str, *, provider: SecretsProvider | None) -> str:
     return s
 
 
+def resolve_secret_refs(data: Any, *, provider: SecretsProvider | None) -> Any:
+    """Public entry point for the ${ENV_VAR}/secret:// resolution pass, for
+    callers that parse their own YAML outside load_yaml()/load_dict() — e.g.
+    MCP manifest credentials (harness.mcp.manifest), which are read straight
+    off disk rather than through harness.yaml's own resolution pass.
+    """
+    return _resolve(data, provider=provider)
+
+
 def read_yaml(path: str | Path) -> dict[str, Any]:
     """Read and parse harness.yaml into a raw mapping — no resolution, no validation.
 
@@ -108,16 +117,18 @@ def build_secrets_provider(raw: Any) -> SecretsProvider:
     from harness.adapters.secrets.env import EnvVarProvider
 
     ref = _secrets_ref(raw)
-    if ref.name == EnvVarProvider.name:
-        cls: type = EnvVarProvider
-    else:
-        # Fail closed: an unresolvable provider means every secret:// in the
-        # config silently stays a literal string. AdapterDiscoveryError propagates.
-        from harness.adapters.discovery import resolve
-        cls = resolve("harness.secrets", ref.name)
+    if ref.name != EnvVarProvider.name:
+        # EnvVarProvider is the only provider SHAI Core has. Fail closed: an
+        # unresolvable provider means every secret:// in the config silently
+        # stays a literal string.
+        raise ConfigError(
+            f"unknown secrets provider {ref.name!r}. "
+            f"Valid providers: [{EnvVarProvider.name!r}]",
+            op="load_yaml",
+        )
 
     try:
-        return cls(**ref.config)
+        return EnvVarProvider(**ref.config)
     except Exception as e:
         # Type only in the message: `secrets.config` holds ${ENV_VAR}-expanded
         # credentials, and a provider outside this package can echo them into

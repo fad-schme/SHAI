@@ -159,22 +159,24 @@ propagate to subagents. Approvers land on the allow event as `extra.approvers`.
 
 ## Policy
 
-Policy rules are always inline — no separate rules file.
+`policy.source_rules` decides which sources activate — every entry is
+`action: suppress`. Tool-call rules live in the agent's own `policy_rules:`.
 
 ```yaml
 policy:
-  rules:
-    - id: allow_local
-      match:
-        transport: [local, skill]
-      action: allow
-
-    - id: deny_mcp_default
+  source_rules:
+    - id: suppress_untrusted
       match:
         transport: [mcp]
-      action: deny
-      reason: "MCP requires explicit agent-level allow"
+        source_tags: [untrusted]
+      action: suppress
+      reason: "untrusted MCP sources are not activated"
 ```
+
+Match on `source_tags`, `transport`, `agent_ids`, `sub_agent_ids`. A
+tool-scoped field (`tool_names`, `tool_tags`, or a combinator) on a source
+rule is rejected at load — accepting one would turn a rule written to narrow
+an activation into one that matches every source.
 
 `forbidden_tag_combinations` is a separate mechanism in the same block — tag sets no single agent may declare together, enforced at agent load rather than at gate time:
 
@@ -203,12 +205,6 @@ audit_sinks:
 **Note:** when `stdout` is configured, raw JSONL interleaves with any
 formatted output from your application. For demos and examples, omit
 `stdout` and use `collect_events()` instead.
-
-Custom sinks are registered via entry points:
-```toml
-[project.entry-points."harness.audit_sinks"]
-my_sink = "my_package:MySink"
-```
 
 ---
 
@@ -300,41 +296,14 @@ runtime process when immediate pickup is required.
 
 ## Sources
 
-Sources declare where tools come from. Activated at `load_agent()` time.
-
-### Option A — connector manifest (recommended)
-
-```yaml
-sources:
-  - name: slack
-    connector: slack          # loads url, allowed_urls, tags, per-tool specs
-    credentials:
-      token: "secret://SLACK_BOT_TOKEN"
-    required: false           # optional — absence is skipped, not fatal
-```
-
-Available connectors: `slack`, `github`, `notion`, `jira`, `gmail`,
-`postgresql`, `stripe`, `google_drive`.
-→ See `09-connectors.md` for details.
-
-### Option B — manual MCP source
-
-```yaml
-sources:
-  - name: slack_mcp
-    transport: mcp
-    url: "https://mcp.slack.com/sse"
-    credentials:
-      token: "secret://SLACK_BOT_TOKEN"
-    tags: [external_mcp, messaging]   # applied to ALL tools from this source
-    allowed_urls:                     # ShaiTransport enforces these
-      - "https://mcp.slack.com/*"
-      - "https://slack.com/api/*"
-    allowed_methods: [GET, POST]
-    required: true                    # default
-```
-
-### Option C — local source
+`sources:` declares every source, local and MCP alike, activated at
+`load_agent()` time. A `transport: local | skill` entry declares where
+already-registered tools come from; a `transport: mcp` entry declares an MCP
+source **by name only** — no url, credentials, or allow-lists, those come
+entirely from a manifest file resolved by convention (see next section).
+Setting any MCP-specific field (`url`, `credentials`, `allowed_urls`, ...)
+directly on a `sources:` entry is rejected at config validation — those
+belong on the manifest.
 
 ```yaml
 sources:
@@ -342,17 +311,97 @@ sources:
     transport: local
     tool_names: [search_docs, fetch_doc]   # omit for all registered tools
     tags: [internal]
+  - name: slack
+    transport: mcp
 ```
 
 ### `required` flag
 
 - `required: true` (default) — missing or failed source raises `ConfigError`
-  at `load_agent()`. Agent is not usable without it.
+  at `load_agent()`. Agent is not usable without it. For a `transport: mcp`
+  entry this also covers a missing manifest file at load time, and a
+  declared name the harness never built into a live source (no valid
+  baseline).
 - `required: false` — logs and skips. Use for optional enrichment.
 
-**Important:** `secret://` references are resolved at `from_yaml()` time,
-including for `required: false` sources — see "Secret resolution" below for
-the dev/demo workaround.
+---
+
+## MCP sources — manifest onboarding
+
+A `transport: mcp` entry under `sources:` only declares that the name
+exists. Its manifest — entirely operator-authored, external to the
+package — is resolved **by convention** from a top-level field:
+
+```yaml
+mcp_manifests_dir: ./mcp/
+mcp_baseline:
+  path: state/mcp_baseline.db      # signed local store of approved hashes
+  secret: "secret://SHAI_MCP_BASELINE_KEY"   # own secret — required when
+                                              # any source declares transport: mcp
+  cache_ttl_seconds: 5             # re-onboarding/kill latency on the gate's
+                                    # hot path — 0 = re-check every tool call
+```
+
+`mcp_manifests_dir` is not scanned — a manifest file there with no matching
+`sources:` entry is invisible to the harness, and a `transport: mcp` entry
+with no manifest at `<mcp_manifests_dir>/<name>.yaml` is a load error
+(honouring that entry's `required` flag).
+
+Manifest schema (one file per source, at the conventional path, e.g.
+`mcp/slack.yaml` for a `sources:` entry named `slack`):
+
+```yaml
+id: slack
+display_name: "Slack"
+url: "https://mcp.slack.com/sse"
+allowed_urls: ["https://mcp.slack.com/*"]
+allowed_methods: [GET, POST]
+tags: [external_mcp, messaging]
+credentials:
+  token: "secret://SLACK_BOT_TOKEN"
+required: true                      # governs whether a connection/load failure
+                                     # is fatal — same semantics as sources: required.
+                                     # Does NOT govern onboarding approval — see below.
+tools:
+  - name: send_message
+    description: "Send a message to a channel or user"
+    tags: [external_write, messaging]
+    action: block   # operator's own record of intent — not a second
+                    # enforcement path; tag + a policy rule is what denies it
+```
+
+At `SHAI.from_yaml()`, the manifest for each declared `transport: mcp`
+source is resolved, hashed, and checked against the signed baseline store —
+a live source is built **only** for a name whose hash matches an approved
+record. An unapproved or hash-mismatched name is not built at all: no stub,
+no source object. An agent referencing that source name gets the ordinary
+"source not registered" handling, honouring the entry's `required` flag.
+
+For a source that *was* built, approval is re-checked **on every
+`check_tool_call`** against it (`harness.mcp.gate.McpBaselineGate`, the R3
+pre-gate check), not just once at startup. Each check re-hashes the manifest
+(SHA-256, raw bytes) and looks it up in the signed baseline store, behind
+`mcp_baseline.cache_ttl_seconds` of caching. A hash that no longer matches
+denies every subsequent call against that source at the gate — same
+`tool_call_gate`/`deny` audit shape as any other denial, naming the manifest
+and pointing at the fix — catching a manifest edited after the harness
+started without needing a restart. The only way to approve a manifest is to
+run it through onboarding — see `verdicts-events.md` for the onboarding
+boundary and audit shape:
+
+```bash
+shai mcp onboard mcp/slack.yaml --config config/harness.yaml
+```
+
+A clean pass auto-records the manifest's hash — running the command *is*
+the approval, there is no separate flag. Edit the manifest afterward and
+calls against that source start denying again (within one
+`cache_ttl_seconds`) until re-onboarded.
+
+**Important:** `secret://` references in a manifest's `credentials:` are
+resolved the same two-pass way as `harness.yaml`'s own, both at harness
+startup (for a source with an approved baseline, so it can be built) and by
+`shai mcp onboard` itself.
 
 ---
 

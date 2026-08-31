@@ -56,17 +56,20 @@ async def test_returns_policy_decision():
 # ── Deny rules ────────────────────────────────────────────────────────────
 
 async def test_global_deny_rule_fires():
-    policy = RuleBasedPolicy(rules=[deny_rule("read")])
-    result = await policy.evaluate(make_tool(tags=["read"]), {}, _CTX)
+    policy = RuleBasedPolicy()
+    _rules = [deny_rule("read")]
+    result = await policy.evaluate(make_tool(tags=["read"]), {}, _CTX, rules=_rules)
     assert result.action == "deny"
     assert result.reason
 
 
-async def test_agent_deny_rule_fires_before_global():
-    global_rules = [allow_rule("search_docs")]
-    agent_rules  = [deny_rule("read")]
-    policy = RuleBasedPolicy(rules=global_rules)
-    result = await policy.evaluate(make_tool(tags=["read"]), {}, _CTX, rules=agent_rules)
+async def test_earlier_rule_wins_over_later():
+    """Order in the list is the whole precedence story now."""
+    policy = RuleBasedPolicy()
+    result = await policy.evaluate(
+        make_tool(tags=["read"]), {}, _CTX,
+        rules=[deny_rule("read"), allow_rule("search_docs")],
+    )
     assert result.action == "deny"
 
 
@@ -77,9 +80,10 @@ async def test_tool_name_match():
         action="deny",
         reason="no email",
     )
-    policy = RuleBasedPolicy(rules=[rule])
-    denied = await policy.evaluate(make_tool("send_email"), {}, _CTX)
-    allowed = await policy.evaluate(make_tool("search_docs"), {}, _CTX)
+    policy = RuleBasedPolicy()
+    _rules = [rule]
+    denied = await policy.evaluate(make_tool("send_email"), {}, _CTX, rules=_rules)
+    allowed = await policy.evaluate(make_tool("search_docs"), {}, _CTX, rules=_rules)
     assert denied.action == "deny"
     assert allowed.action == "allow"
 
@@ -91,18 +95,19 @@ async def test_transport_match():
         action="deny",
         reason="no mcp",
     )
-    policy = RuleBasedPolicy(rules=[rule])
+    policy = RuleBasedPolicy()
     mcp_tool   = Tool(name="slack_tool", tags=["read"], transport=Transport.MCP)
     local_tool = Tool(name="local_tool", tags=["read"], transport=Transport.LOCAL)
-    assert (await policy.evaluate(mcp_tool, {}, _CTX)).action == "deny"
-    assert (await policy.evaluate(local_tool, {}, _CTX)).action == "allow"
+    assert (await policy.evaluate(mcp_tool, {}, _CTX, rules=[rule])).action == "deny"
+    assert (await policy.evaluate(local_tool, {}, _CTX, rules=[rule])).action == "allow"
 
 
 # ── Allow rules ───────────────────────────────────────────────────────────
 
 async def test_allow_rule_fires():
-    policy = RuleBasedPolicy(rules=[allow_rule("search_docs")])
-    result = await policy.evaluate(make_tool("search_docs"), {}, _CTX)
+    policy = RuleBasedPolicy()
+    _rules = [allow_rule("search_docs")]
+    result = await policy.evaluate(make_tool("search_docs"), {}, _CTX, rules=_rules)
     assert result.action == "allow"
 
 
@@ -112,8 +117,9 @@ async def test_first_match_wins():
         deny_rule("read", rule_id="deny_first"),
         allow_rule("search_docs", rule_id="allow_second"),
     ]
-    policy = RuleBasedPolicy(rules=rules)
-    result = await policy.evaluate(make_tool(tags=["read"]), {}, _CTX)
+    policy = RuleBasedPolicy()
+    _rules = rules
+    result = await policy.evaluate(make_tool(tags=["read"]), {}, _CTX, rules=_rules)
     assert result.action == "deny"
     assert result.rule_id == "deny_first"
 
@@ -127,8 +133,9 @@ async def test_redact_rule():
         action="redact",
         redact={"secret_arg": "***"},
     )
-    policy = RuleBasedPolicy(rules=[rule])
-    result = await policy.evaluate(make_tool(tags=["sensitive"]), {"secret_arg": "real"}, _CTX)
+    policy = RuleBasedPolicy()
+    _rules = [rule]
+    result = await policy.evaluate(make_tool(tags=["sensitive"]), {"secret_arg": "real"}, _CTX, rules=_rules)
     assert result.action == "redact"
     assert result.redacted_args == {"secret_arg": "***"}
 
@@ -153,11 +160,13 @@ async def test_redact_rule_preserves_unnamed_args():
         action="redact",
         redact={"amount": "***"},
     )
-    policy = RuleBasedPolicy(rules=[rule])
+    policy = RuleBasedPolicy()
+    _rules = [rule]
     result = await policy.evaluate(
         make_tool(tags=["sensitive"]),
         {"account": "ACC-1", "amount": 5000, "currency": "USD"},
         _CTX,
+        rules=_rules,
     )
     assert result.action == "redact"
     assert result.redacted_args == {
@@ -167,31 +176,33 @@ async def test_redact_rule_preserves_unnamed_args():
     }
 
 
-# ── Intersection model ────────────────────────────────────────────────────
+# ── One ordered list ──────────────────────────────────────────────────────
 
-async def test_intersection_agent_deny_overrides_global_allow():
-    """Agent rules ∩ global rules — agent deny beats global allow."""
-    global_policy = RuleBasedPolicy(rules=[allow_rule("search_docs")])
-    agent_rules   = [deny_rule("read")]
-    result = await global_policy.evaluate(make_tool(tags=["read"]), {}, _CTX, rules=agent_rules)
+async def test_rules_are_evaluated_in_the_order_given():
+    """`evaluate()` takes the rules governing this call as one ordered list —
+    manifest-compiled denials first, then the agent's own. First match wins.
+    There is no second, global pass."""
+    result = await RuleBasedPolicy().evaluate(
+        make_tool(tags=["read"]), {}, _CTX,
+        rules=[deny_rule("read", rule_id="first"), allow_rule("search_docs")],
+    )
     assert result.action == "deny"
+    assert result.rule_id == "first"
 
 
-async def test_intersection_global_deny_catches_agent_allow():
-    """Even if agent rules allow, global deny still fires."""
-    global_policy = RuleBasedPolicy(rules=[deny_rule("external_write")])
-    agent_rules   = [allow_rule("send_email")]
-    tool          = Tool(name="send_email", tags=["external_write"], transport=Transport.LOCAL)
-    result = await global_policy.evaluate(tool, {}, _CTX, rules=agent_rules)
-    # Agent allow fires first (pass 1) → allow returned before global deny in pass 2
-    # This is the correct intersection semantics: agent rules run first
+async def test_an_earlier_allow_short_circuits_a_later_deny():
+    """This is what lets an agent-level allow re-enable a tool a broader rule
+    denied — the mechanism behind `deny_mcp_by_default`."""
+    result = await RuleBasedPolicy().evaluate(
+        make_tool("search_docs", tags=["read"]), {}, _CTX,
+        rules=[allow_rule("search_docs"), deny_rule("read")],
+    )
     assert result.action == "allow"
 
 
-async def test_no_agent_rules_falls_through_to_global():
-    policy = RuleBasedPolicy(rules=[deny_rule("read")])
-    result = await policy.evaluate(make_tool(tags=["read"]), {}, _CTX, rules=None)
-    assert result.action == "deny"
+async def test_no_rules_defaults_to_allow():
+    result = await RuleBasedPolicy().evaluate(make_tool(tags=["read"]), {}, _CTX, rules=None)
+    assert result.action == "allow"
 
 
 # ── evaluate_source ───────────────────────────────────────────────────────
@@ -216,7 +227,7 @@ async def test_evaluate_source_suppress_rule():
         action="suppress",
         reason="mcp not allowed",
     )
-    policy = RuleBasedPolicy(rules=[rule])
+    policy = RuleBasedPolicy(source_rules=[rule])
     result = await policy.evaluate_source(_FakeSource(), _CTX)
     assert result.active is False
     assert result.reason == "mcp not allowed"
@@ -225,7 +236,8 @@ async def test_evaluate_source_suppress_rule():
 # ── Concurrent safety ─────────────────────────────────────────────────────
 
 async def test_concurrent_evaluate():
-    policy = RuleBasedPolicy(rules=[allow_rule("search_docs")])
+    policy = RuleBasedPolicy()
+    _rules = [allow_rule("search_docs")]
     tool   = make_tool("search_docs")
     results = await asyncio.gather(
         *[policy.evaluate(tool, {}, _CTX) for _ in range(50)],
@@ -247,7 +259,7 @@ async def test_inline_rules():
         action="deny",
         reason="no external writes",
     )
-    policy = RuleBasedPolicy(rules=[rule])
+    policy = RuleBasedPolicy()
     tool = Tool(name="send_email", tags=["external_write"], transport=Transport.LOCAL)
-    result = await policy.evaluate(tool, {}, _CTX)
+    result = await policy.evaluate(tool, {}, _CTX, rules=[rule])
     assert result.action == "deny"

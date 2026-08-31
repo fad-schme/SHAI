@@ -10,11 +10,10 @@ from __future__ import annotations
 from harness.adapters.scanners.base import ScanResult
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.audit.emitter import AuditEmitter
-from harness.config.schema import SourceConfig
 from harness.core.context import AgentContext
 from harness.core.types import BoundaryName, Decision, Severity, Transport
 from harness.core.verdicts import Finding
-from harness.tools.source import MCPSource
+from harness.tools.source import MCPSource, MCPSourceParams
 from tests.conftest import RecordingSink
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -56,11 +55,7 @@ def _source(
     emission path, not just the ones asserting on events.
     """
     return MCPSource(
-        SourceConfig(
-            name="test_mcp",
-            transport=Transport.MCP,
-            url="https://mcp.example.test/sse",
-        ),
+        MCPSourceParams("test_mcp", "https://mcp.example.test/sse"),
         emitter=AuditEmitter([sink or RecordingSink()]),
         tenant_id="test-tenant",
         metadata_scanners=scanners if scanners is not None else [MCPMetadataScanner()],
@@ -81,9 +76,8 @@ class _FixedSeverityScanner:
 
     The bundled catalog maps rules to low/medium/high only (see
     injection_scan._SHAI_SEVERITY), so CRITICAL and INFO are unreachable
-    through it — but a scanner registered under the harness.scanners entry
-    point may return any Severity, and the threshold must handle the full
-    ladder.
+    through it — but a Scanner may return any Severity, and the threshold
+    must handle the full ladder.
     """
 
     name = "fixed_severity_scan"
@@ -432,8 +426,7 @@ async def test_event_never_carries_the_matched_metadata():
 async def test_emission_is_skipped_without_an_emitter():
     """MCPSource tolerates emitter=None — the scan still returns its verdict."""
     source = MCPSource(
-        SourceConfig(name="no_emitter", transport=Transport.MCP,
-                     url="https://mcp.example.test/sse"),
+        MCPSourceParams("no_emitter", "https://mcp.example.test/sse"),
         metadata_scanners=[MCPMetadataScanner()],
         metadata_block_at=Severity.MEDIUM,
     )

@@ -24,7 +24,7 @@ def _minimal() -> dict:
 
 def test_load_dict_minimal():
     cfg = load_dict(_minimal())
-    assert cfg.policy.rules == []
+    assert cfg.policy.source_rules == []
 
 
 def test_load_dict_validation_error_surfaces_field():
@@ -51,7 +51,6 @@ def test_load_yaml_disabled_boundaries(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     cfg = load_yaml(p)
@@ -65,7 +64,6 @@ def test_env_var_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     p.write_text(
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: ${TEST_SINK}\n"
     )
     cfg = load_yaml(p)
@@ -78,7 +76,6 @@ def test_missing_env_var_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     p.write_text(
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: ${MISSING_VAR_X}\n"
     )
     with pytest.raises(ConfigError, match="MISSING_VAR_X"):
@@ -91,7 +88,6 @@ def test_nested_env_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     p.write_text(
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: ${SINK_NAME}\n"
     )
     cfg = load_yaml(p)
@@ -103,7 +99,6 @@ def test_non_string_values_unchanged(tmp_path: Path):
     p.write_text(
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     cfg = load_yaml(p)
@@ -115,7 +110,6 @@ def test_unknown_field_in_yaml_rejected(tmp_path: Path):
     p.write_text(
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
         "unknown_typo_field: oops\n"
     )

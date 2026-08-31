@@ -12,6 +12,11 @@ class BoundaryName(StrEnum):
     # per tool at tools/list, before the tool is registered. A tool refused
     # here never reaches the gate, so this is the only record of the refusal.
     MCP_METADATA_SCAN  = "mcp_metadata_scan"
+    # Operator-run, once per `shai mcp onboard <manifest>` invocation — not a
+    # per-turn or per-startup boundary. Records the pass/fail decision that
+    # gates whether the manifest's hash gets approved into the signed
+    # baseline store (harness.mcp.baseline). See harness.mcp.onboard.
+    MCP_SOURCE_ONBOARDING = "mcp_source_onboarding"
     SYSTEM             = "system"
 
 

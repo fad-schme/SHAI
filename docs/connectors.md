@@ -1,56 +1,109 @@
-# Connectors and Connectivity
+# MCP Manifests and Connectivity
 
-If your agent talks to Slack, GitHub, Notion, Jira, Gmail, PostgreSQL, Stripe, or Google Drive via MCP, SHAI ships **connector manifests** that pre-configure the security surface for each: allowed URLs, per-tool tags, which tools count as writes, and which returned content should always be scanned. You point at the connector by name; the manifest supplies the rest.
+If your agent talks to an MCP server (Slack, GitHub, Notion, or anything
+else), SHAI's manifest onboarding governs it: an operator-authored manifest
+file declares the source's endpoint, tags, and per-tool security metadata,
+and `shai mcp onboard` is the one path that approves it for activation — no
+unapproved MCP source ever activates.
 
-For the wire itself, SHAI can enforce a **dispatch-token** protocol — every allowed tool call carries a signed, one-shot, source-bound token that a custom HTTP transport validates on every request. This closes the gap between "the gate said yes" and "what actually went out on the network."
+For the wire itself, SHAI can enforce a **dispatch-token** protocol — every
+allowed tool call carries a signed, one-shot, source-bound token that a
+custom HTTP transport validates on every request. This closes the gap
+between "the gate said yes" and "what actually went out on the network."
 
-Both features are opt-in and independent. You can use connectors without connectivity, connectivity with hand-rolled sources, or both.
+Both features are opt-in and independent. You can onboard manifests without
+connectivity, connectivity with local sources, or both.
 
-## Built-in connectors
+## MCP manifests
 
-Instead of configuring every field yourself:
-
-```yaml
-sources:
-  - name: slack_mcp
-    transport: mcp
-    url: "https://mcp.slack.com/sse"
-    tags: [external_mcp, messaging, external]
-    allowed_urls:
-      - "https://mcp.slack.com/*"
-      - "https://slack.com/api/*"
-    allowed_methods: [GET, POST]
-    # + you'd still need to figure out which tools are risky and tag them correctly
-```
-
-Point at a connector by name:
+There is no bundled/pre-built manifest set — a manifest is entirely
+operator-authored and lives outside the package, in `mcp_manifests_dir`. But
+a manifest sitting in that directory is not by itself reachable: the source
+must also be **declared** under `sources:`, by name, the same way a local
+source is:
 
 ```yaml
+# harness.yaml
+mcp_manifests_dir: ./mcp/
+mcp_baseline:
+  path: state/mcp_baseline.db
+  secret: "secret://SHAI_MCP_BASELINE_KEY"
 sources:
   - name: slack
-    connector: slack
-    credentials:
-      token: "secret://SLACK_BOT_TOKEN"
+    transport: mcp
 ```
 
-The manifest supplies `url`, `allowed_urls`, `allowed_methods`, source-level tags, and per-tool tags. Fields you declare in your config override the manifest, so you can tighten anything you disagree with. Fields you leave out keep the manifest's value — a source that names only `connector:` and `credentials:` gets the manifest's transport, url, tags, and allow-lists intact.
+The `sources:` entry carries only `name`/`transport` (plus the fields every
+source already has, like `tags`/`required`) — no url, credentials, or
+allow-lists there. The manifest is resolved by convention:
+`<mcp_manifests_dir>/<name>.yaml`. A manifest file with no matching
+`sources:` entry is invisible to the harness; a `transport: mcp` entry with
+no manifest at that path is a load error, honouring the entry's `required`
+flag.
 
-### Available connectors
+```yaml
+# mcp/slack.yaml
+id: slack
+display_name: "Slack"
+url: "https://mcp.slack.com/sse"
+allowed_urls: ["https://mcp.slack.com/*", "https://slack.com/api/*"]
+allowed_methods: [GET, POST]
+tags: [external_mcp, messaging, external]
+credentials:
+  token: "secret://SLACK_BOT_TOKEN"
+tools:
+  - name: send_message
+    description: "Send a message to a channel or user"
+    tags: [external_write, messaging]
+    action: block
+  - name: read_messages
+    description: "Read messages from a channel"
+    tags: [read, messaging]
+    action: allow
+```
 
-| `connector:` | Service | Notable security defaults |
-|---|---|---|
-| `slack` | Slack | `send_message` blocked |
-| `github` | GitHub | `push_files`, `merge_pull_request` blocked and sensitive |
-| `notion` | Notion | All writes blocked |
-| `jira` | Jira | `delete_issue` sensitive |
-| `gmail` | Gmail | Every tool sensitive, send blocked |
-| `postgresql` | PostgreSQL | `execute` blocked, every result sensitive |
-| `stripe` | Stripe | Every tool sensitive, payment/cancel blocked |
-| `google_drive` | Google Drive | `share_file` blocked (exfiltration surface) |
+`action` is `allow` or `block`, and it is enforced. At startup each
+`action: block` compiles to an ordinary deny rule that the existing policy
+layer evaluates, placed ahead of every operator rule — agent-scoped and
+global alike. Rules are first-match-wins, so a manifest denial cannot be
+weakened by a local rule: the manifest's tool policy is approved by the
+manifest's hash through `shai mcp onboard`, and an operator rule in
+`harness.yaml` does not get to override it.
+
+`action: allow` compiles to no rule at all. It is the absence of a
+restriction, not an affirmative grant — an operator rule denying that tool
+still denies it. The manifest adds denials; it never removes them.
+
+At `SHAI.from_yaml()`, each declared `transport: mcp` source's manifest is
+resolved, hashed, and checked against the signed baseline store — a live
+source is built only for a name whose hash matches an approved record. An
+unapproved or hash-mismatched name is not built at all: no stub, no source
+object, nothing registered under that name. An agent declaring that source
+name gets the same "source not registered" handling any other missing
+source gets. For a source that *was* built, approval is re-checked on every
+tool call against it: each call re-hashes the manifest (SHA-256 over its raw
+bytes) and checks it against the signed local baseline store, behind a short
+cache (`mcp_baseline.cache_ttl_seconds`). A hash that no longer matches
+denies every subsequent call against that source at the gate — catching a
+manifest edited after the harness started without needing a restart.
+Approve (or re-approve after an edit) with:
+
+```bash
+shai mcp onboard mcp/slack.yaml --config config/harness.yaml
+```
+
+This connects live, fetches `tools/list` to confirm reachability, scans the
+manifest's own declared tool text, reconciles it against what the server
+actually offers, and — on a clean pass — records the manifest's hash as
+approved. Running the command *is* the approval; there is no separate flag.
+See `.claude/skills/verdicts-events.md` for the `mcp_source_onboarding`
+boundary and its audit event shape.
 
 ### Per-tool tags are enforced at registration
 
-Connector manifests declare per-tool security metadata. Tools arrive in the registry already tagged correctly — not just with generic source-level tags. So a policy rule like:
+The manifest is authoritative for what a tool's name, description, and tags
+are once it's registered — not the live server's response. So a policy rule
+like:
 
 ```yaml
 - id: block_writes_from_external
@@ -59,26 +112,86 @@ Connector manifests declare per-tool security metadata. Tools arrive in the regi
   action: deny
 ```
 
-catches `slack.send_message` automatically once the Slack connector is active, because the manifest tagged that tool `external_write`. You didn't have to know to tag it.
+catches `slack.send_message` automatically once the manifest is onboarded
+and the source is active, because the manifest tagged that tool
+`external_write`.
 
 ### Tool results are always scanned
 
-`harness.scan_tool_result(result, ctx)` scans every result. There is no per-tool opt-out, and connectors do not declare one — a tool whose output looks like control-plane data is exactly where an indirect-injection payload arrives unnoticed.
+`harness.scan_tool_result(result, ctx)` scans every result. There is no
+per-tool opt-out, and manifests do not declare one — a tool whose output
+looks like control-plane data is exactly where an indirect-injection payload
+arrives unnoticed.
 
-### Overriding connector defaults
+### Narrowing a manifest tool per agent
 
-Say you use GitHub but you want push access enabled for a specific agent. The manifest blocks `push_files` globally; you allow it in the agent's rules:
+Agent rules run before global harness rules, so an agent can restrict a tool
+its manifest leaves `action: allow`:
 
 ```yaml
 # agent.yaml
 policy_rules:
-  - id: allow_push_for_deployer
+  - id: no_push_for_reviewer
     match:
       tool_names: [push_files]
-    action: allow
+    action: deny
+    reason: "reviewer agents do not push"
 ```
 
-Agent rules run before harness rules. Agent `allow` beats manifest `deny` at the policy layer — but the tool's `sensitive` tag from the manifest still triggers argument scanning, and if `push_files` is also marked `IRREVERSIBLE`, you still need a quorum of signed approval grants on the context. Layered defence.
+The reverse does not work, by design. An agent rule cannot re-enable a tool
+the manifest declares `action: block` — the compiled manifest deny runs
+ahead of every agent and global rule, and first match wins. To grant a tool,
+change the manifest and re-run `shai mcp onboard`, which re-approves the new
+file hash. Tags still apply on top of all of this: a `sensitive` tag from
+the manifest triggers argument scanning, and an `IRREVERSIBLE` tool still
+needs a quorum of signed approval grants. Layered defence.
+
+### Restricting a URL-typed tool argument with `scope_policy`
+
+`allowed_urls` on a source governs where that source's *transport* can
+reach. It doesn't help with a tool argument the agent fills in itself — a
+webhook URL, a callback, a fetch target — where the destination isn't fixed
+by the manifest at all. For that, give the tool's `ArgumentRule` a
+`scope_policy`: it canonicalizes the argument value as a URL (case, IDNA,
+and IP-literal-encoding differences folded to what the network stack would
+actually dial — see `THREAT_MODEL.md`'s T8 residual-risk note) and denies
+the call unless the resulting host is in scope.
+
+```yaml
+# agent.yaml or manifest override
+argument_rules:
+  - arg: webhook_url
+    scope_policy:
+      allowed_domains: [hooks.example.com]
+      allow_subdomains: true
+```
+
+This accepts `https://alerts.hooks.example.com/x` and
+`https://hooks.example.com/x`, and rejects everything else — including a
+lookalike like `hooks.example.com.evil.test`, a private/loopback IP
+literal (`http://127.0.0.1/...`), and a userinfo-smuggled URL. An IP
+literal can only be admitted via `allowed_cidrs`, never `allowed_hosts` or
+`allowed_domains` — and, as the note below explains, a private-range
+address is denied through `allowed_cidrs` too, with no override at this
+layer:
+
+```yaml
+argument_rules:
+  - arg: callback_url
+    scope_policy:
+      allowed_cidrs: ["93.184.216.0/24"]   # your callback provider's published range
+```
+
+(Watch this if you're tempted to test with a documentation range like
+`203.0.113.0/24` — Python's `ipaddress` classifies those as private, so
+`scope_policy` denies them too, the same as `127.0.0.0/8` or `10.0.0.0/8`.
+Unlike `is_ip_in_scope`'s own `allow_private` parameter, `scope_policy`
+has no way to opt back into a private range — an argument-level
+destination check is not the place for that escape hatch.)
+
+Prefer `scope_policy` over a hand-written `pattern` regex for any argument
+that names a network destination — a regex has to reimplement host
+canonicalization to be safe, and `scope_policy` already does it.
 
 ## Dispatch tokens and `ShaiTransport`
 

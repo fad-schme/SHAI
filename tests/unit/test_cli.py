@@ -138,7 +138,7 @@ def test_validate_config_and_agents(capsys: pytest.CaptureFixture[str]) -> None:
 
     captured = capsys.readouterr()
     assert result == 0
-    assert "policy_rules: 0" in captured.out
+    assert "source_rules: 0" in captured.out
     assert "Result: 2 OK, 0 FAIL" in captured.out
     assert captured.err == ""
 
@@ -175,10 +175,11 @@ def test_validate_fails_for_missing_agents_dir(
     assert "agents directory not found" in captured.err
 
 
-def test_validate_checks_inline_policy_rules(
+def test_validate_checks_inline_source_rules(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """A malformed source rule fails validation rather than loading silently."""
     config = tmp_path / "harness.yaml"
     config.write_text(
         """
@@ -187,10 +188,12 @@ scan_input:
 scan_output:
   enabled: false
 policy:
-  rules:
-    - id: invalid_deny
-      match: {}
-      action: deny
+  source_rules:
+    - id: bad
+      match:
+        tool_names: [send]
+      action: suppress
+      reason: tool-scoped field on a source rule
 """,
         encoding="utf-8",
     )
@@ -199,7 +202,7 @@ policy:
 
     captured = capsys.readouterr()
     assert result == 1
-    assert "reason required for deny action" in captured.err
+    assert "tool-scoped" in captured.err
 
 
 def test_read_tail_returns_only_requested_lines(tmp_path: Path) -> None:
@@ -382,7 +385,6 @@ async def test_audit_verify_accepts_a_real_emitted_log(
         "version: 1\n"
         "scan_input:\n  enabled: true\n  scanners:\n    - name: injection_scan\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_signing:\n  enabled: true\n  secret: real-key-value\n"
         f"audit_sinks:\n  - name: file\n    config:\n      path: {out.as_posix()}\n",
         encoding="utf-8",

@@ -50,7 +50,7 @@ class TestAlwaysOnBackstop:
         assert _names(scanners) == ["heuristic_scan", "regex_pii"]
         assert sum(isinstance(c.scanner, HeuristicScanner) for c in scanners) == 1
 
-    def test_explicit_declaration_resolves_via_factory_not_entry_point(self):
+    def test_explicit_declaration_resolves_via_the_factory_table(self):
         """heuristic_scan is a first-class built-in — unknown config must fail loudly."""
         with pytest.raises(TypeError):
             _build_text_scanners([AdapterRef(name="heuristic_scan", config={"bogus": 1})])

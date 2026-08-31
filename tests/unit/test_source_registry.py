@@ -13,7 +13,7 @@ from harness.core.errors import ConfigError
 from harness.core.types import Transport
 from harness.policy.rules import RuleBasedPolicy
 from harness.tools.registry import ToolRegistry
-from harness.tools.source import LocalSource, MCPSource, SourceRegistry
+from harness.tools.source import LocalSource, MCPSource, MCPSourceParams, SourceRegistry
 from harness.tools.tool import Tool
 
 
@@ -21,8 +21,8 @@ def _local(name: str = "docs", **kw) -> SourceConfig:
     return SourceConfig(name=name, **kw)
 
 
-def _mcp(name: str = "slack", url: str = "https://mcp.slack.com/sse", **kw) -> SourceConfig:
-    return SourceConfig(name=name, transport=Transport.MCP, url=url, **kw)
+def _mcp(name: str = "slack", url: str = "https://mcp.slack.com/sse", **kw) -> MCPSourceParams:
+    return MCPSourceParams(name, url, **kw)
 
 CTX = AgentContext(agent_id="test_agent")
 
@@ -37,7 +37,7 @@ def _make_policy(active: bool = True) -> RuleBasedPolicy:
     """
     if active:
         return RuleBasedPolicy()
-    return RuleBasedPolicy(rules=[RuleConfig(
+    return RuleBasedPolicy(source_rules=[RuleConfig(
         id="suppress_for_test_agent",
         match=RuleMatchConfig(agent_ids=[CTX.agent_id]),
         action="suppress",
@@ -268,13 +268,8 @@ def test_mcp_source_constructed():
 
 
 def test_mcp_source_requires_url():
-    """A connector-backed config reaching MCPSource unresolved fails loudly.
-
-    SourceConfig allows url=None when connector: is set — from_yaml merges the
-    manifest before constructing. Skipping that merge must raise, not produce a
-    source with no endpoint.
-    """
-    unresolved = SourceConfig(name="slack", transport=Transport.MCP, connector="slack")
+    """An empty url must raise, not produce a source with no endpoint."""
+    unresolved = MCPSourceParams("slack", "")
     with pytest.raises(ConfigError, match="url is required"):
         MCPSource(unresolved)
 
@@ -300,7 +295,9 @@ async def test_mcp_fetch_tools_stamps_own_source_name(monkeypatch):
     builds — the one place remote tool identity is established. Nothing
     downstream should have to guess it back.
     """
-    src = MCPSource(_mcp("weather_api"))
+    src = MCPSource(_mcp("weather_api", tool_specs={
+        "get_forecast": {"description": "d", "tags": [], "action": "allow"}
+    }))
 
     async def fake_post(payload, dispatch_token=None):
         return {"result": {"tools": [{"name": "get_forecast", "description": "d"}]}}
@@ -313,15 +310,17 @@ async def test_mcp_fetch_tools_stamps_own_source_name(monkeypatch):
 
 
 async def test_two_unrestricted_mcp_sources_resolve_independently(tmp_path: Path, monkeypatch):
-    """Regression: two unrestricted MCP sources (no tool_names, no connector
+    """Regression: two unrestricted MCP sources (no tool_names, no manifest
 
-    manifest) used to be indistinguishable to the old heuristic, which always
+    tool specs) used to be indistinguishable to the old heuristic, which always
     picked "the first unrestricted MCP source" for every MCP tool regardless
     of which source actually produced it. With source_name carried from
     MCPSource._fetch_tools(), a tool from the second source must resolve to
     the second source — not the first, and not "local".
     """
     from harness.core.harness import SHAI
+    from harness.mcp.baseline import record_baseline
+    from harness.mcp.manifest import manifest_file_hash
 
     async def fake_connect(self):
         self._connected = True
@@ -333,19 +332,30 @@ async def test_two_unrestricted_mcp_sources_resolve_independently(tmp_path: Path
     monkeypatch.setattr(MCPSource, "_connect", fake_connect)
     monkeypatch.setattr(MCPSource, "_fetch_tools", fake_fetch_tools)
 
+    mcp_dir = tmp_path / "mcp"
+    mcp_dir.mkdir()
+    baseline_db = tmp_path / "baseline.db"
+    secret = b"test-secret"
+    for source_id, host in (("source_a", "a.example"), ("source_b", "b.example")):
+        manifest_path = mcp_dir / f"{source_id}.yaml"
+        manifest_path.write_text(
+            f"id: {source_id}\ndisplay_name: \"{source_id}\"\n"
+            f"url: \"http://{host}/sse\"\n"
+        )
+        record_baseline(baseline_db, source_id, manifest_file_hash(manifest_path), secret)
+
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "sources:\n"
-        "  - name: source_a\n"
-        "    transport: mcp\n"
-        "    url: http://a.example/sse\n"
-        "  - name: source_b\n"
-        "    transport: mcp\n"
-        "    url: http://b.example/sse\n"
+        "  - name: source_a\n    transport: mcp\n"
+        "  - name: source_b\n    transport: mcp\n"
+        f"mcp_manifests_dir: {mcp_dir}\n"
+        "mcp_baseline:\n"
+        f"  path: {baseline_db}\n"
+        "  secret: test-secret\n"
     )
     agent_file = tmp_path / "agent.yaml"
     agent_file.write_text(
@@ -450,25 +460,57 @@ async def test_open_sse_session_raises_when_sessionid_missing(monkeypatch):
 
 # ── SourceConfig schema ───────────────────────────────────────────────────
 
-def test_source_config_mcp_requires_url():
-    from pydantic import ValidationError
-
+def test_source_config_accepts_mcp_transport_by_name():
+    """An MCP source is declared here by name only — its manifest resolves
+    by convention from mcp_manifests_dir (see harness.mcp.discovery)."""
     from harness.config.schema import SourceConfig
-    with pytest.raises(ValidationError, match="url"):
-        SourceConfig(name="slack", transport="mcp")  # missing url
+    cfg = SourceConfig(name="slack", transport="mcp")
+    assert cfg.transport == Transport.MCP
 
 
-def test_source_config_mcp_valid():
-    from harness.config.schema import SourceConfig
-    cfg = SourceConfig(name="slack", transport="mcp",
-                       url="https://mcp.slack.com/sse")
-    assert cfg.url == "https://mcp.slack.com/sse"
-
-
-def test_source_config_local_no_url_needed():
+def test_source_config_local_valid():
     from harness.config.schema import SourceConfig
     cfg = SourceConfig(name="docs", transport="local")
-    assert cfg.url is None
+    assert cfg.transport == Transport.LOCAL
+
+
+def _minimal_config_kwargs() -> dict:
+    return dict(
+        scan_input={"enabled": False},
+        scan_output={"enabled": False},
+    )
+
+
+def test_harness_config_requires_manifests_dir_for_mcp_source():
+    from pydantic import ValidationError
+
+    from harness.config.schema import HarnessConfig
+    with pytest.raises(ValidationError, match="mcp_manifests_dir is required"):
+        HarnessConfig(
+            sources=[SourceConfig(name="slack", transport=Transport.MCP)],
+            **_minimal_config_kwargs(),
+        )
+
+
+def test_harness_config_requires_baseline_secret_for_mcp_source():
+    from pydantic import ValidationError
+
+    from harness.config.schema import HarnessConfig
+    with pytest.raises(ValidationError, match="mcp_baseline.secret is required"):
+        HarnessConfig(
+            sources=[SourceConfig(name="slack", transport=Transport.MCP)],
+            mcp_manifests_dir="./mcp",
+            **_minimal_config_kwargs(),
+        )
+
+
+def test_harness_config_local_only_needs_no_mcp_baseline_config():
+    from harness.config.schema import HarnessConfig
+    config = HarnessConfig(
+        sources=[SourceConfig(name="docs")],
+        **_minimal_config_kwargs(),
+    )
+    assert config.mcp_manifests_dir is None
 
 
 # ── Integration: SHAI.from_yaml with sources ──────────────────────────────
@@ -480,7 +522,6 @@ async def test_shai_from_yaml_with_sources_section(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "sources:\n"
         "  - name: docs_local\n"
         "    transport: local\n"
@@ -504,7 +545,6 @@ async def test_shai_source_tools_available_at_load_agent(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "sources:\n"
         "  - name: docs_local\n"
         "    transport: local\n"
@@ -550,7 +590,6 @@ async def test_source_tags_visible_in_agent_tool_set(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "sources:\n"
         "  - name: tagged_local\n"
         "    transport: local\n"
@@ -596,7 +635,6 @@ async def test_other_agents_not_affected_by_source_override(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "sources:\n"
         "  - name: tagged_local\n"
         "    transport: local\n"
@@ -724,7 +762,6 @@ async def test_reload_agent_honours_required_false(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "sources:\n"
         "  - name: optional_src\n"
         "    transport: local\n"
@@ -762,7 +799,6 @@ async def _tools_for_harness(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
     )
     agent_file = tmp_path / "agent.yaml"
     agent_file.write_text(

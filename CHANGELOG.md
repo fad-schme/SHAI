@@ -12,20 +12,70 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Security
-- **BREAKING — `AgentContext.human_approved` is removed, replaced by
-  `AgentContext.approvals`.** The old field was a plain bool on a
-  caller-constructible context: any caller set it by assignment, one `True`
-  covered every tool and every argument for a whole turn, and the allow path
-  recorded no approver, no scope, and no expiry. Layer 3 gated on nothing.
+### Added
+- **`sources:` declares an MCP source by name** — `transport: mcp`, no url
+  or credentials there. Its manifest resolves by convention at
+  `<mcp_manifests_dir>/<name>.yaml`; a name with no matching manifest is a
+  load error. See `docs/connectors.md`.
+- **`shai mcp onboard <manifest> --config <harness.yaml>`** — the only path
+  to approving an MCP manifest. A live `MCPSource` is built only for a name
+  whose manifest hash matches an approved baseline record; an unapproved or
+  edited-since manifest is never built (or, once built, denies every call
+  against it — `harness.mcp.gate.McpBaselineGate`, checked per
+  `check_tool_call`, no restart needed).
+- **`PromptDefenseScanner`** — absence-of-defense catalog
+  (`prompt_defense_patterns.yaml`) that fires when a manifest's tool
+  description lacks expected defensive language, rather than when it
+  contains a bad pattern. Runs during `shai mcp onboard`, not on the hot
+  path.
+- **Tool reconciliation at onboarding** — a manifest's declared tools are
+  checked against the server's live `tools/list`: a live description that
+  diverges from the manifest's fails onboarding (the rug-pull signal); an
+  absent or undeclared tool is a non-fatal, informational finding.
+- **New `AuditEvent(boundary=mcp_source_onboarding)`** — one event per
+  `shai mcp onboard` run, carrying `manifest_id`, `file_hash`,
+  `finding_categories`, `reconciliation`, and two informational-only
+  fields, `readiness` and `protocol_posture`. Reachable via
+  `shai audit tail --boundary mcp_source_onboarding`.
 
-  `approvals` carries encoded `ApprovalGrant`s (new module
-  `harness.core.approval`), each HMAC-SHA256 signed and bound to one
-  `(agent_id, tenant_id, tool_name, args_digest, approver_id, expiry)`. The gate
-  verifies signature **and** binding offline — a grant for one tool cannot be
-  replayed against another, and approving a $5 refund does not authorise a
-  $50,000 one. SHAI never calls an authorization server; where the grant came
-  from (CIBA, Auth0, WorkOS, a Slack button) is the integrator's choice.
+### Added
+- **`policy.source_rules`** — what survives under `policy:`, deciding which
+  sources activate. Every entry is `action: suppress`, matched on
+  `source_tags`, `transport`, `agent_ids` or `sub_agent_ids`. A source rule
+  carrying a tool-scoped field (`tool_names`, `tool_tags`, or a combinator) is
+  rejected at load.
+
+### Fixed
+- **`_match_source` honoured only `source_tags`, `agent_ids` and
+  `sub_agent_ids`**, silently dropping every other match field. A source rule
+  narrowed by `transport` therefore matched *every* source — a
+  `transport: [mcp]` suppress rule switched off local sources too. It now
+  honours `transport`, and the fields it cannot honour are rejected rather
+  than ignored.
+
+- **`shai harness inspect` and `shai validate`** report `source_rules` /
+  `source rules` in place of the removed global rule count. Startup
+  attestation carries `policy.source_rule_count` and a digest over the source
+  rules.
+
+### Security
+- **A manifest's per-tool `action` is now enforced, and `alert` is gone.**
+  `action: block` was parsed, validated and carried through registration,
+  then dropped — an operator reading their own manifest saw a blocked tool
+  that the gate happily allowed. Each `action: block` now compiles at startup
+  to an ordinary deny rule (`harness.mcp.discovery.compile_manifest_rules`)
+  evaluated by the existing policy layer ahead of every operator rule, agent
+  and global alike. Rules are first-match-wins, so a manifest denial — which
+  is what `shai mcp onboard` approved, by file hash — cannot be weakened by a
+  local rule; granting the tool means editing the manifest and re-onboarding.
+  `action: allow` compiles to no rule at all: it is the absence of a
+  restriction, not a grant, so an operator rule denying that tool still
+  denies. The gate keeps exactly seven layers.
+
+  `MCPToolSpec.action` narrows to `allow | block`; `action: alert` is
+  rejected at parse time naming the file and field. The policy engine has no
+  "pass but warn" verdict for a tool call, and inventing one would have
+  changed `GateDecision` for a value nothing uses.
 
   New `check_tool_call.approvals` config block with `secret`,
   `sensitive_quorum` (default 1) and `irreversible_quorum` (default 2). Quorum
@@ -41,10 +91,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   may invoke at all is decided earlier, by its `allowed_tool_names` and
   `allowed_tags`.
 
-  *Migration:* set `check_tool_call.approvals.secret`, then issue grants with
-  `sign_grant()` / `encode_grant()` and pass them on `ctx.approvals`. Callers
-  that never used `human_approved` and register no `SENSITIVE`/`IRREVERSIBLE`
-  tools are unaffected.
+- **Host canonicalization for `allowed_urls` matching, and a new
+  `ArgumentRule.scope_policy` field.** `matches_allowed_url()` — the
+  matcher behind a `DispatchToken`'s `allowed_urls` — did a raw string
+  prefix/exact comparison with no lowercasing, IDNA normalization, or
+  IP-literal handling, so a case difference or an alternate IPv4 encoding
+  (short dotted-quad, octal, decimal) that resolves to the same
+  destination could read as a mismatch. It now canonicalizes both the
+  request URL and each pattern's host (new `harness.connectivity.scope`
+  module) before comparing; a URL whose host fails to canonicalize is
+  denied outright, never compared as a raw string.
+
+  The same canonicalization backs a new optional `ArgumentRule.scope_policy`
+  field: `allowed_hosts` / `allowed_domains` (with `allow_subdomains`) /
+  `allowed_cidrs`, for constraining a tool argument that names a network
+  destination (a webhook URL, a callback) — something a hand-written
+  `pattern` regex could not safely express, since it would have to
+  reimplement host canonicalization itself to be safe against the same
+  bypasses. An IP-literal value can be granted only via `allowed_cidrs`,
+  never `allowed_hosts`/`allowed_domains`, so a private/loopback/
+  link-local/multicast/reserved/unspecified destination always needs the
+  same explicit opt-in `allowed_cidrs` requires elsewhere.
+
+  Adapted from the algorithm published in
+  [raceksd-source/scopegate](https://github.com/raceksd-source/scopegate)
+  (see `SCOPEGATE-RESEARCH.md`) — no new dependency taken; SHAI owns the
+  implementation and test corpus. See `docs/connectors.md` for the
+  `scope_policy` config shape and `THREAT_MODEL.md`'s T8 residual-risk
+  note for what this does and does not close.
 
 ### Added
 - **`shai audit verify --file PATH --secret ENV_VAR`** — verifies the
@@ -54,14 +128,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `AuditSigningConfig` documented a `harness audit verify` command that had
   never existed — wrong binary name and a subcommand that was not implemented.
   Operators following it were left hand-rolling HMAC verification.
-
-  Records are classified as verified, mismatched, unsigned, or malformed, and
-  failing line numbers are reported. **Exit 0 only when every record verified**
-  — unsigned and malformed records fail the run alongside mismatched ones,
-  because a trail with a hole in it does not answer the question signing was
-  enabled to answer. An empty file fails for the same reason. `--secret` names
-  an environment variable rather than taking the key, matching `shai patterns`,
-  so the key stays out of shell history and the process list.
 
   Verification canonicalises before hashing, so a record a log shipper
   reserialized with different key order still verifies. The primitive lives
@@ -75,23 +141,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   constructed `AgentContext` field-by-field — which the docs told them not to
   do — or left every conversation sharing one execution budget and one
   cross-turn threat score.
-
-  This is also the fix for a **per-turn signal isolation** defect. A context
-  carries the turn's `TurnSignals`: `scan_input` attaches it, `scan_output`
-  clears it. Two turns running concurrently through the *same* context shared
-  one bus — the second `scan_input` replaced the first turn's evidence, and
-  whichever `scan_output` ran first cleared it for both. The first turn then
-  reached its own `scan_output` with nothing recorded: its injection signal was
-  gone, so gate layer 6 correlated against nothing and the consolidated
-  turn-risk block could not fire. The documentation pointed both ways at once,
-  telling callers not to share a context between turns and, three lines later,
-  to hold the one from `load_agent()` for the agent's lifetime.
-
-  Two turns presenting the same context are indistinguishable, so the harness
-  cannot resolve this alone — `for_conversation()` is how a caller keeps them
-  apart. `scan_input` now logs a warning when it finds a bus already attached,
-  which is either a shared context or a turn that never reached `scan_output`.
-  Sequential reuse of one context is unchanged and silent.
 
 - **Agent kill switch** — `SHAI.revoke_agent()` / `restore_agent()` /
   `revoked_agents()`, plus `shai agents revoke|restore|revocations`. A revoked
@@ -162,90 +211,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   releases the MCP sources' httpx clients, the audit sinks' file handles and the
   threat accumulator's SQLite connection, and nothing inside SHAI knows when the
   last turn has run.
-
-### Changed
-- **BREAKING**: the operational surface moves off the `SHAI` facade to
-  `harness.maintenance`. Seven members relocate — `reload_agent`,
-  `deregister_agent`, `list_agents`, `revoke_agent`, `restore_agent`,
-  `revoked_agents`, and the `scanners` property:
-
-      harness.revoke_agent("billing_agent")     # before
-      harness.maintenance.revoke_agent("billing_agent")   # after
-
-  The facade now carries only the per-turn contract — the five enforcement
-  boundaries plus what a turn needs to reach them — and drops from 22 public
-  members to 16. Nothing else changed: the five boundaries stay public, because
-  SHAI does not own the agent loop and an application with its own loop calls
-  them directly.
-
-  `scanners` moves for a second reason. Scanners are enabled by name in
-  `harness.yaml` and resolved through the `harness.scanners` entry-point group;
-  handing live scanner instances back out of the facade contradicted that, and
-  inspection is what the maintenance surface is for.
-
-  On the new surface, `async` follows the same rule as the registries — only
-  `reload_agent` awaits, so `deregister_agent()` and `registered_agents()` are
-  now synchronous. `harness.maintenance` needs no construction and no await.
-
-  `list_agents()` is renamed **`registered_agents()`**, pairing with
-  `revoked_agents()` on the same object. The old name read as the in-process
-  twin of `shai agents list` and is not: the CLI scans a directory of agent YAML
-  files offline and registers nothing, while this reflects live harness state.
-  The CLI's own `--help` claimed it listed "registered agents" and now says what
-  it does.
-
-### Removed
-- **BREAKING**: `SHAI.scan_pii()` and `SHAI.scan_injection()`, and with them
-  `BoundaryName.NARROW_SCAN` and its `shai audit tail --boundary` choice.
-  They were the only two entry points on the facade named after a *scanner*
-  rather than a *boundary*. A scanner is enabled by name in `harness.yaml` and
-  runs at the boundary that declares it; a method that reaches past the
-  configured chain to run one scanner is a second way to answer a question
-  config already answers.
-
-  *Migration:* declare the scanner you want on the boundary that should run it.
-  For a surface that needs only PII detection, give that boundary a chain of
-  `regex_pii` alone — the verdict shape is unchanged. Audit consumers filtering
-  on `boundary == "narrow_scan"` can drop the filter: no event carries it now.
-
-- **BREAKING**: `harness.integrations.openai_agents.make_before_tool_hook()`.
-  It gated a call and handed control back to the SDK, which dispatches the tool
-  itself — so the hook never saw the result and `scan_tool_result` could not
-  run. Tool output reached the model unscanned, with no T6 indirect-injection
-  boundary, from a public entry point that otherwise looked equivalent to
-  `wrap_tools()`. It was the only place in six integrations that ran part of
-  the contract instead of all of it.
-
-  *Migration:* `gated = await wrap_tools(tools, harness=harness, ctx=ctx)`,
-  then pass `gated` to `Agent(...)`. This registers the tools and runs
-  `check_tool_call` → dispatch → `scan_tool_result`, the same sequence every
-  other integration runs.
-
-### Changed
-- **BREAKING**: `ToolRegistry`, `AgentRegistry` and `SourceRegistry` are
-  `async` only where they await. `register`, `deregister`, `register_many`,
-  `get` and `list` are now synchronous on all three — they are dict operations
-  behind a `threading.Lock`, and marking them `async` made `ToolRegistry.list()`
-  and `as_dict()` two spellings of one read. `AgentRegistry.load`/`reload`
-  (YAML parsed off the event loop) and `SourceRegistry.activate`/`close`
-  (concurrent source loading) stay async.
-
-  These classes are internal — not exported from `harness` — so this reaches
-  only code holding a registry directly. **The `SHAI` facade is unchanged**:
-  `await harness.get_source(...)`, `await harness.register_tools(...)` and
-  `await harness.list_agents()` keep their signatures. The facade is the
-  published surface and stays uniformly async; the rule applies behind it.
-
-- **The audit emitter stamps a copy instead of rewriting the event it was
-  given.** Truncating an oversized `deny_reason` and applying the HMAC used
-  `object.__setattr__` to write through `AuditEvent`'s frozen model, so a
-  boundary that had already handed its event over found it altered afterwards.
-  Sinks, `collect_events()`, the written bytes and the signature are all
-  unchanged — the emitter produces the same record as before. What changes is
-  that the caller's own object is left alone.
-- **Startup attestation** now records `policy.forbidden_tag_combinations`. The
-  control is enforced at agent load rather than by a policy rule, so the
-  existing `policy.digest` would not have moved if an operator dropped it.
 
 ### Fixed
 - **A policy `redact` rule no longer drops the arguments it does not name.**
@@ -367,59 +332,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   distribution name declared in `pyproject.toml`, so a future rename fails
   loudly instead of restoring the sentinel.
 
-- **`command_injection_scan` and `mcp_metadata_scan` are resolvable by name.**
-  Both are selectable under a boundary's `scanners:` list, but neither was
-  registered in the `harness.scanners` entry-point group, so
-  `harness.adapters.discovery.resolve("harness.scanners", name)` raised
-  `AdapterDiscoveryError` for them. That broke the migration this changelog
-  published when the `MCPMetadataScanner` re-export was removed — it directs
-  users to "resolve it by name through `harness.scanners` like every other
-  scanner", which was the one name that could not be resolved that way.
-  `harness.yaml` was never affected: `from_yaml()` builds bundled scanners from
-  an internal table that always had all seven. A contract test now pins the two
-  against each other.
-
 ## [0.7.0] — 2026-08-05
 
 ### Added
-- **`policy.engine` selects the PolicyEngine by name.** Defaults to the
-  built-in `rules` evaluator, so no existing config changes behaviour. Any
-  other name resolves through the `harness.policy` entry-point group, which
-  makes an OPA or Cedar engine wirable from `harness.yaml`:
-
-  ```yaml
-  policy:
-    engine:
-      name: opa
-      config: {bundle_url: "${OPA_BUNDLE_URL}"}
-  ```
-
-  Unlike a scanner or sink that cannot be built, an engine that cannot be built
-  is fatal — a harness with no policy engine has no gate. Inline `policy.rules`
-  alongside a non-`rules` engine is rejected at load rather than silently
-  ignored: those rules reach the built-in evaluator only.
-
-- **`secrets:` selects the SecretsProvider by name.** Defaults to `env`
-  (`EnvVarProvider`), matching what every config did implicitly before. Any
-  other name resolves through the `harness.secrets` entry-point group, so a
-  Vault or KMS provider is a config change rather than an application-code
-  change:
-
-  ```yaml
-  secrets:
-    name: vault
-    config: {addr: "${VAULT_ADDR}"}
-  ```
-
-  The block is read before the rest of the config is validated, because this
-  provider is what resolves the config's own `secret://` URIs. `${ENV_VAR}`
-  expands inside it; a `secret://` inside it is rejected, since it would need
-  the provider it is defining.
-
-  Both groups were declared and resolvable but had no consumer: `from_yaml()`
-  constructed `RuleBasedPolicy` and `EnvVarProvider` directly, so a package
-  registering under either group could never be reached.
-
 - **Startup attestation** — `SHAI.from_yaml()` emits one `boundary=system`,
   `decision=startup` `AuditEvent` before returning, recording what the process
   actually wired: SHAI version, every scanner/sink/policy adapter with its
@@ -708,112 +623,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   validates `boundary` against a fixed set needs `mcp_metadata_scan` added to
   it.
 
-### Changed
-- **BREAKING**: an enabled scan boundary with no scanner configured now blocks.
-  It returned ALLOW. "We inspected this and found nothing" and "nothing
-  inspected this" were the same answer to the caller, which is the one thing a
-  scan verdict must never be ambiguous about. Turning a boundary *off* is
-  unchanged and still allows — that is an explicit decision, and the event
-  carries `disabled: true` to say so. Reaching the new branch means the
-  configuration asked for a scan it could not perform. The rule lives in the
-  shared pipeline, so it covers every boundary rather than the case that
-  prompted it.
-- **BREAKING**: `check_tool_call.arg_scanners:` is now `check_tool_call.scanners:`.
-  Every boundary spells the key the same way. Because the config models reject
-  unknown keys, a stale `arg_scanners:` fails at `from_yaml()` rather than being
-  quietly ignored — rename it in `harness.yaml`.
-- **BREAKING**: `scan_pii()` and `scan_injection()` run only what is configured.
-  When the scanner they name was absent from `scan_input.scanners`, they fell
-  back to the *entire* input stack — so a call asking for targeted PII detection
-  silently ran injection, jailbreak and the heuristic backstop under
-  `scan_input`'s threshold and action. They now run the matching subset, and
-  block when it is empty (see the entry above). An application calling
-  `scan_pii()` without declaring `regex_pii` will start seeing blocks; it was
-  previously getting a scan it never asked for, under the wrong threshold.
-- **BREAKING**: a pattern catalog that cannot be loaded raises instead of
-  loading empty. `InjectionScanner` returned an empty catalog on a missing file,
-  invalid YAML, or a non-mapping document — and a scanner with no rules returns
-  "no findings" for every input, indistinguishable from one that is working. A
-  typo in a `patterns_file` path was a silent hole. It now raises `ValueError`
-  at construction. An explicit `patterns: []` is still valid and still means
-  what it says.
-- **BREAKING**: `scan_mcp_metadata.action` is honoured. It was accepted and
-  ignored, so the boundary was block-or-nothing with no observe-before-enforce
-  path. `alert` now registers the tool and records the finding as `warn`;
-  `block` refuses as before. `redact` is rejected at config load — a tool
-  description is registered whole or not at all, and a partially redacted one
-  still reaches the model.
-- **BREAKING**: an agent's `allowed_tags:` now gates the agent's own tool calls.
-  It never did. Layer 4 read only the capability set on the context, which is
-  populated for subagents and left empty on a parent turn — so a top-level
-  agent declaring `allowed_tags: [read]` got no enforcement from it at all, and
-  the field's only effect was constraining that agent's subagents at load time.
-  An operator reading their own config had every reason to believe otherwise.
-  The declared set now binds the agent too, intersected with any narrower set
-  the context carries: a hand-built `AgentContext` cannot widen what the config
-  allows, and a deliberately narrowed one is still honoured. Semantics are
-  unchanged and match what subagents always had — a tool's tags must be a
-  *subset* of the allowed set, not merely overlap it.
-  **Migration**: `allowed_tags` must list every tag carried by every tool the
-  agent may call, or those calls are denied with `requires tags [...] not in
-  agent capability set`. An agent allowing `[read]` and calling a tool tagged
-  `[read, internal]` now fails until `internal` is added. Agents consuming MCP
-  sources are most affected — those tools carry an `mcp` tag plus any
-  source-level tags. Read the deny reasons in the audit trail to enumerate what
-  each agent actually needs.
-- **BREAKING**: `scan_file` can now block a document two techniques agree on.
-  Neither of the boundary's scanners declared a detection technique, so every
-  finding was labelled `unknown`, the whole boundary reported one technique,
-  and the cross-method severity promotion that requires two could never fire
-  there — the structural pass corroborating the content chain being exactly
-  what it exists for. `FileScanner` now reports `structural_file` and the
-  content chain's findings keep the technique of whichever scanner produced
-  them. Consequence on an unchanged config: a document flagged `medium` in the
-  same category by two different techniques in the chain — a catalog scanner
-  and the always-on heuristic backstop, say — is promoted to `high` and blocks
-  at the default `block_at: high`, where before it passed. Files that used to
-  get through can now be rejected. Set `scan_file.block_at: critical` to keep
-  the previous effective threshold while the new promotions are assessed.
-- `verify_token()` names `sub_agent_id` when it is missing instead of failing
-  with `signature mismatch`. The field was always part of the signed payload,
-  so a token without it already failed — the error just did not say why. No
-  valid token is affected.
-- **BREAKING**: `gated_dispatch` returns one of three things instead of two. It
-  now scans the tool result after dispatch, so a result blocked as indirect
-  injection comes back as a `ScanVerdict`, alongside the existing `GateDecision`
-  on a gate deny and the tool result on allow. A caller testing only
-  `isinstance(result, GateDecision)` will hand a blocked `ScanVerdict` to the
-  model as though it were tool output — test for both, or pass either to
-  `make_tool_result_from_denial()`. On a redacted result the return is the
-  redacted string rather than the original object, since the unredacted value
-  must not be handed back.
-- **BREAKING**: `make_tool_result_from_denial()` accepts
-  `GateDecision | ScanVerdict`. For a blocked result the model-facing message is
-  fixed text rather than a reason string — findings describe matched content and
-  are never echoed back. Its first parameter is renamed `gate` → `denial`, which
-  affects keyword callers only.
-- **BREAKING**: `ToolRegistry.register()` raises `ConfigError` where it
-  previously returned `False`, when a tool of the same name differs in
-  `description`, `argument_rules`, or `irreversibility`.
-  `SHAI.register_tools()` propagates it. Re-registering a genuinely identical
-  tool is still idempotent. Through `load_agent()` the raise is caught and the
-  tool is kept as a per-agent override, so the agent resolves against the newer
-  definition instead of silently retaining the older one.
-- **BREAKING**: `SHAI.scan_injection()` honours a per-scanner `action:` declared
-  on the scanner it selects, instead of forcing the boundary action onto it.
-  Only configs that set `action:` on a scanner whose name starts with
-  `injection_scan` are affected — for them this helper now agrees with
-  `scan_input`, which already honoured the same declaration, so an
-  `action: alert` that previously blocked here now warns.
-- `Tool.tags` is sorted and de-duplicated at construction, so tag order no
-  longer round-trips. Every consumer already read tags as a set; normalising
-  keeps ordering from affecting tool equality now that equality is field-wise.
-- `SHAI.__init__` takes keyword arguments only, and takes only the collaborators
-  it cannot derive: the registries, emitter, scanner lists, policy, rate limiter
-  and source registry. The per-boundary `enabled`, `block_at` and `action`
-  values it used to mirror are read from the `HarnessConfig` it already holds.
-  `SHAI.from_yaml()` is unchanged and remains the supported constructor.
-
 ### Fixed
 - **The strongest heuristic detections recorded an empty fingerprint.** The
   scanner emits a second, higher-severity finding when it sees a compound
@@ -922,60 +731,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   token secret, or pattern-DB secret happened to start with `secret://` got a
   second lookup and a different key than the one they set. The second pass is
   gone; the loader's resolved value is used as-is.
-
-### Removed
-- **BREAKING**: fifteen names are no longer exported from the `harness`
-  top-level namespace. `SHAI` is the API; everything still exported is a shape
-  one of its method signatures uses — what you pass in, what you get back, or
-  what can escape as an exception. The rest were exported because they were
-  useful internally: `ToolRegistry`, `LocalSource`, `MCPSource`,
-  `SourceRegistry`, `SubAgentConfig`, `RuleConfig`, `ConnectivityConfig`,
-  `DispatchToken`, `TokenError`, `ScanAction`, `AdapterDiscoveryError`,
-  `PolicyEvaluationError`, `ArgumentViolationError`, `IrreversibleActionError`,
-  `ToolNotRegisteredError`. The four exception types among them never escape a
-  public method — the gate reports its refusals as `GateDecision(allowed=False)`,
-  so catching them was already dead code.
-  **Migration**: each remains importable from its own module — for example
-  `from harness.tools.source import MCPSource`, `from harness.connectivity import
-  DispatchToken`. Anything outside `__all__` is now explicitly an implementation
-  detail and may change without deprecation.
-- **BREAKING**: `scan_tool_result_on` — gone from `ConnectorManifest`,
-  `SourceConfig`, and all eight bundled connector manifests. No integration ever
-  passed `tool_name`, so the field was inert on every shipped code path and no
-  deployment loses scanning; what it did do was tell operators they were scoping
-  T6 scanning when they were not. It also collapsed every source's list into one
-  global set, so a narrow list on one source would have suppressed scanning for
-  another source's tools. Because `SourceConfig` forbids unknown keys, a stale
-  `scan_tool_result_on:` in `harness.yaml` now fails validation at
-  `from_yaml()` — delete the key.
-- **BREAKING**: the `tool_name` parameter on `SHAI.scan_tool_result()`. The
-  removed filter was its only consumer. Calls passing it now raise `TypeError`
-  — drop the argument. The `disabled=True` audit event that a filtered tool
-  produced is gone with it.
-- **BREAKING**: `MCPMetadataScanner.should_block()` and its `block_at_severity`
-  constructor parameter. The scanner carried a second, independent threshold
-  that nothing supplied and no shipped code path consulted — the real decision
-  was made against `scan_mcp_metadata.block_at`, and the two implementations had
-  already diverged (see Fixed). The scanner now only produces findings and the
-  boundary applies the threshold, which is the split every other scanner
-  follows. Set the threshold in `harness.yaml` under `scan_mcp_metadata.block_at`;
-  a `config: {block_at_severity: ...}` on the scanner's `AdapterRef` now fails at
-  `from_yaml()`.
-- **BREAKING**: the `MCPMetadataScanner` re-export from
-  `harness.adapters.scanners`. It was the only one of seven bundled scanners
-  the package exported, making it a partial second public surface alongside the
-  entry-point group, and which one got exported was arbitrary. Import it from
-  `harness.adapters.scanners.mcp_metadata_scanner`, or resolve it by name
-  through `harness.scanners` like every other scanner.
-- The `harness.sources` entry-point group. It advertised `local`, `skill` and
-  `mcp` as pluggable source adapters, but the group was never in the set
-  `resolve()` accepts, and the `skill` entry pointed at a class that was never
-  written — so nothing could load any of it. Sources are selected by the
-  `transport:` field on a source in `harness.yaml`, which is unchanged. A
-  package registering under this group was never being consulted, so there is
-  nothing to migrate. Contract tests now assert that every declared group is
-  resolvable and every entry-point target imports, so a decorative group cannot
-  be added back unnoticed.
 
 ### Security
 - A scan that cannot run fails closed. The combination of a boundary enabled
@@ -1129,80 +884,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to any metadata check. `.7z` and `.rar` have no stdlib reader and are
   reported as uninspectable rather than passed silently.
 
-### Changed
-- `patterns_db.path` now also backs the heuristic-candidate cache, which
-  previously read a hardcoded `state/patterns.db`. Both tables resolve to one
-  configured file. Deployments that kept the DB at the default path are
-  unaffected.
-- **BREAKING**: audit sink output (`file`, `stdout`) is derived from the event
-  model instead of a hand-maintained field list. Every `AuditEvent` line gains
-  `token_id` and `signature` when set — both were silently dropped before — JSON
-  keys are sorted, and timestamps and enums render through Pydantic's JSON mode.
-  Log consumers that pin an exact key set or field order must be updated.
-- `NetworkAuditEvent` moved from `harness.connectivity.transport` to
-  `harness.core.events`, alongside `AuditEvent`, and is now a Pydantic model
-  rather than a dataclass. It remains re-exported from `harness.connectivity`,
-  so existing imports keep working. Its hand-rolled `model_dump_json()` is gone
-  — Pydantic supplies one.
-- **BREAKING**: audit event signatures are computed over the same canonical JSON
-  the sinks write, instead of a separately built Python-mode dump. The two
-  encoders rendered timestamps differently (`2026-07-27 12:00:00+00:00` against
-  `2026-07-27T12:00:00Z`), so a written line could never verify against the
-  signature it carried. Signature **values** therefore differ from earlier
-  builds for the same event; the written line content is unchanged. Stored log
-  files are unaffected because no release before 0.4.0 wrote `signature` to
-  disk, but a consumer that captured `event.signature` in process — via a custom
-  sink or `collect_events()` — and kept it for later comparison must
-  re-baseline.
-- **BREAKING**: session execution budgets are keyed per conversation
-  (`ctx.conversation_id`, falling back to `agent_id`) instead of collapsing onto
-  a single per-agent bucket. `max_steps` is now a per-conversation ceiling. For a
-  deployment running many conversations through one agent this is a
-  **loosening** — the old single bucket capped that agent's traffic in
-  aggregate, which was an accident of the broken session key rather than a
-  designed limit. Leave `conversation_id` unset to keep the aggregate behaviour.
-- Subagent contexts inherit their parent's `conversation_id`, so a delegated
-  call shares the parent's budget and threat-accumulator session.
-- **BREAKING**: an invalid `limits:` block in `agent-xx.yaml` is now rejected
-  while parsing the file, instead of logging a warning and falling back to
-  global defaults. The old behaviour discarded the block whole, so one bad key
-  silently dropped the agent's *valid* limits too — an agent declaring
-  `max_steps` could end up unbounded. `load_agent()` raises `ConfigError`
-  before registering anything and `reload_agent()` keeps the previous
-  definition, so a rejected config never leaves a partially loaded agent.
-  Deployments carrying a malformed `limits:` block will fail to start until it
-  is corrected.
-- **BREAKING**: `scan_file.scanners` is the file's **content** chain — each
-  scanner receives text extracted from the file and, for images, the EXIF/XMP
-  blob. Previously `run_file_scan` handed those entries the file *path*, so a
-  text scanner declared there could never match anything. Declared scanners are
-  authoritative, as at every other boundary; with no `scanners` key a
-  document-tuned injection scanner runs so an enabled boundary is never a
-  no-op. `heuristic_scan` is still appended automatically as the always-on
-  structural backstop. A config that already listed scanners there was getting
-  nothing from them and will now get real verdicts — expect new denials on
-  files that previously passed.
-- **BREAKING**: per-scanner `action` and `redact_with` are rejected under
-  `scan_file` with a `ConfigError`. The whole chain runs inside one content
-  scanner, so the boundary has a single scanner to index overrides against and
-  the keys were silently ignored. Use the boundary-level `action` instead, and
-  remove them from any existing `scan_file` block or startup fails.
-- **BREAKING**: the `file.zip_bomb` finding category is gone, replaced by
-  `file.archive_bomb` — the scope is no longer zip. Policy rules matching the
-  old name stop matching. Two categories join it: `file.archive_escape` (HIGH)
-  for tar path traversal and symlink members, and `file.unscannable_archive`
-  (MEDIUM) for a container with no available reader.
-- **Archive uploads that previously passed will now be denied.** `.tar`,
-  `.gz`, `.xz`, `.7z` and `.rar` produced no findings at all before this
-  release, so any deployment accepting them should expect new denials on first
-  upgrade. Scanning a single-stream archive also now costs up to 50 MB of
-  bounded decompression where it previously cost nothing; the zip path still
-  decompresses nothing.
-- `scan_file` audit events list two adapters, `file_scanner` and
-  `file_content_scan`, where they previously listed one. The structural pass
-  and the content chain are now separate scanners at the boundary. Log
-  consumers keying on the `adapters` array should expect both.
-
 ### Fixed
 - Signed pattern rules applied with `shai patterns apply` are now read at
   runtime. `load_verified_rules()` had no caller and
@@ -1261,30 +942,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   content failures used to open the single file-scanner breaker and silently
   stop MIME, PDF-JavaScript and ZIP checks along with it.
 
-### Removed
-- **BREAKING**: `max_tokens_per_session` and `tool_cost_weights`, from
-  `check_tool_call.execution_budget` in `harness.yaml` and from agent `limits:`
-  blocks. SHAI does not own the agent loop and never observes the LLM call, so a
-  token ceiling could only act on a figure self-reported by the process being
-  governed — an assertion, not an enforceable control. Cap token spend at the
-  model provider. `SessionBudget` is now three controls: step counter,
-  per-prompt fan-out, loop detection.
-
-  **Strip both keys from every config file before upgrading — agent files
-  included.** A stale key raises `ConfigError` wherever it appears: at
-  `SHAI.from_yaml()` for `harness.yaml`, at `load_agent()` for an agent's
-  `limits:` block. Startup fails until the keys are gone; nothing is silently
-  ignored.
-- `SessionBudget.new_prompt()` — superseded. It could not make fan-out work on
-  its own, because `check()` counts a call only when `prompt_id` is supplied.
-- `FileScanner.__init__`'s singular `text_scanner` parameter — superseded by
-  `text_scanners`. It existed to keep one internal call site working, and that
-  call site now passes the chain.
-- `scan_file_scanner_actions` and `scan_file_redact_withs` from `SHAI.__init__`,
-  following the rejection of per-scanner overrides at that boundary. They could
-  only ever carry `None`. `SHAI.from_yaml()` is the documented construction path
-  and is unaffected.
-
 ### Security
 - Detection rules distributed through the signed pattern DB now take effect at
   runtime. Operators who applied a bundle on 0.3.0 were running the bundled
@@ -1292,16 +949,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - DB-sourced rules are additive: they extend a scanner's catalog and cannot
   disable, reorder, or suppress bundled rules. Trust in them is anchored solely
   in the HMAC-SHA256 signing key, verified per row with `hmac.compare_digest`.
-- **BREAKING**: pattern row signatures are now HMAC-SHA256 over the canonical
-  JSON encoding of `{rule_id, catalog, payload}` (`sort_keys=True`), matching
-  how the audit emitter signs. The previous body concatenated the three fields
-  with no delimiter, so `("x", "injection")` and `("xin", "jection")` signed
-  identically. Because `catalog` now routes a rule to a scanner, that ambiguity
-  let an actor with DB write access but no signing key re-split a signed row to
-  move a rule onto a different scanner. **Bundles signed before 0.4.0 must be
-  re-signed, and existing DB rows re-applied** — they will fail verification and
-  be skipped until then. Check with
-  `shai patterns verify --db state/patterns.db --secret PATTERNS_SIGNING_KEY`.
 - The `token_id` join between a tool-call gate `AuditEvent` and the
   `NetworkAuditEvent` for the outbound request it authorised now works. Both
   sides were broken: network events never reached a sink at all, and `token_id`
@@ -1374,16 +1021,6 @@ audit-integrity workstream.
 - `THREAT_MODEL.md` — explicit mapping from OWASP Agentic-AI threats to SHAI controls and tests, including known gaps
 - Circuit breaker and promoted-candidate state moved onto the `SHAI` instance
   (removes module-level mutable state — safe for multiple instances per process)
-
-### Changed
-- **BREAKING**: default `on_error` is now `fail_closed` (was implicit fail-open).
-  Existing configs that relied on the old behavior must add `on_error: fail_open` explicitly.
-- `InjectionScanner` accepts `extra_rules` parameter for DB-sourced patterns
-- README rewritten: honest positioning, prior-art section, threat-model link
-- `docs/index.md` is a public documentation index (was a Claude Skills manifest)
-- `docs/` and `.claude/skills/` consolidated: both folders have the same
-  unnumbered topic set. `docs/` is tuned for humans, `.claude/skills/` for
-  AI coding assistants.
 
 ### Fixed
 - `from_yaml()` referenced `instance` before construction — crashed on any

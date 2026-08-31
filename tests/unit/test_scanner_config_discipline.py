@@ -24,14 +24,12 @@ _PII_ONLY = (
     "version: 1\n"
     "scan_input:\n  enabled: true\n  scanners:\n    - name: regex_pii\n"
     "scan_output:\n  enabled: false\n"
-    "policy:\n  rules: []\n"
     "audit_sinks:\n  - name: stdout\n"
 )
 _INJECTION_ONLY = (
     "version: 1\n"
     "scan_input:\n  enabled: true\n  scanners:\n    - name: injection_scan\n"
     "scan_output:\n  enabled: false\n"
-    "policy:\n  rules: []\n"
     "audit_sinks:\n  - name: stdout\n"
 )
 
@@ -88,7 +86,6 @@ async def test_gate_arg_scanners_use_the_scanners_key(tmp_path):
         "scan_input:\n  enabled: true\n  scanners:\n    - name: regex_pii\n"
         "scan_output:\n  enabled: false\n"
         "check_tool_call:\n  scanners:\n    - name: regex_pii\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h, _ = await _harness(tmp_path, body)

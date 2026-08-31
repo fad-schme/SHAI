@@ -50,7 +50,6 @@ async def _make_harness(tmp_path: Path, *, on_escalation: str = "block", scan_en
         f"  on_escalation: {on_escalation}\n"
         f"scan_input:\n  enabled: {enabled_str}\n{scanners_block}"
         f"scan_output:\n  enabled: {enabled_str}\n{scanners_block}"
-        f"policy:\n  rules: []\n"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

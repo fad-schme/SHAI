@@ -258,6 +258,6 @@ decision you own.
 
 ## What next
 
-- [connectors.md](connectors.md) — MCP sources, connector manifests, dispatch tokens
+- [connectors.md](connectors.md) — MCP sources, manifest onboarding, dispatch tokens
 - [testing.md](testing.md) — writing tests against SHAI, `collect_events()`
 - [`.claude/skills/integrations.md`](../.claude/skills/integrations.md) — same content in compact form

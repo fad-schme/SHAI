@@ -50,7 +50,7 @@ YAML file in that directory, then prints a concise configuration summary.
 shai validate
 # Validating config/harness.yaml ... OK
 #   tenant_id:     acme-prod
-#   policy_rules:  4
+#   source_rules:  0
 #   audit_sinks:   ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
 #   session:       enabled=True  backend=sqlite  threshold=0.7  window=50  on_escalation=block
@@ -94,21 +94,21 @@ Agents that fail to load emit a `Warning: could not load ...` line to stderr but
 ## `shai harness inspect`
 
 Offline listing of what a config declares — boundaries and their scanners,
-audit sinks, policy rule count and digest, pattern-DB state, connector
-manifests, resolved sources, and (with `--agents-dir`) every agent.
+audit sinks, policy rule count and digest, pattern-DB state, local sources,
+every MCP source declared under `sources:` (id, redacted url, content
+digest — whether or not it currently has a valid baseline; approval state
+is a runtime concern, not shown here), and (with `--agents-dir`) every agent.
 
 ```bash
 shai harness inspect --config prod.yaml --agents-dir config/agents
 # SHAI 0.7.0  |  tenant: acme-prod
 # ...
-# sources:
-#   slack_primary    mcp    https://mcp.slack.com/sse    connector=slack  tags=external,messaging
+# mcp manifests (./mcp):
+#   slack            https://mcp.slack.com/sse   digest=a1b2c3d4e5f6
 ```
 
-Sources are shown **after** connector-manifest resolution, so the url, tags
-and allow-lists are the ones the harness would run with. URLs are printed
-without userinfo, query string, or fragment — credentials never reach the
-terminal.
+URLs are printed without userinfo, query string, or fragment — credentials
+never reach the terminal.
 
 Nothing is built and nothing is connected to. For the identity of the adapter
 code a *running* process loaded, read the `system` / `startup` audit event it
@@ -118,21 +118,35 @@ emits at construction.
 
 The dependency graph behind that listing: agent -> source -> tool -> tag, plus
 policy rules and subagents. `--format dot` (default) pipes into Graphviz;
-`--format json` gives `{nodes, edges, warnings}`.
+`--format json` gives `{nodes, edges}`.
 
 ```bash
 shai harness graph --config prod.yaml --agents-dir config/agents | dot -Tsvg -o topology.svg
-shai harness graph --config prod.yaml --format json | jq '.warnings'
+shai harness graph --config prod.yaml --format json | jq '.nodes'
 ```
 
-Tool nodes come from connector manifests and agent allow-lists — the only tool
-names knowable without connecting to an MCP server.
+Tool nodes come from agent allow-lists — a `sources:` entry for `transport:
+mcp` contributes no tool nodes of its own; MCP tool topology lives in the
+manifest file it resolves to, outside this offline view.
 
-**Shadow MCP detection:** two sources whose URLs match once credentials and
-query strings are stripped are reported in `warnings` and on stderr. Fronting
-one endpoint with two configs is legal — the second config's tags and
-allow-lists simply also apply to that server — so this is a warning, never an
-error.
+## `shai mcp onboard`
+
+Approve an MCP manifest — the only path that clears tool calls against it,
+and the only path that lets a declared `transport: mcp` source be built into
+a live source at all. Without an approved, matching baseline record, the
+source is never built and any agent referencing it hits "source not
+registered" instead of a gate denial.
+
+```bash
+shai mcp onboard mcp/slack.yaml --config prod.yaml
+```
+
+Parses the manifest, connects live and fetches `tools/list`, scans the
+manifest's own declared tool text, reconciles it against the live response,
+and emits one `AuditEvent(boundary=mcp_source_onboarding)`. A clean pass
+auto-records the manifest's hash into the signed baseline store — running
+the command *is* the approval. See [connectors.md](connectors.md) for the
+manifest schema and the per-call approval gate this feeds.
 
 ## `shai audit tail`
 

@@ -58,8 +58,6 @@ scan_file:
   enabled: true
   scanners:
     - name: injection_scan
-policy:
-  rules: []
 audit_sinks:
   - name: stdout
 """
@@ -567,23 +565,27 @@ async def test_subagent_cannot_declare_a_tag_the_parent_lacks(tmp_path: Path):
 
 
 async def test_policy_allow_cannot_reach_past_layer_1(tmp_path: Path):
-    """L1 is absolute: a global allow rule cannot admit an undeclared tool.
+    """L1 is absolute: an allow rule cannot admit an undeclared tool.
 
     This is the containment claim that matters most — if policy could reach L1,
-    the allowlist would be advisory.
+    the allowlist would be advisory. Agent-scoped rules are the only rules
+    there are now, so this is the whole of the claim rather than half of it.
     """
-    cfg = _ALL_ON.replace(
-        "policy:\n  rules: []\n",
-        "policy:\n"
-        "  rules:\n"
-        "    - id: allow_everything\n"
-        "      match:\n        tool_names: [forbidden_tool]\n"
-        "      action: allow\n",
-    )
-    h, _ = await _harness(tmp_path, cfg)
+    h, _ = await _harness(tmp_path)
+    agent = tmp_path / "allowing_agent.yaml"
+    agent.write_text("""id: allowing_agent
+allowed_tool_names: [search_docs]
+allowed_tags: [read, internal]
+policy_rules:
+  - id: allow_everything
+    match:
+      tool_names: [forbidden_tool]
+    action: allow
+""", encoding="utf-8")
+    await h.load_agent(agent)
     await h.register_tools([Tool(name="forbidden_tool", tags=["read"],
                                  transport=Transport.LOCAL)])
-    ctx = AgentContext(agent_id="orchestrator_agent")
+    ctx = AgentContext(agent_id="allowing_agent")
 
     decision = await h.check_tool_call("forbidden_tool", {}, ctx)
     assert decision.allowed is False

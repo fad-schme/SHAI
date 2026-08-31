@@ -21,7 +21,7 @@ def _minimal() -> dict:
 
 def test_minimal_valid_config():
     cfg = HarnessConfig.model_validate(_minimal())
-    assert cfg.policy.rules == []
+    assert cfg.policy.source_rules == []
     assert len(cfg.audit_sinks) == 1
 
 

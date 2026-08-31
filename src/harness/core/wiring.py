@@ -97,12 +97,11 @@ def _build_text_scanners(
 ) -> list[ConfiguredScanner]:
     """Build text scanners from AdapterRef declarations in harness.yaml.
 
-    Built-in scanners (regex_pii, injection_scan) are resolved via the
-    named factory table above. Custom scanners are resolved via entry points.
+    Scanners are resolved via the named factory table above, which is the
+    whole set.
 
     Each scanner is paired with the action / redact_with of the ref that
-    produced it, so a ref that fails to resolve drops out with its own
-    overrides and cannot shift another scanner's action onto it.
+    produced it, so overrides cannot shift from one scanner onto another.
 
     extra_rules maps scanner name → compiled rules from the signed pattern DB
     (see _DB_CATALOG_FOR_SCANNER). Only injection-family names appear in it, so
@@ -127,14 +126,15 @@ def _build_text_scanners(
                 else factory(cfg)
             )
         else:
-            try:
-                from harness.adapters.discovery import resolve
-                cls = resolve("harness.scanners", ref.name)
-                scanner = cls(**ref.config)
-            except Exception as e:
-                log.warning("scanner adapter not found — skipped",
-                            extra={"adapter_name": ref.name, "error": str(e)})
-                continue
+            # _SCANNER_FACTORIES is the whole set — SHAI Core has no scanner
+            # extension surface, so an unknown name can never resolve to
+            # anything. NOTE: skipping it leaves the boundary running one
+            # fewer inspection than the operator declared, announced only in a
+            # warning log. That fail-open is tracked separately; this branch
+            # preserves the prior behaviour rather than changing it here.
+            log.warning("unknown scanner — skipped",
+                        extra={"adapter_name": ref.name})
+            continue
         scanners.append(ConfiguredScanner(scanner, ref.action, ref.redact_with))
     if not any(getattr(c.scanner, "name", "") == HeuristicScanner.name for c in scanners):
         scanners.append(ConfiguredScanner(HeuristicScanner()))
@@ -182,31 +182,17 @@ def _build_file_scanners(
 def _build_policy(cfg: PolicyConfig) -> PolicyEngine:
     """Build the PolicyEngine named by `policy.engine`.
 
-    Failure is fatal, unlike a scanner or sink that cannot be built: those
-    degrade to one fewer inspection, whereas a harness with no policy engine
-    has no gate at all and allows every tool call. AdapterDiscoveryError
-    propagates and a construction failure becomes ConfigError.
-
-    `policy.rules` reaches the built-in engine only — PolicyConfig rejects the
-    combination of inline rules and any other engine, so nothing is dropped here.
+    RuleBasedPolicy is the only engine SHAI Core has; any other name is a
+    config error. A harness with no policy engine has no gate at all and
+    allows every tool call, so a construction failure is fatal too.
     """
-    if cfg.engine.name == RuleBasedPolicy.name:
-        return RuleBasedPolicy(rules=cfg.parsed_rules())
-
-    from harness.adapters.discovery import resolve
-    cls = resolve("harness.policy", cfg.engine.name)
-    try:
-        return cls(**cfg.engine.config)
-    except Exception as e:
-        # Type only — engine config carries ${ENV_VAR}-expanded bundle
-        # credentials and a third-party message can echo them.
-        log.error("policy engine construction failed",
-                  extra={"adapter_name": cfg.engine.name}, exc_info=True)
+    if cfg.engine.name != RuleBasedPolicy.name:
         raise ConfigError(
-            f"policy engine {cfg.engine.name!r} failed to construct: "
-            f"{type(e).__name__} (see logs for detail)",
+            f"unknown policy engine {cfg.engine.name!r}. "
+            f"Valid engines: [{RuleBasedPolicy.name!r}]",
             op="from_yaml",
-        ) from e
+        )
+    return RuleBasedPolicy(source_rules=cfg.parsed_source_rules())
 
 
 def _build_sinks(adapter_refs: list) -> list:
@@ -218,13 +204,12 @@ def _build_sinks(adapter_refs: list) -> list:
             from harness.adapters.audit_sinks.file import FileSink
             sinks.append(FileSink(**ref.config))
         else:
-            try:
-                from harness.adapters.discovery import resolve
-                cls = resolve("harness.audit_sinks", ref.name)
-                sinks.append(cls(**ref.config))
-            except Exception as e:
-                log.warning("audit sink not found — skipped",
-                            extra={"adapter_name": ref.name, "error": str(e)})
+            # stdout and file are the whole set. NOTE: as with scanners, an
+            # unknown name is skipped, and an emptied list then falls back to
+            # stdout below — a typo silently moves the audit trail. Tracked
+            # separately; not changed by the discovery removal.
+            log.warning("unknown audit sink — skipped",
+                        extra={"adapter_name": ref.name})
     if not sinks:
         log.warning("no audit sinks configured — falling back to stdout")
         sinks = [StdoutSink()]

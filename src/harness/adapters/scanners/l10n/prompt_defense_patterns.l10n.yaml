@@ -1,0 +1,229 @@
+# prompt_defense_patterns.l10n.yaml — multilingual variants of prompt_defense_patterns.yaml
+# =============================================================================
+# French, Spanish, German, and Mandarin Chinese variants of the five defense
+# categories. A tool description written in a non-English locale deserves the
+# same chance to demonstrate defensive language as an English one — an
+# English-only catalog would flag every non-English manifest as missing
+# defenses it may well state, just not in English.
+#
+# Rule names are <lang>.<base_name> so PromptDefenseScanner's per-category
+# absence check treats a match in any language as satisfying that category —
+# it is presence-of-defense-language in any locale that clears the finding.
+
+patterns:
+
+  # ── French (FR) ──────────────────────────────────────────────────────────
+
+  - name: fr.instruction_override_defense
+    meta:
+      description: "FR — refuses embedded instruction overrides"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.instruction_override
+    match: any
+    strings:
+      refuses_embedded_instructions_fr: "(?i)\\bne\\s+(suit|exécute|obéit)\\s+(pas|jamais)\\b.{0,30}\\b(instructions?|consignes?)\\b.{0,20}\\b(intégrées?|cachées?|injectées?)\\b"
+      immune_prompt_injection_fr:       "(?i)\\bimmunisé\\b.{0,20}\\b(contre|à)\\b.{0,20}\\binjection\\s+de\\s+prompt\\b"
+
+  - name: fr.data_exfiltration_defense
+    meta:
+      description: "FR — withholds data from external destinations"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.data_exfiltration
+    match: any
+    strings:
+      no_external_transmission_fr: "(?i)\\bne\\s+(transmet|envoie)\\s+jamais\\b.{0,30}\\b(données|identifiants|secrets)\\b.{0,30}\\b(externe|tiers)\\b"
+      credentials_never_shared_fr: "(?i)\\bidentifiants?\\b.{0,20}\\bjamais\\s+partagés?\\b"
+
+  - name: fr.role_redefinition_defense
+    meta:
+      description: "FR — role or identity cannot be redefined"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.role_redefinition
+    match: any
+    strings:
+      role_cannot_change_fr: "(?i)\\b(rôle|identité)\\b.{0,20}\\bne\\s+peut\\s+(pas\\s+)?être\\s+(modifié|redéfini)\\b"
+
+  - name: fr.hidden_content_defense
+    meta:
+      description: "FR — ignores hidden or invisible instructions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.hidden_content
+    match: any
+    strings:
+      ignores_hidden_instructions_fr: "(?i)\\bignore\\b.{0,20}\\binstructions?\\b.{0,20}\\b(cachées?|invisibles?)\\b"
+
+  - name: fr.user_confirmation_defense
+    meta:
+      description: "FR — requires confirmation before destructive actions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.user_confirmation
+    match: any
+    strings:
+      requires_confirmation_fr: "(?i)\\brequiert\\b.{0,20}\\bconfirmation\\b.{0,30}\\bavant\\b"
+
+  # ── Spanish (ES) ────────────────────────────────────────────────────────
+
+  - name: es.instruction_override_defense
+    meta:
+      description: "ES — refuses embedded instruction overrides"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.instruction_override
+    match: any
+    strings:
+      refuses_embedded_instructions_es: "(?i)\\bno\\s+(sigue|ejecuta|obedece)\\b.{0,30}\\binstrucciones\\b.{0,20}\\b(incrustadas|ocultas|inyectadas)\\b"
+      immune_prompt_injection_es:       "(?i)\\binmune\\b.{0,20}\\ba\\b.{0,20}\\binyecci[oó]n\\s+de\\s+prompt\\b"
+
+  - name: es.data_exfiltration_defense
+    meta:
+      description: "ES — withholds data from external destinations"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.data_exfiltration
+    match: any
+    strings:
+      no_external_transmission_es: "(?i)\\bnunca\\s+(transmite|env[ií]a)\\b.{0,30}\\b(datos|credenciales|secretos)\\b.{0,30}\\b(externo|terceros)\\b"
+      credentials_never_shared_es: "(?i)\\bcredenciales\\b.{0,20}\\bnunca\\s+(compartidas|expuestas)\\b"
+
+  - name: es.role_redefinition_defense
+    meta:
+      description: "ES — role or identity cannot be redefined"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.role_redefinition
+    match: any
+    strings:
+      role_cannot_change_es: "(?i)\\b(rol|identidad)\\b.{0,20}\\bno\\s+puede\\s+ser\\s+(cambiad[oa]|redefinid[oa])\\b"
+
+  - name: es.hidden_content_defense
+    meta:
+      description: "ES — ignores hidden or invisible instructions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.hidden_content
+    match: any
+    strings:
+      ignores_hidden_instructions_es: "(?i)\\bignora\\b.{0,20}\\binstrucciones\\b.{0,20}\\b(ocultas|invisibles)\\b"
+
+  - name: es.user_confirmation_defense
+    meta:
+      description: "ES — requires confirmation before destructive actions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.user_confirmation
+    match: any
+    strings:
+      requires_confirmation_es: "(?i)\\brequiere\\b.{0,20}\\bconfirmaci[oó]n\\b.{0,30}\\bantes\\b"
+
+  # ── German (DE) ─────────────────────────────────────────────────────────
+
+  - name: de.instruction_override_defense
+    meta:
+      description: "DE — refuses embedded instruction overrides"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.instruction_override
+    match: any
+    strings:
+      refuses_embedded_instructions_de: "(?i)\\bbefolgt\\s+(keine|niemals)\\b.{0,30}\\b(eingebetteten|versteckten|injizierten)\\b.{0,20}\\banweisungen\\b"
+      immune_prompt_injection_de:       "(?i)\\bimmun\\b.{0,20}\\bgegen\\b.{0,20}\\bprompt[- ]injection\\b"
+
+  - name: de.data_exfiltration_defense
+    meta:
+      description: "DE — withholds data from external destinations"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.data_exfiltration
+    match: any
+    strings:
+      no_external_transmission_de: "(?i)\\b(sendet|übermittelt)\\s+(keine|niemals)\\b.{0,30}\\b(daten|zugangsdaten|geheimnisse)\\b.{0,30}\\b(extern|dritte)\\b"
+      credentials_never_shared_de: "(?i)\\bzugangsdaten\\b.{0,20}\\bwerden\\s+niemals\\s+(geteilt|weitergegeben)\\b"
+
+  - name: de.role_redefinition_defense
+    meta:
+      description: "DE — role or identity cannot be redefined"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.role_redefinition
+    match: any
+    strings:
+      role_cannot_change_de: "(?i)\\b(rolle|identität)\\b.{0,20}\\bkann\\s+nicht\\s+(geändert|neu\\s+definiert)\\s+werden\\b"
+
+  - name: de.hidden_content_defense
+    meta:
+      description: "DE — ignores hidden or invisible instructions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.hidden_content
+    match: any
+    strings:
+      ignores_hidden_instructions_de: "(?i)\\bignoriert\\b.{0,20}\\b(versteckte|unsichtbare)\\b.{0,20}\\banweisungen\\b"
+
+  - name: de.user_confirmation_defense
+    meta:
+      description: "DE — requires confirmation before destructive actions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.user_confirmation
+    match: any
+    strings:
+      requires_confirmation_de: "(?i)\\berfordert\\b.{0,20}\\bbestätigung\\b.{0,30}\\bvor\\b"
+
+  # ── Mandarin Chinese (ZH) ──────────────────────────────────────────────
+
+  - name: zh.instruction_override_defense
+    meta:
+      description: "ZH — refuses embedded instruction overrides"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.instruction_override
+    match: any
+    strings:
+      refuses_embedded_instructions_zh: "(不会|从不|绝不).{0,10}(遵循|执行|听从).{0,15}(嵌入|隐藏|注入).{0,10}指令"
+      immune_prompt_injection_zh:       "(免受|抵御).{0,10}提示注入"
+
+  - name: zh.data_exfiltration_defense
+    meta:
+      description: "ZH — withholds data from external destinations"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.data_exfiltration
+    match: any
+    strings:
+      no_external_transmission_zh: "(不会|从不|绝不).{0,10}(发送|传输|转发).{0,15}(数据|凭据|密钥).{0,10}(外部|第三方)"
+      credentials_never_shared_zh: "凭据.{0,10}(从不|绝不).{0,10}(共享|泄露)"
+
+  - name: zh.role_redefinition_defense
+    meta:
+      description: "ZH — role or identity cannot be redefined"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.role_redefinition
+    match: any
+    strings:
+      role_cannot_change_zh: "(角色|身份).{0,10}(不能|无法).{0,10}(被)?(更改|重新定义)"
+
+  - name: zh.hidden_content_defense
+    meta:
+      description: "ZH — ignores hidden or invisible instructions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.hidden_content
+    match: any
+    strings:
+      ignores_hidden_instructions_zh: "忽略.{0,10}(隐藏|不可见).{0,10}指令"
+
+  - name: zh.user_confirmation_defense
+    meta:
+      description: "ZH — requires confirmation before destructive actions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.user_confirmation
+    match: any
+    strings:
+      requires_confirmation_zh: "(执行|删除).{0,10}(前|之前).{0,10}需要.{0,10}确认"

@@ -7,10 +7,7 @@ which code, rules and destinations are wired into this harness right now.
 Two deliberate limits:
 
   - It attests **wired** components, not installed ones. Adapter identity comes
-    from the objects the config actually built, so an entry point that is
-    installed but not referenced by harness.yaml does not appear. Enumerating
-    every registered entry point would import adapter modules this deployment
-    never uses.
+    from the objects the config actually built.
   - Content only, no secrets. Source URLs are stripped of userinfo, query and
     fragment before they enter the payload (Invariant 3), and credentials are
     never read.
@@ -103,25 +100,38 @@ def _patterns_db(config: HarnessConfig) -> dict[str, Any] | None:
     }
 
 
-def _connectors(sources: Sequence[SourceConfig]) -> list[dict[str, Any]]:
-    """Digest of each connector manifest backing a declared source."""
-    from harness.connectors import load_manifest
+def _mcp_manifests(config: HarnessConfig) -> list[dict[str, Any]]:
+    """Digest of every MCP source declared in `sources:` (transport: mcp),
+    whether or not it currently has an approved baseline record — so an
+    operator can see what's declared-but-unapproved offline.
 
-    seen: dict[str, dict[str, Any]] = {}
-    for src in sources:
-        if not src.connector or src.connector in seen:
+    Offline-safe: resolves and hashes each declared name's manifest file but
+    does not check the signed baseline store or connect to a server —
+    approval/activation state is a runtime concern (see harness.mcp.discovery),
+    not derivable from config alone. A name with no manifest file, or an
+    invalid one, is skipped here rather than raising — from_yaml() is the
+    fail-fast path; this is a best-effort inventory.
+    """
+    if not config.mcp_manifests_dir:
+        return []
+    from harness.core.types import Transport
+    from harness.mcp.manifest import load_manifest_file, manifest_file_hash, manifest_path_for
+
+    out: list[dict[str, Any]] = []
+    for src_cfg in config.sources:
+        if src_cfg.transport != Transport.MCP:
             continue
+        path = manifest_path_for(src_cfg.name, config.mcp_manifests_dir)
         try:
-            manifest = load_manifest(src.connector)
-        except ValueError:
-            # from_yaml already failed on an unknown connector — unreachable
-            # in practice, and an attestation gap must not mask that error.
+            manifest = load_manifest_file(path)
+        except Exception:
             continue
-        seen[src.connector] = {
+        out.append({
             "id":     manifest.id,
-            "digest": _digest_of(manifest.model_dump(mode="json")),
-        }
-    return [seen[k] for k in sorted(seen)]
+            "url":    redact_url(manifest.url),
+            "digest": manifest_file_hash(path),
+        })
+    return sorted(out, key=lambda m: m["id"])
 
 
 def build_config_attestation(
@@ -134,21 +144,28 @@ def build_config_attestation(
     Shared with the offline `shai harness` commands, which cannot instantiate
     adapters — so everything here must describe the config, never a live object.
 
-    `sources` are the *resolved* SourceConfigs — connector manifests already
-    merged — so the recorded url and tags are the ones the harness runs with.
+    `sources` are the declared SourceConfigs, local and MCP alike (see
+    config.schema.SourceConfig) — MCP manifest content is reported separately
+    under `mcp_manifests`, one entry per `transport: mcp` name declared in
+    `sources:`.
     """
     from harness import __version__
 
-    policy_rules = config.policy.parsed_rules()
+    source_rules = config.policy.parsed_source_rules()
 
     return {
-        "shai_version": __version__,
-        "connectors":   _connectors(sources),
+        "shai_version":  __version__,
+        "mcp_manifests": _mcp_manifests(config),
         "patterns_db":  _patterns_db(config),
         "policy": {
-            "rule_count": len(policy_rules),
-            "digest":     _digest_of([r.model_dump(mode="json") for r in policy_rules]),
-            # Enforced at agent load, not by a rule, so the rule digest above
+            # Source-activation rules — which sources this harness lets
+            # activate. Per-tool-call policy is the agent's own config and,
+            # for an MCP source, its manifest; neither is attested here.
+            "source_rule_count": len(source_rules),
+            "digest":            _digest_of(
+                [r.model_dump(mode="json") for r in source_rules]
+            ),
+            # Enforced at agent load, not by a rule, so the digest above
             # would not move if an operator dropped it.
             "forbidden_tag_combinations": sorted(
                 sorted(set(c)) for c in config.policy.forbidden_tag_combinations
@@ -158,9 +175,7 @@ def build_config_attestation(
             {
                 "name":      src.name,
                 "transport": str(src.transport),
-                "url":       redact_url(src.url),
                 "tags":      sorted(src.tags),
-                "connector": src.connector,
             }
             for src in sources
         ],

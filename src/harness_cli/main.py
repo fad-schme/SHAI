@@ -9,7 +9,10 @@ Commands:
   shai agents revocations List revoked agents.
   shai harness inspect    List the components a config declares.
   shai harness graph      Emit the agent → source → tool → policy graph
-                          as DOT or JSON, warning on colliding MCP endpoints.
+                          as DOT or JSON.
+  shai mcp onboard        Approve an MCP manifest — parse, connect, scan,
+                          reconcile, and record its hash into the signed
+                          baseline store on a clean pass.
   shai audit tail         Tail an audit JSONL log file with decision filtering.
                           Surfaces: argument violations, irreversibility blocks,
                           session escalations, and de-obfuscation signals.
@@ -27,6 +30,7 @@ Usage:
   shai agents revocations [--config PATH]
   shai harness inspect [--config PATH] [--agents-dir DIR]
   shai harness graph [--config PATH] [--agents-dir DIR] [--format dot|json]
+  shai mcp onboard PATH [--config PATH]
   shai audit tail [--file PATH] [--follow] [--boundary NAME] [--decision DECISION]
   shai audit verify --file PATH --secret ENV_VAR
 
@@ -51,6 +55,7 @@ from harness_cli.commands.agents import (
 )
 from harness_cli.commands.audit import cmd_audit_tail, cmd_audit_verify
 from harness_cli.commands.harness import cmd_harness_graph, cmd_harness_inspect
+from harness_cli.commands.mcp import cmd_mcp_onboard
 from harness_cli.commands.patterns import (
     cmd_candidates_list,
     cmd_candidates_update,
@@ -67,6 +72,7 @@ _BOUNDARIES = (
     "output_scan",
     "file_scan",
     "mcp_metadata_scan",
+    "mcp_source_onboarding",
     "system",
 )
 _DECISIONS = ("allow", "warn", "blocked", "deny", "redact", "degraded", "startup")
@@ -172,8 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inspect what a config wires up",
         description=(
             "Offline view of a harness config: which adapters, sources, "
-            "connectors and policy rules it declares, and how agents connect "
-            "to them. Builds nothing and connects to nothing."
+            "MCP manifests and policy rules it declares, and how agents "
+            "connect to them. Builds nothing and connects to nothing."
         ),
     )
     harness_sub = harness_p.add_subparsers(
@@ -195,6 +201,41 @@ def build_parser() -> argparse.ArgumentParser:
             cmd_p.add_argument("--format", choices=("dot", "json"), default="dot",
                                help="Output format (default: dot)")
         cmd_p.set_defaults(handler=handler)
+
+    # mcp
+    mcp_p = sub.add_parser(
+        "mcp",
+        help="MCP manifest onboarding",
+        description=(
+            "Approve an MCP manifest for a source already declared under "
+            "sources: (transport: mcp) in harness.yaml. The only path that "
+            "gets it built at all — a declared name with no approved "
+            "manifest is never connected or registered, and a manifest "
+            "edited after approval denies every call against it at the "
+            "gate until re-onboarded (see mcp_manifests_dir)."
+        ),
+    )
+    mcp_sub = mcp_p.add_subparsers(
+        dest="mcp_command",
+        metavar="COMMAND",
+        title="commands",
+        required=True,
+    )
+    onboard_p = mcp_sub.add_parser(
+        "onboard",
+        help="Parse, connect, scan, and decide on one MCP manifest",
+        description=(
+            "Parse a manifest, connect live and fetch tools/list, scan the "
+            "manifest's own declared tool text, reconcile against the live "
+            "response, and emit one AuditEvent(boundary=mcp_source_onboarding). "
+            "A clean pass auto-records the manifest's hash into the signed "
+            "baseline store — running this command is the approval."
+        ),
+    )
+    onboard_p.add_argument("manifest", metavar="PATH", help="Path to the manifest YAML file")
+    onboard_p.add_argument("--config", "-c", default="config/harness.yaml", metavar="PATH",
+                           help="Path to harness.yaml (default: config/harness.yaml)")
+    onboard_p.set_defaults(handler=cmd_mcp_onboard)
 
     # audit
     audit_p = sub.add_parser(

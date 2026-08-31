@@ -73,7 +73,7 @@ Returned by `check_tool_call`.
 class GateDecision:
     allowed:        bool
     deny_reason:    str | None    # set when allowed=False
-    redacted_args:  dict | None   # set when L4 arg scanning redacted args
+    redacted_args:  dict | None   # set when L7 arg scanning redacted args
     dispatch_token: str | None    # set when connectivity.enabled and allowed=True
 ```
 
@@ -146,6 +146,7 @@ class AuditEvent:
 | `output_scan` | `scan_output()` |
 | `file_scan` | `scan_file()` |
 | `mcp_metadata_scan` | MCP tool-registration metadata scan |
+| `mcp_source_onboarding` | `shai mcp onboard` — operator-run, once per invocation, not per-turn or per-startup (see `connectors.md`) |
 | `system` | Scanner degrade / circuit-breaker events, and the startup attestation emitted once by `from_yaml()` — no direct call |
 
 ### Decision values
@@ -175,6 +176,12 @@ contains raw text or matched substrings. Well-known keys:
 | `circuit_state` | `system` | `"open"` / `"half_open"` for breaker-driven events. |
 | `degraded` | `system` (`degraded`) | `True` when the event represents an `on_error: degrade` pass-through. |
 | `normalization` | Scan boundaries | List of transform names that fired during de-obfuscation (`strip_invisible`, `unicode_fold`, `decode_base64`, …). Never the decoded text. |
+| `manifest_id` | `mcp_source_onboarding` | The manifest's declared `id`. |
+| `file_hash` | `mcp_source_onboarding` | SHA-256 hex digest over the manifest file's raw bytes — what a clean pass records into the baseline store. |
+| `finding_categories` | `mcp_source_onboarding` | Sorted list of finding categories from `MCPMetadataScanner`/`PromptDefenseScanner` — never the matched text. |
+| `reconciliation` | `mcp_source_onboarding` | `{"absent": [...], "undeclared": [...], "description_mismatches": [...]}` — tool names only, never descriptions. Only `description_mismatches` affects the pass/fail decision. |
+| `readiness` | `mcp_source_onboarding` | `{"score": 0-100, "flags": [{"tool_name", "flags"}]}` from `harness.mcp.readiness` — informational governance signal, never part of the pass/fail decision. |
+| `protocol_posture` | `mcp_source_onboarding` | `{"scheme": "https"\|"http", "credentials_configured": bool}` from `harness.mcp.posture`, derived from the manifest's own fields — no live probing, never part of the pass/fail decision. |
 
 Consumers should treat unknown `extra` keys as informational and forward-compatible.
 

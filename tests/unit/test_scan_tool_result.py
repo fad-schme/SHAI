@@ -116,7 +116,6 @@ async def test_harness_scan_tool_result_disabled(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
         # scan_tool_result not present → defaults to disabled
     )
@@ -147,7 +146,6 @@ async def test_harness_scan_tool_result_enabled(tmp_path: Path):
         "  scanners:\n"
         "    - name: injection_scan\n"
         "    - name: identity_spoof_scan\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -195,7 +193,6 @@ async def test_harness_tool_result_uses_only_configured_scanners(tmp_path: Path)
         "  enabled: true\n"
         "  scanners:\n"
         "    - name: identity_spoof_scan\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
 

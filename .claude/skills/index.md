@@ -23,14 +23,13 @@ for what an assistant should tell a developer.
 | "register tools" / "add a tool source"     | `sources.md` |
 | "write a policy rule"                      | `policy.md` |
 | "integrate with LangGraph / LangChain"     | `integrations.md` |
-| "add a connector" / "Slack / GitHub / Jira"| `connectors.md` |
+| "onboard an MCP source" / "Slack / GitHub / Jira" | `connectors.md` |
 | "dispatch token" / "wire-level enforcement"| `connectivity.md` |
 | "handle errors" / "exception type X"       | `errors.md` |
 | "AgentContext" / "subagents"               | `agents.md` |
 | "heuristic candidates" / "promoted rules"  | `candidates.md` |
 | "concurrency" / "one instance per process" | `concurrency.md` |
 | "shai CLI command X"                       | `cli.md` |
-| "write a custom scanner / sink / policy"   | `adapters.md` |
 | "build a new ToolSource"                   | `sources.md` |
 | "write tests against SHAI"                 | `testing.md` |
 | "system overview" / "how is SHAI built"    | `architecture.md` |

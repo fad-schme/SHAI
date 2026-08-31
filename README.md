@@ -54,7 +54,7 @@ user input → [scan] → LLM → [gate] → tool → [scan result] → LLM → 
 
 Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block, or degraded. No raw user text, LLM response, or matched substring ever appears in the log.
 
-On top of those, `SHAI.from_yaml()` emits one `system`/`startup` attestation event recording what the process actually wired: adapter identities and source-file digests, connector manifest digests, pattern-DB and policy digests, and every declared source with its URL stripped of credentials. `shai harness inspect` and `shai harness graph` show the same topology offline, straight from the config.
+On top of those, `SHAI.from_yaml()` emits one `system`/`startup` attestation event recording what the process actually wired: adapter identities and source-file digests, MCP manifest digests for every declared `transport: mcp` source (URL stripped of credentials), pattern-DB and policy digests, and every declared source. `shai harness inspect` and `shai harness graph` show the same topology offline, straight from the config.
 
 ---
 
@@ -107,7 +107,7 @@ Full docs are in [`docs/`](docs/):
 - **[architecture.md](docs/architecture.md)** — how SHAI is put together
 - **[configuration.md](docs/configuration.md)** — `harness.yaml`, `agent.yaml`, policy rules
 - **[integrations.md](docs/integrations.md)** — LangGraph, LangChain, Anthropic SDK, CrewAI, PydanticAI, OpenAI Agents
-- **[connectors.md](docs/connectors.md)** — Tier A connectors and dispatch-token enforcement
+- **[connectors.md](docs/connectors.md)** — MCP manifest onboarding and dispatch-token enforcement
 - **[testing.md](docs/testing.md)** — writing tests against SHAI
 - **[errors.md](docs/errors.md)** — exception hierarchy and common failures
 - **[cli.md](docs/cli.md)** — `shai` command reference

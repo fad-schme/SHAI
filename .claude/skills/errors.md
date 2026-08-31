@@ -6,8 +6,7 @@
 
 ```
 HarnessError
-├── ConfigError               — invalid YAML, bad schema, missing file, unknown connector
-├── AdapterDiscoveryError     — entry point not found or name collision
+├── ConfigError               — invalid YAML, bad schema, missing file, invalid MCP manifest
 ├── AgentNotRegisteredError   — agent_id not in AgentRegistry
 ├── AgentConflictError        — same agent_id, different content
 ├── SubAgentNotDeclaredError  — sub_agent_id not in parent's sub_agents
@@ -26,38 +25,61 @@ for log formatters.
 
 ## Common errors and fixes
 
-### `ConfigError: source 'X': url is required for mcp transport`
+### `ConfigError: MCP source 'X' declared with transport: mcp has no manifest at ...`
 
 ```yaml
-# Wrong
+# harness.yaml
+mcp_manifests_dir: ./mcp/
+mcp_baseline:
+  secret: "secret://SHAI_MCP_BASELINE_KEY"
 sources:
   - name: my_source
     transport: mcp
-    # url is missing AND no connector: field
-
-# Fix A — add url
-sources:
-  - name: my_source
-    transport: mcp
-    url: "https://my-mcp-server.com/sse"
-
-# Fix B — use a connector manifest
-sources:
-  - name: slack
-    connector: slack
-    credentials:
-      token: "..."
 ```
 
-### `ConfigError: Unknown connector 'X'. Available: [...]`
+A `transport: mcp` entry declares only `name`/`transport` (plus `tags`/
+`required`) — no `url` or `credentials` on the `sources:` entry itself; a
+manifest with those fields at `mcp/my_source.yaml` is what the name
+resolves to by convention:
 
-The connector id doesn't match any manifest in `harness/connectors/manifests/`.
-
-```python
-from harness.connectors import list_connectors
-print(list_connectors())
-# ['github', 'gmail', 'google_drive', 'jira', 'notion', 'postgresql', 'slack', 'stripe']
+```yaml
+# mcp/my_source.yaml
+id: my_source
+display_name: "My Source"
+url: "https://my-mcp-server.com/sse"
+credentials:
+  token: "secret://MY_SOURCE_TOKEN"
 ```
+
+If the file is missing at that path and the entry's `required` is `true`
+(the default), this is a startup `ConfigError`; with `required: false` it's
+a WARNING and the source is skipped. Once the manifest exists, approve it —
+the only path to letting calls through:
+
+```bash
+shai mcp onboard mcp/my_source.yaml --config config/harness.yaml
+```
+
+### A declared MCP source is silently absent from the built harness
+
+Not an exception at `from_yaml()` — a `transport: mcp` entry with a manifest
+file that has no matching, approved baseline record (or a hash mismatch) is
+simply not built into a live source: no stub, no "pending approval" object.
+An agent that references that source name then hits the ordinary
+`source 'X' not registered` handling (`SourceRegistry.activate()`),
+honouring the source's `required` flag exactly like any other missing
+source.
+
+### `check_tool_call` denies: "needs onboarding" / "re-onboarding required"
+
+Not an exception — only reachable for a source that *was* built (valid
+baseline at startup). This is a normal gate denial
+(`GateDecision.allowed=False`, `boundary=tool_call_gate`, `decision=deny`,
+checked on every call by `harness.mcp.gate.McpBaselineGate`) for a manifest
+edited since its last approval — the hash no longer matches the baseline
+record (message says "re-onboarding required" in that case). Run the
+command the message names; the denial clears within one
+`mcp_baseline.cache_ttl_seconds`.
 
 ### `SecretNotFound: No environment variable 'SLACK_BOT_TOKEN'`
 
@@ -168,7 +190,7 @@ written.
 
 | Error | When | Meaning |
 |---|---|---|
-| `ConfigError` at `from_yaml()` | Parse/validate | YAML is malformed, unknown connector, bad schema |
+| `ConfigError` at `from_yaml()` | Parse/validate | YAML is malformed, invalid MCP manifest, bad schema |
 | `AuditEmissionError` at `from_yaml()` | Startup attestation | Every sink rejected the `system`/`startup` event — construction fails rather than running unaudited |
 | `ConfigError` at `load_agent()` | Source connect | Required MCP source failed to connect |
 | `AgentNotRegisteredError` | Per-turn | `check_tool_call` called before `load_agent()` |

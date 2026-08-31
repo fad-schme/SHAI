@@ -161,7 +161,7 @@ async def test_every_boundary_emits_exactly_one_event(harness, ctx):
 
 ## Contract tests
 
-If you write an adapter (custom scanner, audit sink, tool source, policy engine), it must satisfy the corresponding Protocol contract. SHAI ships a contract test suite in `tests/contracts/` — parameterise it over your implementation:
+Each Protocol has a contract test suite in `tests/contracts/` — parameterise it over an implementation:
 
 ```python
 # tests/contracts/test_my_scanner_contract.py
@@ -182,4 +182,3 @@ Adapters that don't pass contract tests are a latent bug in production. Run them
 
 - [errors.md](errors.md) — the exceptions you'll hit and how to interpret them
 - [`.claude/skills/testing.md`](../.claude/skills/testing.md) — deeper patterns, fixtures for advanced scenarios
-- [`.claude/skills/adapters.md`](../.claude/skills/adapters.md) — if you're writing an adapter

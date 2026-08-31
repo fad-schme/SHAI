@@ -10,7 +10,7 @@ Layer 1: tool.name in agent's allowed_tool_names?  (hard pre-policy gate)
 Layer 2: argument rules — deterministic parameter constraints
 Layer 3: irreversibility — blast-radius gate, requires signed approval grants
 Layer 4: tool.tags ⊆ ctx.allowed_tags?             (subagent capability gate)
-Layer 5: intersection policy (subagent ∩ parent ∩ global rules)
+Layer 5: policy rules (manifest denials → subagent → parent)
 Layer 6: signal correlation — deny high-risk tools when input scan flagged
          injection (A) or when a user_origin argument carries a value ingested
          from a tool result (C); mark WARN+write-capable calls for tightened
@@ -39,7 +39,7 @@ from harness.core.verdicts import GateDecision
 
 if TYPE_CHECKING:
     from harness.adapters.scanners.base import ConfiguredScanner
-    from harness.agents.agent_config import AgentConfig, SubAgentConfig
+    from harness.agents.agent_config import AgentConfig, RuleConfig, SubAgentConfig
     from harness.audit.emitter import AuditEmitter
     from harness.config.schema import NormalizationConfig
     from harness.core.context import AgentContext
@@ -75,6 +75,7 @@ async def run(
     approvals: ApprovalPolicy | None = None,
     normalization: NormalizationConfig | None = None,
     scan_state: ScanState | None = None,
+    manifest_rules: list[RuleConfig] | None = None,
 ) -> GateDecision:
     """Gate one tool call.
 
@@ -105,6 +106,12 @@ async def run(
                   arg_scanners is non-empty and the caller cares about
                   cross-call trip state; the harness call site always passes
                   its shared instance.
+    manifest_rules: deny rules compiled from the MCP manifest that owns this
+                  tool's source (harness.mcp.discovery.compile_manifest_rules).
+                  Layer 5 evaluates them ahead of the agent's own rules, and
+                  the engine is first-match-wins, so a hash-approved manifest
+                  denial cannot be weakened by an operator rule. Empty/None
+                  for local sources.
     """
     start = now_ms()
 
@@ -178,9 +185,13 @@ async def run(
         )
 
     # ── Layer 5: intersection policy ──────────────────────────────────────
-    combined_rules = list(effective.policy_rules)
+    # Manifest rules first: they are approved by the manifest's hash through
+    # `shai mcp onboard`, and first-match-wins means nothing behind them can
+    # override a denial.
+    combined_rules = list(manifest_rules or [])
+    combined_rules += list(effective.policy_rules)
     if ctx.sub_agent_id is not None:
-        combined_rules = list(effective.policy_rules) + list(agent_config.policy_rules)
+        combined_rules += list(agent_config.policy_rules)
 
     try:
         policy_decision = await policy.evaluate(
@@ -260,9 +271,20 @@ async def run(
         #
         # The cost is that a payload split across two arguments no longer
         # corroborates — the joined form could match across them, this cannot.
+        # Scanners run *chained* per argument: each one sees the previous one's
+        # redacted output, not the original value. Scanning them all against the
+        # original and collecting the results let the last redactor's output
+        # overwrite every earlier one — and because that output was computed
+        # over text still holding the earlier finding, adding a second redactor
+        # put back what the first had removed while the gate still reported
+        # Decision.REDACT. Chaining makes the guarantee structural: for any
+        # argument, what is dispatched with N redactors reveals no more than
+        # with any subset of them.
+        #
+        # Arguments remain independent and are still scanned concurrently; only
+        # the scanners within one argument are ordered.
         scan_targets = [
-            (configured, key, f"{key}: {value}")
-            for configured in arg_scanners
+            (key, f"{key}: {value}")
             for key, value in effective_args.items()
             if value is not None
         ]
@@ -281,64 +303,131 @@ async def run(
             breaker.record_success()
             return result
 
+        class _ArgDeny(Exception):
+            """One argument's chain reached a terminal deny. Carries the reason
+            so the gather below can surface it without the chain reaching into
+            emit_deny from inside a task."""
+
+            def __init__(self, reason: str) -> None:
+                super().__init__(reason)
+                self.reason = reason
+
+        async def _scan_one_argument(key: str, text: str) -> tuple[str, str | None]:
+            """Run every scanner over one argument, feeding each the previous
+            one's redaction. Returns (key, redacted_value or None)."""
+            redacted: str | None = None
+            for configured in arg_scanners:
+                scanner = configured.scanner
+                try:
+                    result = await _guarded_arg_scan(configured, text)
+                except Exception as exc:
+                    _state.get_breaker(scanner).record_failure()
+                    log.error(
+                        "arg scanner failed — denying (fail-closed)",
+                        extra={"scanner": scanner.name, "tool": name,
+                               "error_type": type(exc).__name__,
+                               # The argument *name* only. A preview of the
+                               # scanned text is raw tool-argument content, and
+                               # this line is the one place layer 7 could put it
+                               # in front of an operator's log pipeline; the key
+                               # says which argument choked without carrying any
+                               # of its value.
+                               "arg": key,
+                               **ctx.to_log_fields()},
+                    )
+                    # ConfiguredScanner carries no per-layer on_error field, so
+                    # there is no configured policy to honour here. Denying
+                    # unconditionally is the fail-closed default every other
+                    # boundary applies via run_scan's OnError.FAIL_CLOSED — a
+                    # scanner exception must not read as "no finding" at the one
+                    # boundary that can dispatch a tool.
+                    raise _ArgDeny(
+                        f"arg scan failed: scanner '{scanner.name}' raised"
+                    ) from exc
+
+                blocking = [f for f in result.findings if f.severity >= Severity.HIGH]
+                if not blocking:
+                    continue
+
+                # Layer 7 has no boundary action of its own, so an undeclared
+                # scanner blocks — the historical behaviour and the safe default.
+                action = (
+                    configured.action if configured.action is not None
+                    else ScanAction.BLOCK
+                )
+
+                if action == ScanAction.ALERT:
+                    continue
+
+                # REDACT with nothing to substitute falls back to BLOCK, matching
+                # ScanAction's documented contract.
+                if action == ScanAction.REDACT and result.redacted_text is not None:
+                    # The `key: ` framing added for detection comes back off the
+                    # redacted form when it survived the redaction. It often does
+                    # not, and that is the *primary* path rather than an edge
+                    # case: regex_pii matches `api_key: sk-live-…` as one
+                    # credential — the key is part of the pattern, which is why
+                    # the framing is there — and replaces key and value together.
+                    # Its whole output is then the intended argument value.
+                    prefix = f"{key}: "
+                    out = result.redacted_text
+                    redacted = out[len(prefix):] if out.startswith(prefix) else out
+                    # Re-frame before handing the value to the next scanner. A
+                    # redaction that consumed the prefix would otherwise leave
+                    # every later scanner reading an unlabelled string, and the
+                    # key is the same load-bearing context here that it is on
+                    # the first pass — dropping it mid-chain would make a
+                    # scanner's detection depend on its position in the list.
+                    # Where the prefix survived this rebuilds it byte-identically.
+                    text = f"{prefix}{redacted}"
+                    continue
+
+                raise _ArgDeny(f"arg scan blocked: {blocking[0].category}")
+
+            return key, redacted
+
         scan_results = await asyncio.gather(
-            *[_guarded_arg_scan(configured, text) for configured, _, text in scan_targets],
+            *[_scan_one_argument(key, text) for key, text in scan_targets],
             return_exceptions=True,
         )
-        for (configured, key, text), result in zip(scan_targets, scan_results, strict=True):
-            scanner = configured.scanner
-            if isinstance(result, Exception):
-                _state.get_breaker(scanner).record_failure()
-                log.error(
-                    "arg scanner failed — denying (fail-closed)",
-                    extra={"scanner": scanner.name, "tool": name,
-                           "error_type": type(result).__name__,
-                           # Bounded preview, not the exception message: a
-                           # third-party scanner's exception text can echo
-                           # the substring it choked on, but an operator
-                           # reading this line still needs to know what was
-                           # being scanned — a hash tells them nothing.
-                           "text_preview": text[:80],
-                           **ctx.to_log_fields()},
-                )
-                # ConfiguredScanner carries no per-layer on_error field, so there
-                # is no configured policy to honour here. Denying unconditionally
-                # is the fail-closed default every other boundary applies via
-                # run_scan's OnError.FAIL_CLOSED — a scanner exception must not
-                # read as "no finding" at the one boundary that can dispatch a
-                # tool.
-                return await emit_deny(
-                    f"arg scan failed: scanner '{scanner.name}' raised",
+        for result in scan_results:
+            if isinstance(result, asyncio.CancelledError):
+                # Invariant 2 names CancelledError as one of the two exceptions
+                # that may leave a boundary. It is a control signal, not a
+                # scanner defect: the runtime has abandoned this call, and
+                # returning a normal deny would both mask that in the audit
+                # trail and stall cooperative shutdown. Emit first — the event
+                # is still owed, and its reason distinguishes an abandoned call
+                # from a security denial — then re-raise.
+                await emit_deny(
+                    "arg scan cancelled",
                     name, tool, ctx, emitter, start, tenant_id,
                     audit_tags=agent_config.audit_tags,
                 )
-            blocking = [f for f in result.findings if f.severity >= Severity.HIGH]
-            if not blocking:
-                continue
-
-            # Layer 7 has no boundary action of its own, so an undeclared
-            # scanner blocks — the historical behaviour and the safe default.
-            action = configured.action if configured.action is not None else ScanAction.BLOCK
-
-            # REDACT with nothing to substitute falls back to BLOCK, matching
-            # ScanAction's documented contract. The `key: ` framing added for
-            # detection comes back off the redacted form — the argument value is
-            # what gets substituted, not the line the scanner saw.
-            if action == ScanAction.REDACT and result.redacted_text is not None:
-                prefix = f"{key}: "
-                redacted_value = result.redacted_text
-                if redacted_value.startswith(prefix):
-                    redacted_value = redacted_value[len(prefix):]
+                raise result
+            if isinstance(result, _ArgDeny):
+                return await emit_deny(
+                    result.reason,
+                    name, tool, ctx, emitter, start, tenant_id,
+                    audit_tags=agent_config.audit_tags,
+                )
+            if isinstance(result, BaseException):
+                # A failure the chain did not classify — it never reached a
+                # scanner's own error path, so there is no scanner to name.
+                # Fail closed for the same reason the classified case does.
+                log.error(
+                    "arg scan chain failed — denying (fail-closed)",
+                    extra={"tool": name, "error_type": type(result).__name__,
+                           **ctx.to_log_fields()},
+                )
+                return await emit_deny(
+                    "arg scan failed",
+                    name, tool, ctx, emitter, start, tenant_id,
+                    audit_tags=agent_config.audit_tags,
+                )
+            key, redacted_value = result
+            if redacted_value is not None:
                 scanned_redactions[key] = redacted_value
-                continue
-            if action == ScanAction.ALERT:
-                continue
-
-            return await emit_deny(
-                f"arg scan blocked: {blocking[0].category}",
-                name, tool, ctx, emitter, start, tenant_id,
-                audit_tags=agent_config.audit_tags,
-            )
 
     if scanned_redactions:
         effective_args = {**effective_args, **scanned_redactions}

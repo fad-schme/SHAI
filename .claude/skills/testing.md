@@ -150,7 +150,7 @@ async def test_external_write_denied_by_policy(harness, ctx):
 
 ---
 
-## Testing scan_tool_result with connectors
+## Testing scan_tool_result with MCP tools
 
 ```python
 async def test_injected_result_blocked(harness, ctx):

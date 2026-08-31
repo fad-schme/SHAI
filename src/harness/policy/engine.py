@@ -43,10 +43,8 @@ class SourceDecision:
 class PolicyEngine(Protocol):
     """Evaluate tool calls and source activation.
 
-    Intersection model for evaluate():
-      - agent-scoped rules (passed as `rules`) evaluated first
-      - then engine's own global rules
-      - first deny anywhere wins; default allow on no match
+    evaluate() receives every rule governing the call as one ordered list;
+    there is no second, engine-held pass. First match wins, default allow.
 
     All methods are async — production engines (OPA, Cedar) make network calls.
     Reference implementation (RuleBasedPolicy) returns immediately.
@@ -64,8 +62,12 @@ class PolicyEngine(Protocol):
     ) -> PolicyDecision:
         """Gate one tool call.
 
-        rules: agent-scoped rules from AgentConfig.policy_rules, evaluated
-        before the engine's own global rules. None means no agent rules.
+        rules: every rule governing this call, in the order it must be
+        evaluated — manifest-compiled denials first, then AgentConfig
+        .policy_rules (subagent before parent). The order is load-bearing:
+        an implementation MUST walk the list in order and return on the first
+        match. Reordering it lets an agent rule lift a hash-approved manifest
+        denial. None means no rules apply; return allow.
 
         Raises PolicyEvaluationError ONLY on engine failure (bad bundle,
         network error). A normal deny is a PolicyDecision, not an exception.

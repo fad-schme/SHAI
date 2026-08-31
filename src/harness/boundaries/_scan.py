@@ -234,7 +234,13 @@ async def _scan_views(
     seen: set[tuple[str, int]] = set()
     surface_redacted: str | None = None
     for i, r in enumerate(results):
-        if isinstance(r, Exception):
+        # BaseException, not Exception: CancelledError derives from the former,
+        # and testing only for the latter let a cancelled view-scan fall through
+        # to `r.redacted_text` and become an AttributeError — cancellation
+        # silently reported as a scanner failure at every boundary. Re-raising
+        # the original keeps it a CancelledError for the callers that now
+        # distinguish it (run_scan, and the gate's layer 7).
+        if isinstance(r, BaseException):
             raise r  # surfaced to run_scan's per-scanner exception handling
         if i == 0:
             surface_redacted = r.redacted_text
@@ -402,6 +408,28 @@ async def run_scan(
             # FAIL_OPEN: skip silently
             per_scanner_data.append(([], None, ScanAction.BLOCK, None))
             continue
+
+        # ── Scan was cancelled ────────────────────────────────────────────
+        # CancelledError derives from BaseException, so it does not match the
+        # Exception branch below and would otherwise fall through to the
+        # success path and be read as a ScanResult. Invariant 2 names it as one
+        # of the two exceptions that may leave a boundary: it is a control
+        # signal, not a scanner defect, and swallowing it would return a normal
+        # verdict for a call the runtime has abandoned. No breaker failure is
+        # recorded — the scanner did not misbehave. Emit first, then re-raise.
+        if isinstance(result, asyncio.CancelledError):
+            event = AuditEvent.build(
+                boundary=boundary,
+                decision=Decision.BLOCKED,
+                ctx=ctx,
+                tenant_id=tenant_id,
+                duration_ms=now_ms() - start,
+                adapters=adapter_names,
+                deny_reason=f"scan cancelled during scanner '{scanner.name}'",
+                audit_tags=audit_tags or {},
+            )
+            await emitter.emit(event)
+            raise result
 
         # ── Scanner raised an exception ───────────────────────────────────
         if isinstance(result, Exception):

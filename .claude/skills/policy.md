@@ -145,21 +145,20 @@ policy:
 
 ---
 
-## Intersection model
+## Rule ordering
 
-Rules are evaluated in layers:
-1. Agent's `policy_rules` (most specific)
-2. Global `policy.rules` from `harness.yaml`
+Layer 5 receives one ordered list and walks it, first match wins:
 
-First match anywhere wins. This means agent rules can override global rules.
-
-**Subagent rule evaluation:**
 ```
-subagent policy_rules → parent policy_rules → global rules
+manifest-compiled denials → subagent policy_rules → parent policy_rules
 ```
+
+There is no global tool-call pass. Per-agent tool policy lives in the agent's
+own config; an MCP source's tool policy lives in its manifest.
 
 A subagent can be more restrictive than its parent (deny something the parent
-allows). It cannot be more permissive (allow something the parent denies at L1/L2).
+allows). It cannot be more permissive (allow something the parent denies at
+L1/L2).
 
 ---
 
@@ -187,28 +186,3 @@ match:
     tool_tags: [read]
 ```
 
----
-
-## Custom PolicyEngine
-
-Implement the protocol and register via entry points:
-
-```python
-class MyPolicy:
-    async def evaluate(
-        self, tool: Tool, ctx: AgentContext, args: dict
-    ) -> PolicyDecision:
-        if "unsafe" in tool.tags:
-            return PolicyDecision(action="deny", reason="unsafe tool")
-        return PolicyDecision(action="allow")
-
-    async def evaluate_source(
-        self, source: ToolSource, ctx: AgentContext
-    ) -> SourceDecision:
-        return SourceDecision(active=True)
-```
-
-```toml
-[project.entry-points."harness.policy"]
-my_policy = "my_package.policy:MyPolicy"
-```

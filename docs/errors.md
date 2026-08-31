@@ -6,8 +6,7 @@ The exceptions you'll see when SHAI refuses to load a config, refuses a tool cal
 
 ```
 HarnessError
-├── ConfigError               — invalid YAML, bad schema, missing file, unknown connector
-├── AdapterDiscoveryError     — entry point not found or name collision
+├── ConfigError               — invalid YAML, bad schema, missing file, invalid MCP manifest
 ├── AgentNotRegisteredError   — agent_id not in AgentRegistry
 ├── AgentConflictError        — same agent_id, different content
 ├── SubAgentNotDeclaredError  — sub_agent_id not in parent's sub_agents
@@ -28,21 +27,28 @@ Every error carries structured context on it — `agent_id`, `op`, `boundary`, `
 The most common. Something in `harness.yaml` or an agent file didn't validate. The message names the field.
 
 ```
-ConfigError: source 'slack_mcp': url is required for mcp transport
+ConfigError: MCP source 'slack' declared with transport: mcp has no manifest
+at mcp/slack.yaml
 ```
 
-Fix by supplying `url:` or switching to a `connector:` reference. See [configuration.md](configuration.md) or [connectors.md](connectors.md).
+An MCP source must be declared under `sources:` by name (`transport: mcp`),
+and its manifest resolved by convention at `<mcp_manifests_dir>/<name>.yaml`,
+approved via `shai mcp onboard`. See [configuration.md](configuration.md) or
+[connectors.md](connectors.md).
+
+### `check_tool_call` denies with "needs onboarding" / "re-onboarding required"
+
+Not an exception — a normal gate denial (`GateDecision.allowed=False`,
+`boundary=tool_call_gate`, `decision=deny`). The MCP source connected and
+its tools registered fine; the manifest just hasn't been approved (or was
+edited since):
 
 ```
-ConfigError: Unknown connector 'slac'. Available: [github, gmail, google_drive, jira, notion, postgresql, slack, stripe]
+deny_reason: MCP source 'slack' needs onboarding — no approved baseline for mcp/slack.yaml.
+Run: shai mcp onboard mcp/slack.yaml --config <harness.yaml>
 ```
 
-Typo. `list_connectors()` prints the current set:
-
-```python
-from harness.connectors import list_connectors
-print(list_connectors())
-```
+Run the command the message names — see [connectors.md](connectors.md).
 
 ### `AgentNotRegisteredError` on a boundary call
 
@@ -88,7 +94,6 @@ Fix in your process manager or `.env` file. SHAI does not fall back to defaults 
 
 - `PolicyEvaluationError` — the policy engine failed internally. This is a bug, not a configuration issue. File it.
 - `AuditEmissionError` — every audit sink failed simultaneously. If a single sink fails, SHAI keeps trying the others; this only fires when all of them are dead. File it, and check the sinks in the meantime. It can also surface from `from_yaml()`, which emits a startup attestation event before returning: a harness that cannot write its first audit record does not start.
-- `AdapterDiscoveryError` — the entry-point machinery couldn't resolve a plugin. Usually a broken install.
 
 ## Boundary errors are audit events, not exceptions
 

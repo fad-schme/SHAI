@@ -1,0 +1,82 @@
+# prompt_defense_patterns.yaml
+# ============================
+# Absence-of-defense catalog for MCP manifest onboarding (shai mcp onboard).
+#
+# Every other catalog in this package fires a finding when a pattern MATCHES —
+# evidence of an attack. This one is inverted: PromptDefenseScanner fires a
+# finding for a category when NONE of that category's patterns match the
+# manifest's declared tool name/description text. The absence of defensive
+# language is the signal — a tool description that never says it refuses an
+# instruction-override attempt, never declines to exfiltrate data, and never
+# says its role is fixed gives an operator no textual assurance the tool's
+# author considered these attacks at all.
+#
+# This is a governance signal about the *manifest text*, not a detector of
+# live attacks — it runs once, at onboarding, over operator-authored content.
+# Severity is LOW throughout: real tool descriptions essentially never
+# volunteer this language, so treating its absence as anything louder than a
+# low-severity finding would fail nearly every onboarding by default.
+#
+# Same lint/compile pipeline as every other catalog (see injection_scan.py's
+# compile_rules_from_dicts) — meta.category names the defense category the
+# rule covers; match: any / strings: is a signal group like any other catalog.
+
+patterns:
+
+  - name: instruction_override_defense
+    meta:
+      description: "Tool text never states it refuses embedded instruction-override attempts"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.instruction_override
+    match: any
+    strings:
+      refuses_embedded_instructions: "(?i)\\b(will\\s+not|does\\s+not|never)\\b.{0,30}\\b(follow|execute|obey)\\b.{0,30}\\b(embedded|injected|hidden)\\b.{0,20}\\binstructions?\\b"
+      ignores_override_attempts:     "(?i)\\bignores?\\b.{0,20}\\b(instruction|prompt)\\s*override\\b"
+      immune_to_prompt_injection:    "(?i)\\b(immune|resistant)\\b.{0,20}\\bto\\b.{0,20}\\bprompt\\s*injection\\b"
+
+  - name: data_exfiltration_defense
+    meta:
+      description: "Tool text never states it withholds data from external destinations"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.data_exfiltration
+    match: any
+    strings:
+      no_external_transmission:  "(?i)\\b(does\\s+not|never|will\\s+not)\\b.{0,30}\\b(sends?|transmits?|forwards?|leaks?)\\b.{0,30}\\b(data|credentials?|secrets?)\\b.{0,40}\\b(external(ly)?|outside|third[- ]part(y|ies))\\b"
+      no_data_leaves:            "(?i)\\bno\\s+data\\s+(leaves|is\\s+sent\\s+outside)\\b"
+      credentials_never_shared:  "(?i)\\bcredentials?\\b.{0,20}\\b(are\\s+)?never\\s+(shared|exposed|transmitted)\\b"
+
+  - name: role_redefinition_defense
+    meta:
+      description: "Tool text never states its role or identity cannot be redefined"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.role_redefinition
+    match: any
+    strings:
+      role_cannot_change:      "(?i)\\b(role|identity)\\b.{0,20}\\b(cannot|can\\s*not|will\\s+not)\\b.{0,20}\\bbe\\s+(changed|redefined|altered)\\b"
+      will_not_act_as:         "(?i)\\bwill\\s+not\\s+act\\s+as\\b"
+      identity_is_fixed:       "(?i)\\bidentity\\s+is\\s+fixed\\b"
+
+  - name: hidden_content_defense
+    meta:
+      description: "Tool text never states it ignores hidden or invisible instructions"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.hidden_content
+    match: any
+    strings:
+      ignores_hidden_instructions: "(?i)\\bignores?\\b.{0,20}\\b(hidden|invisible|covert)\\b.{0,20}\\b(instructions?|text|content)\\b"
+      no_covert_instructions:      "(?i)\\bno\\s+covert\\s+instructions?\\b"
+
+  - name: user_confirmation_defense
+    meta:
+      description: "Tool text never states destructive or irreversible actions require confirmation"
+      threat_level: 1
+      severity: low
+      category: prompt_defense.user_confirmation
+    match: any
+    strings:
+      requires_confirmation:     "(?i)\\brequires?\\b.{0,20}\\b(user\\s+)?confirmation\\b.{0,30}\\bbefore\\b"
+      asks_before_destructive:   "(?i)\\basks?\\b.{0,20}\\bbefore\\b.{0,30}\\b(destructive|irreversible|deleting|removing)\\b"

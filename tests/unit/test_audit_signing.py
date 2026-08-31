@@ -190,7 +190,6 @@ async def test_harness_signing_disabled_by_default(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -209,7 +208,6 @@ async def test_harness_signing_enabled_via_env(tmp_path: Path, monkeypatch):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
         "audit_signing:\n  enabled: true\n  secret: \"secret://AUDIT_KEY\"\n"
     )

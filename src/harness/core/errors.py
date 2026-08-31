@@ -46,10 +46,6 @@ class HarnessError(Exception):
 class ConfigError(HarnessError):
     """Invalid harness.yaml or agent-xx.yaml content."""
 
-class AdapterDiscoveryError(HarnessError):
-    """Adapter name cannot be resolved to a registered entry point."""
-
-
 class AgentNotRegisteredError(HarnessError):
     """agent_id not in AgentRegistry. check_tool_call maps this to a deny decision."""
 

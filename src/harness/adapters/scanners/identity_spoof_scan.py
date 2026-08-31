@@ -12,7 +12,7 @@ Findings carry category prefix "identity_spoof.*" so policy rules and
 audit consumers can target them independently from injection and jailbreak
 findings.
 
-Registered as "identity_spoof_scan" in the harness.scanners entry-point
+Selected as "identity_spoof_scan"
 group. Add to any scan boundary in harness.yaml:
 
     scan_input:

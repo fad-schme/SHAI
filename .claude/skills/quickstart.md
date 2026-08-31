@@ -146,8 +146,8 @@ asyncio.run(main())
 # Always correct — scans every result
 tverdict = await harness.scan_tool_result(result, ctx)
 
-# Better when using connectors — connector manifests declare
-# which tools need scanning; others skip with a disabled audit event
+# Better when using onboarded MCP manifests — a manifest's declared
+# tool tags decide which tools need scanning; others skip with a disabled audit event
 tverdict = await harness.scan_tool_result(result, ctx)
 ```
 

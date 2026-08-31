@@ -1,9 +1,14 @@
 """shai harness inspect / graph — offline view of what a config wires up.
 
-Both commands read harness.yaml (and optionally an agents directory) and
-resolve connector manifests exactly as SHAI.from_yaml() does. Neither builds
-adapters, connects to an MCP server, or emits an audit event: what they print
-is the declared topology, not a running process.
+Both commands read harness.yaml (and optionally an agents directory). Neither
+builds adapters, connects to an MCP server, or emits an audit event: what they
+print is the declared topology, not a running process.
+
+`sources:` declares both local and MCP sources by name (see
+config.schema.SourceConfig) — an MCP entry's connection, tool set, and policy
+come from its manifest file, resolved by convention at
+`<mcp_manifests_dir>/<name>.yaml` and approved via `shai mcp onboard` (see
+harness.mcp).
 
 The runtime counterpart is the SYSTEM/STARTUP audit event, which additionally
 carries source-file digests of the adapters actually instantiated.
@@ -19,8 +24,7 @@ from typing import Any
 from harness.agents.agent_config import AgentConfig
 from harness.config.loader import load_yaml
 from harness.config.schema import HarnessConfig, SourceConfig
-from harness.connectors import resolve_source_config
-from harness.core.attestation import build_config_attestation, redact_url
+from harness.core.attestation import build_config_attestation
 from harness.core.errors import HarnessError
 from harness_cli.console import console
 
@@ -40,7 +44,7 @@ def _load(args: argparse.Namespace) -> tuple[HarnessConfig, list[SourceConfig], 
     config_path = Path(args.config)
     try:
         config = load_yaml(config_path)
-        sources = [resolve_source_config(s) for s in config.sources]
+        sources = list(config.sources)
     except (HarnessError, ValueError) as e:
         console.error(f"Error: {e}")
         return None
@@ -75,24 +79,6 @@ def _load_agents(
     return asyncio.run(_read())
 
 
-def _shadow_mcp_warnings(sources: list[SourceConfig]) -> list[dict[str, Any]]:
-    """Sources whose URLs collide once credentials and query strings are gone.
-
-    Two names pointing at one endpoint mean the second config's tags, allow-lists
-    and connector metadata apply to the same server as the first — the operator
-    may intend it, so this is a warning and never an error.
-    """
-    by_url: dict[str, list[str]] = {}
-    for src in sources:
-        url = redact_url(src.url)
-        if url:
-            by_url.setdefault(url, []).append(src.name)
-    return [
-        {"type": "shadow_mcp", "url": url, "sources": names}
-        for url, names in sorted(by_url.items()) if len(names) > 1
-    ]
-
-
 # ── inspect ────────────────────────────────────────────────────────────────
 
 def cmd_harness_inspect(args: argparse.Namespace) -> int:
@@ -123,7 +109,7 @@ def cmd_harness_inspect(args: argparse.Namespace) -> int:
 
     console.write(f"\naudit sinks:  {', '.join(s.name for s in config.audit_sinks)}"
                   f"   signing={config.audit_signing.enabled}")
-    console.write(f"policy:       {att['policy']['rule_count']} rules"
+    console.write(f"policy:       {att['policy']['source_rule_count']} source rules"
                   f"  digest={att['policy']['digest'][:12]}")
 
     db = att["patterns_db"]
@@ -131,18 +117,19 @@ def cmd_harness_inspect(args: argparse.Namespace) -> int:
                   f"patterns db:  {db['path']} - {db['rule_count']} rules"
                   f"  digest={db['digest'][:12]}")
 
-    if att["connectors"]:
-        console.write("connectors:   " + ", ".join(
-            f"{c['id']} ({c['digest'][:12]})" for c in att["connectors"]))
-
     if att["sources"]:
         console.write("\nsources:")
         for src in att["sources"]:
             console.write(
                 f"  {src['name']:<16} {src['transport']:<6} "
-                f"{src['url'] or '-':<44} "
-                f"connector={src['connector'] or '-'}  tags={','.join(src['tags']) or '-'}"
+                f"tags={','.join(src['tags']) or '-'}"
             )
+
+    if att["mcp_manifests"]:
+        console.write(f"\nmcp manifests ({config.mcp_manifests_dir}):")
+        for m in att["mcp_manifests"]:
+            console.write(f"  {m['id']:<16} {m['url'] or '-':<44} "
+                          f"digest={m['digest'][:12]}")
 
     if agents:
         console.write("\nagents:")
@@ -154,9 +141,6 @@ def cmd_harness_inspect(args: argparse.Namespace) -> int:
                 f"subagents={len(agent.sub_agents)}"
             )
 
-    for warning in _shadow_mcp_warnings(sources):
-        console.error(f"Warning: sources {', '.join(warning['sources'])} "
-                      f"share one endpoint: {warning['url']}")
     return 0
 
 
@@ -167,9 +151,10 @@ def _build_graph(sources: list[SourceConfig],
                  config: HarnessConfig) -> dict[str, Any]:
     """Agent → source → tool → tag → policy-rule dependency graph.
 
-    Tools come from connector manifests and agent allow-lists — the only tool
-    names knowable without connecting to an MCP server. A source configured by
-    hand contributes no tool nodes.
+    Tool names come from agent allow-lists — a `sources:` entry (local or
+    MCP, see config.schema.SourceConfig) contributes no tool nodes of its
+    own; MCP tool topology lives in the manifest file, outside this offline
+    view.
     """
     nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, str]] = []
@@ -184,15 +169,9 @@ def _build_graph(sources: list[SourceConfig],
 
     for src in sources:
         s_id = node(f"source:{src.name}", "source", src.name,
-                    transport=str(src.transport), url=redact_url(src.url),
-                    connector=src.connector)
+                    transport=str(src.transport))
         for tag in src.tags:
             edge(s_id, node(f"tag:{tag}", "tag", tag), "tagged")
-        for tool_name, spec in src.connector_tool_specs.items():
-            t_id = node(f"tool:{tool_name}", "tool", tool_name)
-            edge(s_id, t_id, "exposes")
-            for tag in spec.get("tags", []):
-                edge(t_id, node(f"tag:{tag}", "tag", tag), "tagged")
 
     for agent in agents:
         a_id = node(f"agent:{agent.id}", "agent", agent.id)
@@ -210,9 +189,10 @@ def _build_graph(sources: list[SourceConfig],
             for tag in sub.allowed_tags:
                 edge(sub_id, node(f"tag:{tag}", "tag", tag), "scoped_to")
 
-    # Global rules, then per-agent rules — the order the gate evaluates them in
-    # is agent-first, but scope is what the graph shows.
-    rules = [(None, r) for r in config.policy.parsed_rules()]
+    # Source-activation rules, then per-agent tool rules. Global policy no
+    # longer arbitrates tool calls, so a rule with no owner governs which
+    # sources activate, not which tools may be invoked.
+    rules = [(None, r) for r in config.policy.parsed_source_rules()]
     rules += [(a.id, r) for a in agents for r in a.policy_rules]
     for owner, rule in rules:
         r_id = node(f"rule:{owner or 'global'}/{rule.id}", "rule",
@@ -228,9 +208,8 @@ def _build_graph(sources: list[SourceConfig],
             edge(r_id, node(f"tag:{tag}", "tag", tag), "matches")
 
     return {
-        "nodes":    [nodes[k] for k in sorted(nodes)],
-        "edges":    edges,
-        "warnings": _shadow_mcp_warnings(sources),
+        "nodes": [nodes[k] for k in sorted(nodes)],
+        "edges": edges,
     }
 
 
@@ -264,8 +243,4 @@ def cmd_harness_graph(args: argparse.Namespace) -> int:
 
     console.write(json.dumps(graph, indent=2) if args.format == "json"
                   else _to_dot(graph))
-
-    for warning in graph["warnings"]:
-        console.error(f"Warning: sources {', '.join(warning['sources'])} "
-                      f"share one endpoint: {warning['url']}")
     return 0

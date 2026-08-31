@@ -13,6 +13,8 @@ import pytest
 from harness.core.attestation import redact_url
 from harness.core.errors import AuditEmissionError
 from harness.core.harness import SHAI
+from harness.mcp.baseline import record_baseline
+from harness.mcp.manifest import manifest_file_hash
 
 _BASE = (
     "version: 1\n"
@@ -21,22 +23,31 @@ _BASE = (
     "scan_output:\n"
     "  enabled: false\n"
     "policy:\n"
-    "  rules:\n"
-    "    - id: deny_destructive\n"
+    "  source_rules:\n"
+    "    - id: suppress_untrusted\n"
     "      match:\n"
-    "        tool_tags: [destructive]\n"
-    "      action: deny\n"
-    "      reason: destructive tools are denied\n"
-    "sources:\n"
-    "  - name: test_mcp\n"
-    "    transport: mcp\n"
-    "    url: https://user:tok@mcp.example.com/mcp?api_key=SECRET#frag\n"
-    "    tags: [external]\n"
+    "        source_tags: [untrusted]\n"
+    "      action: suppress\n"
+    "      reason: untrusted sources are suppressed\n"
+)
+
+_MANIFEST = (
+    "id: test_mcp\n"
+    "display_name: \"Test MCP\"\n"
+    "url: \"https://user:tok@mcp.example.com/mcp?api_key=SECRET#frag\"\n"
+    "tags: [external]\n"
 )
 
 
 def _write_config(tmp_path: Path, extra: str = "") -> tuple[Path, Path]:
     log_path = tmp_path / "audit.jsonl"
+    mcp_dir = tmp_path / "mcp"
+    mcp_dir.mkdir(exist_ok=True)
+    manifest_path = mcp_dir / "test_mcp.yaml"
+    manifest_path.write_text(_MANIFEST)
+    record_baseline(tmp_path / "baseline.db", "test_mcp",
+                     manifest_file_hash(manifest_path), b"test-secret")
+
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         _BASE
@@ -44,6 +55,13 @@ def _write_config(tmp_path: Path, extra: str = "") -> tuple[Path, Path]:
         + "  - name: file\n"
         + "    config:\n"
         + f"      path: {log_path.as_posix()}\n"
+        + "sources:\n"
+        + "  - name: test_mcp\n"
+        + "    transport: mcp\n"
+        + f"mcp_manifests_dir: {mcp_dir.as_posix()}\n"
+        + "mcp_baseline:\n"
+        + f"  path: {(tmp_path / 'baseline.db').as_posix()}\n"
+        + "  secret: test-secret\n"
         + extra
     )
     return cfg, log_path
@@ -74,20 +92,23 @@ async def test_attestation_payload_shape(tmp_path: Path):
 
     extra = _events(log_path)[0]["extra"]
     assert extra["shai_version"]
-    assert extra["policy"]["rule_count"] == 1
-    # Enforced at agent load, so it must be attested separately from the rule digest
+    assert extra["policy"]["source_rule_count"] == 1
+    # Enforced at agent load, so it must be attested separately from the digest
     assert extra["policy"]["forbidden_tag_combinations"] == []
     assert extra["patterns_db"] is None          # disabled in this config
-    assert extra["connectors"] == []             # no connector-backed source
+    # sources: reports every declared source, MCP included — no local
+    # sources are declared here, only the one transport: mcp entry.
+    assert [s["name"] for s in extra["sources"]] == ["test_mcp"]
+    assert extra["sources"][0]["transport"] == "mcp"
 
     groups = {a["group"] for a in extra["adapters"]}
     assert groups == {"scanner", "audit_sink", "policy"}
     # Every wired component is identified by module path and source digest.
     assert all(a["module"] and len(a["sha256"]) == 64 for a in extra["adapters"])
 
-    source = extra["sources"][0]
-    assert source["name"] == "test_mcp"
-    assert source["tags"] == ["external"]
+    manifest = extra["mcp_manifests"][0]
+    assert manifest["id"] == "test_mcp"
+    assert len(manifest["digest"]) == 64
 
 
 async def test_source_url_carries_no_credentials(tmp_path: Path):
@@ -99,12 +120,12 @@ async def test_source_url_carries_no_credentials(tmp_path: Path):
     line = log_path.read_text()
     assert "SECRET" not in line
     assert "tok@" not in line
-    assert _events(log_path)[0]["extra"]["sources"][0]["url"] == \
+    assert _events(log_path)[0]["extra"]["mcp_manifests"][0]["url"] == \
         "https://mcp.example.com/mcp"
 
 
 async def test_digests_are_stable_and_policy_sensitive(tmp_path: Path):
-    """Same config → same digest; a changed rule → a different one."""
+    """Same config → same digest; a changed source rule → a different one."""
     (tmp_path / "a").mkdir()
     cfg_a, log_a = _write_config(tmp_path / "a")
 
@@ -118,7 +139,7 @@ async def test_digests_are_stable_and_policy_sensitive(tmp_path: Path):
 
     (tmp_path / "b").mkdir()
     cfg_b, log_b = _write_config(tmp_path / "b")
-    cfg_b.write_text(cfg_b.read_text().replace("destructive", "irreversible"))
+    cfg_b.write_text(cfg_b.read_text().replace("untrusted", "quarantined"))
     h3 = await SHAI.from_yaml(cfg_b)
     await h3.close()
     assert _events(log_b)[0]["extra"]["policy"]["digest"] != first

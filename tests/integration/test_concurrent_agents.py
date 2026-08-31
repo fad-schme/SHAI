@@ -36,7 +36,6 @@ async def _build_harness(tmp_path: Path) -> SHAI:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -134,7 +133,6 @@ async def _scanning_harness(tmp_path: Path) -> SHAI:
         "scan_input:\n  enabled: true\n  action: alert\n"
         "  scanners:\n    - name: injection_scan\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

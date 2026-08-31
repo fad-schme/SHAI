@@ -21,7 +21,6 @@ async def harness(tmp_path: Path) -> SHAI:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     return await SHAI.from_yaml(cfg)

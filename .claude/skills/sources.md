@@ -1,8 +1,11 @@
 # Tools and Sources Reference
 
-A tool source activates a set of tools for an agent. Sources are declared in
-`harness.yaml` under `sources:` and in each `agent-xx.yaml` under `sources:`.
-They are activated at `load_agent()` time — not per turn.
+A tool source activates a set of tools for an agent. Every source — local
+and MCP alike — is declared in `harness.yaml` under `sources:` (see
+`config.schema.SourceConfig`); an MCP entry declares only a name, and its
+manifest is resolved by convention from `mcp_manifests_dir` (see
+`connectors.md`). Both are referenced by name in each `agent-xx.yaml`'s
+`sources:` list. Both are activated at `load_agent()` time — not per turn.
 
 ---
 
@@ -11,7 +14,13 @@ They are activated at `load_agent()` time — not per turn.
 ```
 await SHAI.from_yaml(path)
   └── constructs SourceRegistry
-  └── registers MCPSource or LocalSource for each config.sources entry
+  └── registers LocalSource for each config.sources local/skill entry
+  └── resolves each config.sources transport: mcp entry to a manifest,
+      hashes it, checks the baseline store, and registers a live MCPSource
+      only for a name with a matching, approved record — an unapproved or
+      hash-mismatched name is not built at all (see harness.mcp.discovery)
+  └── builds McpBaselineGate — the approval re-check, run per tool call
+      against a source that was built (see "The approval gate" in connectors.md)
 
 await harness.load_agent(path)
   └── AgentRegistry.load(path)
@@ -20,6 +29,13 @@ await harness.load_agent(path)
         ├── source.load(ctx) [concurrent]
         └── ToolRegistry.register(tool)                ← merge into shared store
   └── _resolve_tools(cfg)   ← filter to allowed_tool_names
+
+await harness.check_tool_call(name, args, ctx)   ← MCP manifest approval
+  └── R3: McpBaselineGate.check(source_name) — for a source that was built,
+      denies if the manifest was edited since it was approved (see
+      connectors.md); a source that was never built (no valid baseline at
+      startup) never reaches this — the agent's reference to it was already
+      denied as "source not registered"
 ```
 
 Tools from sources are merged into the shared `ToolRegistry` and filtered to
@@ -78,10 +94,14 @@ Tool(
 ## Where tools live
 
 There is **one** tool registry. It holds every tool regardless of transport —
-local Python callables and tools discovered from an MCP server sit in the
-same store, keyed by name. There is no separate MCP registry, and connector
-manifests are not a registry: they are static config, read once at
-`from_yaml()`.
+local Python callables and tools from a built MCP source sit in the same
+store, keyed by name. There is no separate MCP registry, and an MCP
+manifest is not a registry: it is static config, read once at `from_yaml()`
+for each declared, approved source — a source with no valid baseline is
+never built, so its tools never reach the registry at all. Once built, a
+source's tools stay registered even if the manifest changes underneath it;
+only calls against it are re-checked per turn (see "The approval gate" in
+`connectors.md`).
 
 Three distinct things, easy to conflate:
 
@@ -93,11 +113,15 @@ Three distinct things, easy to conflate:
 
 How an MCP tool arrives:
 
-1. `MCPSource.load()` calls `tools/list`, scans each entry's metadata, and
-   builds a `Tool` whose tags are the union of the source's tags, the
-   connector manifest's per-tool tags, and `mcp`. This is the only point
-   where manifest metadata enters — a remote server's own tool listing
-   carries no security metadata SHAI would trust.
+1. `MCPSource.load()` calls `tools/list` to confirm the tool is still live,
+   then builds a `Tool` from the **manifest's own declared** name,
+   description, and tags for that tool — union'd with the source's tags and
+   `mcp`. The manifest, not the live response, is authoritative for what
+   reaches the LLM; a manifest-declared tool absent from the live response
+   is skipped, and a live tool with no manifest entry is never registered.
+   This is the property `shai mcp onboard`'s reconciliation step exists to
+   protect (see `connectors.md`) — a compromised server can't get a
+   different description in front of the LLM just by changing its response.
 2. `load_agent()` registers those tools in the same registry as local ones.
    When a tool name already exists with different tags, the enriched
    variant is kept as a per-agent override instead, so one agent's source
@@ -105,11 +129,10 @@ How an MCP tool arrives:
 3. The per-agent set is resolved once, with overrides applied last. The
    gate therefore knows each tool's owning source without a lookup.
 
-**Consequence for offline tooling:** tool names for a hand-configured MCP
-source exist only after a live `tools/list`, and local tool names only
-after the application calls `register_tools()`. `shai harness graph` can
-draw the tool layer only for connector-backed sources and agent
-`allowed_tool_names`.
+**Consequence for offline tooling:** MCP tool names are knowable offline
+from the manifest's `tools:` list (once onboarded); local tool names are
+knowable only after the application calls `register_tools()`. `shai harness
+graph` draws the local tool layer from agent `allowed_tool_names`.
 
 ---
 
@@ -172,25 +195,14 @@ SHAI's `Tool` interface and LangChain's `BaseTool` interface.
 
 ---
 
-## Connector manifests (recommended)
+## MCP sources are declared in `sources:`, resolved from a manifest
 
-Use a pre-built connector manifest to avoid hand-configuring `url`,
-`allowed_urls`, `tags`, and tool specs:
-
-```yaml
-sources:
-  - name: slack
-    connector: slack          # loads url, allowed_urls, tags, tool specs
-    credentials:
-      token: "secret://SLACK_BOT_TOKEN"
-```
-
-→ See `connectors.md` for the list of available connectors.
-
-Fields you declare override the manifest; fields you leave out keep the
-manifest's value, so a source naming only `connector:` and `credentials:`
-still gets its transport, url, tags, allow-lists, and per-tool specs.
-Credentials are always operator-supplied — never from the manifest.
+A `transport: mcp` entry in `sources:` declares only that the name exists —
+its manifest is resolved by convention at `<mcp_manifests_dir>/<name>.yaml`,
+and approved via `shai mcp onboard`. Dropping a manifest file in that
+directory with no matching `sources:` entry does nothing; the name has to
+be declared. → See `connectors.md` for the manifest schema and the
+onboarding flow.
 
 ---
 
@@ -252,26 +264,36 @@ stamp it onto the tools it returns.
 
 ---
 
-## MCPSource (`transport: mcp`)
+## MCPSource
 
 Connects to a remote MCP server over SSE (Server-Sent Events), runs the
 JSON-RPC initialize handshake, and fetches the tool catalog with
 `tools/list`. Returned tools are stamped `transport=Transport.MCP`.
 
-```yaml
-sources:
-  - name: slack_mcp
-    transport: mcp
-    url: "https://mcp.slack.com/sse"
-    credentials:
-      token: "secret://SLACK_BOT_TOKEN"
-    tags: [external_mcp, messaging]
-    allowed_urls:
-      - "https://mcp.slack.com/*"
-      - "https://slack.com/api/*"
-    allowed_methods: [GET, POST]
-    required: true
+Built by `harness.mcp.discovery.build_mcp_source()` from an onboarded
+manifest resolved from a declared `transport: mcp` `sources:` entry — the
+`sources:` entry itself carries no MCP-specific fields and is never passed
+to the constructor directly (see `connectors.md`). Its constructor takes an
+`MCPSourceParams` (url, credentials, allowed_urls, allowed_methods,
+tool_specs), not a `SourceConfig`:
+
+```python
+from harness.tools.source import MCPSource, MCPSourceParams
+
+source = MCPSource(
+    MCPSourceParams(
+        "slack", "https://mcp.slack.com/sse",
+        credentials={"token": "xoxb-..."},
+        tags=["external_mcp", "messaging"],
+        allowed_urls=["https://mcp.slack.com/*"],
+        allowed_methods=["GET", "POST"],
+        tool_specs={"send_message": {"description": "...", "tags": [...], "action": "block"}},
+    ),
+)
 ```
+
+In normal operation you never construct this directly — `SHAI.from_yaml()`
+builds it for each declared, approved `transport: mcp` source.
 
 ### Connection protocol
 
@@ -362,6 +384,5 @@ class MySource:
 ```
 
 `SourceRegistry.register()` takes any object satisfying the `ToolSource`
-protocol (`name`, `transport`, `tags`, `load()`, `close()`) — there is no
-config-driven or entry-point discovery for custom sources; construct the
+protocol (`name`, `transport`, `tags`, `load()`, `close()`) — construct the
 instance and register it directly where the harness is wired up.

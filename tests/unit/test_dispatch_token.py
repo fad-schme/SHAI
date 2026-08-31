@@ -250,7 +250,6 @@ async def test_gate_issues_token_when_connectivity_enabled(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "connectivity:\n"
         "  enabled: true\n"
         "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
@@ -296,7 +295,6 @@ async def test_gate_no_token_when_connectivity_disabled(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         # no connectivity block — defaults to disabled
     )
     agent = tmp_path / "agent.yaml"
@@ -334,22 +332,25 @@ async def test_gate_denied_carries_no_token(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n"
-        "  rules:\n"
-        "    - id: deny_all\n"
-        "      match: {}\n"
-        "      action: deny\n"
-        "      reason: 'all denied'\n"
         "connectivity:\n"
         "  enabled: true\n"
         "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET2'\n"
     )
+    # The deny now comes from the agent's own rules — global policy no longer
+    # arbitrates tool calls. What is under test is unchanged: a denied gate
+    # decision carries no dispatch token.
     agent = tmp_path / "agent.yaml"
-    agent.write_text(
-        "id: agent_c\n"
-        "allowed_tool_names:\n  - search_docs\n"
-        "allowed_tags:\n  - read\n"
-    )
+    agent.write_text("""id: agent_c
+allowed_tool_names:
+  - search_docs
+allowed_tags:
+  - read
+policy_rules:
+  - id: deny_all
+    match: {}
+    action: deny
+    reason: all denied
+""", encoding="utf-8")
     harness = await SHAI.from_yaml(cfg)
     await harness.register_tools([
         Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
@@ -400,7 +401,6 @@ async def test_gate_event_carries_the_token_id_it_issued(tmp_path):
             "version: 1\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
-            "policy:\n  rules: []\n"
             "connectivity:\n"
             "  enabled: true\n"
             "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
@@ -451,7 +451,6 @@ async def test_no_token_id_when_connectivity_disabled(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
     )
     agent = tmp_path / "agent.yaml"
     agent.write_text(
@@ -489,7 +488,6 @@ async def test_denied_call_mints_no_token(tmp_path):
             "version: 1\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
-            "policy:\n  rules: []\n"
             "connectivity:\n"
             "  enabled: true\n"
             "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"

@@ -17,7 +17,6 @@ async def harness(tmp_path: Path) -> SHAI:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     return await SHAI.from_yaml(cfg)
@@ -121,7 +120,6 @@ async def test_async_context_manager_closes_the_harness(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     closed: list[bool] = []
@@ -146,7 +144,6 @@ async def test_close_is_still_public_and_idempotent(tmp_path: Path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
     )
     h = await SHAI.from_yaml(cfg)
     await h.close()

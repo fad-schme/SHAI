@@ -7,8 +7,5 @@ scan_input:
 scan_output:
   enabled: false
 
-policy:
-  rules: []
-
 audit_sinks:
   - name: stdout

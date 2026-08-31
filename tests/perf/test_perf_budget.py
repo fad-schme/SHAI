@@ -129,7 +129,6 @@ async def _make_harness(
         f"{session_block}"
         f"scan_input:\n  enabled: {enabled_str}\n{scanner_block}"
         f"scan_output:\n  enabled: {enabled_str}\n{scanner_block}"
-        f"policy:\n  rules: []\n"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

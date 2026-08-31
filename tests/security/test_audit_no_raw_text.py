@@ -29,7 +29,6 @@ async def _build_harness(tmp_path: Path, *, scan: bool = True) -> tuple[SHAI, St
         f"version: 1\n"
         f"scan_input:\n  enabled: {enabled}\n{scanners}"
         f"scan_output:\n  enabled: {enabled}\n{scanners}"
-        f"policy:\n  rules: []\n"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -147,3 +146,81 @@ async def test_injection_finding_detail_contains_no_matched_text():
         if finding.detail:
             assert "HARM_xK7qZ" not in finding.detail, \
                 f"Payload appeared in Finding.detail: {finding.detail}"
+
+
+# ── check_tool_call layer 2: argument-rule denials ────────────────────────
+#
+# test_deny_reason_is_operator_text_only above drives its denial through a
+# *policy rule*, and the fixture tools declare no argument_rules — so gate
+# layer 2 never executes and the branch that builds an argument-rule violation
+# message is not covered. These deny through layer 2 specifically.
+
+_ARG_SENTINEL = "AKIAIOSFODNN7EXAMPLE_password_hunter2_xK7qZ"
+
+
+async def _harness_with_argument_rules(tmp_path: Path) -> tuple[SHAI, StringIO]:
+    from harness.tools.tool import ArgumentRule
+
+    h, buf = await _build_harness(tmp_path, scan=False)
+    # list_inbox is in the fixture agent's allowed_tool_names but unregistered.
+    await h.register_tools([
+        Tool(
+            name="list_inbox",
+            tags=["read", "internal"],
+            transport=Transport.LOCAL,
+            argument_rules=[
+                ArgumentRule(arg="folder", allowlist=["inbox", "archive"]),
+                ArgumentRule(arg="subject", pattern=r"^SAFE:"),
+                ArgumentRule(arg="limit", max_value=100),
+                ArgumentRule(arg="offset", min_value=0),
+            ],
+        ),
+    ])
+    return h, buf
+
+
+async def test_allowlist_violation_not_in_audit_event(tmp_path: Path):
+    h, buf = await _harness_with_argument_rules(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.check_tool_call("list_inbox", {"folder": _ARG_SENTINEL}, ctx)
+
+    deny = [e for e in _events(buf) if e.get("decision") == "deny"]
+    assert deny, "Expected a layer-2 deny event"
+    for ev in deny:
+        assert _ARG_SENTINEL not in json.dumps(ev), f"Argument value leaked: {ev}"
+
+
+async def test_pattern_violation_not_in_audit_event(tmp_path: Path):
+    """The widest leak — pattern echoed the entire argument on any non-match."""
+    h, buf = await _harness_with_argument_rules(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.check_tool_call("list_inbox", {"subject": _ARG_SENTINEL}, ctx)
+
+    deny = [e for e in _events(buf) if e.get("decision") == "deny"]
+    assert deny, "Expected a layer-2 deny event"
+    for ev in deny:
+        assert _ARG_SENTINEL not in json.dumps(ev), f"Argument value leaked: {ev}"
+
+
+async def test_numeric_bound_violations_not_in_audit_event(tmp_path: Path):
+    h, buf = await _harness_with_argument_rules(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.check_tool_call("list_inbox", {"limit": 999999.99}, ctx)
+    await h.check_tool_call("list_inbox", {"offset": -424242}, ctx)
+
+    deny = [e for e in _events(buf) if e.get("decision") == "deny"]
+    assert len(deny) >= 2, "Expected a layer-2 deny event per call"
+    blob = json.dumps(deny)
+    assert "999999.99" not in blob, f"max_value argument leaked: {blob[:300]}"
+    assert "424242" not in blob, f"min_value argument leaked: {blob[:300]}"
+
+
+async def test_layer2_deny_still_names_argument_and_constraint(tmp_path: Path):
+    """Stripping the value must not cost the operator the reason."""
+    h, buf = await _harness_with_argument_rules(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.check_tool_call("list_inbox", {"folder": _ARG_SENTINEL}, ctx)
+
+    deny = [e for e in _events(buf) if e.get("decision") == "deny"]
+    reason = deny[-1]["deny_reason"]
+    assert "folder" in reason and "list_inbox" in reason

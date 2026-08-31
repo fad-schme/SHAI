@@ -48,7 +48,7 @@ Treating tool results as untrusted content — the same way you'd treat user inp
 | L2 | Argument rules — `max_value`, `min_value`, `allowlist`, `pattern`, `required` |
 | L3 | Irreversibility gate — `SENSITIVE` / `IRREVERSIBLE` tools need a quorum of signed approval grants |
 | L4 | For subagents: `tool.tags ⊆ ctx.allowed_tags`? |
-| L5 | Intersection policy: subagent → parent → global |
+| L5 | Policy rules: manifest denials → subagent → parent |
 | L6 | Signal correlation — reads what earlier boundaries found this turn |
 | L7 | Arg scanning — for `sensitive`-tagged tools or when L6 tightened |
 

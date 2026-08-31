@@ -290,6 +290,45 @@ class LocalSource:
 
 # ── MCPSource ─────────────────────────────────────────────────────────────
 
+class MCPSourceParams:
+    """Connection parameters for one MCP source — everything MCPSource needs
+    that isn't a harness collaborator (connectivity/emitter/tenant_id/scanners).
+
+    Not part of the harness.yaml schema: SourceConfig is local-transport-only
+    (see config.schema.SourceConfig). An MCP source's identity, endpoint,
+    credentials, and per-tool specs come from its manifest file instead —
+    harness.mcp.discovery builds this from a harness.mcp.manifest.MCPManifest
+    with credentials already resolved.
+
+    tool_specs: tool_name → {"description": str, "tags": [...]}, the
+                manifest's own declared content for each tool. Used at
+                registration time in place of the live tools/list response —
+                see MCPSource._fetch_tools. The manifest's per-tool `action`
+                is deliberately not here: it is compiled into policy rules at
+                startup (harness.mcp.discovery.compile_manifest_rules), so it
+                has one home, not a second unread copy on the source.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        *,
+        tags: list[str] | None = None,
+        credentials: dict[str, str] | None = None,
+        allowed_urls: list[str] | None = None,
+        allowed_methods: list[str] | None = None,
+        tool_specs: dict[str, dict] | None = None,
+    ) -> None:
+        self.name             = name
+        self.url               = url
+        self.tags               = list(tags or [])
+        self.credentials        = dict(credentials or {})
+        self.allowed_urls       = list(allowed_urls or [])
+        self.allowed_methods    = list(allowed_methods or [])
+        self.tool_specs         = dict(tool_specs or {})
+
+
 class MCPSource:
     """Connects to an MCP server, discovers its tool catalog, and provides
     tool invocation via the MCP JSON-RPC protocol over SSE.
@@ -333,7 +372,7 @@ class MCPSource:
 
     def __init__(
         self,
-        src_cfg: SourceConfig,
+        params: MCPSourceParams,
         *,
         connectivity:      ConnectivityConfig | None = None,
         emitter:           AuditEmitter | None = None,
@@ -343,38 +382,41 @@ class MCPSource:
         metadata_block_at: Severity | None = None,
         metadata_action:   ScanAction | None = None,
     ) -> None:
-        """Build an MCP source from its declaration plus harness collaborators.
+        """Build an MCP source from its manifest-derived params plus harness
+        collaborators.
 
-        src_cfg carries everything the operator declared — url, credentials,
-        tags, the connectivity allow-lists, and the connector manifest's
-        per-tool specs. A connector-backed config must have its manifest
-        resolved first; url is required by the time the source is built.
+        params carries everything the manifest declared — url, credentials,
+        tags, the connectivity allow-lists, and per-tool specs (see
+        MCPSourceParams). Built by harness.mcp.discovery for every discovered
+        manifest, regardless of onboarding approval — see harness.mcp.gate
+        for where approval is actually checked (per tool call).
 
         connectivity/emitter default to None, which is the connectivity-off
         posture: _connect() then builds no ShaiTransport. metadata_scanners
         defaults to empty, which makes metadata scanning a no-op regardless
         of metadata_enabled.
         """
-        if not src_cfg.url:
+        if not params.url:
             raise ConfigError(
-                f"MCP source '{src_cfg.name}': url is required — resolve the "
-                "connector manifest before constructing the source",
+                f"MCP source '{params.name}': url is required",
                 op="mcp_source_init",
             )
-        self.name  = src_cfg.name
-        self.tags  = list(src_cfg.tags)
-        self._url  = src_cfg.url.rstrip("/")
-        self._creds: dict[str, str] = dict(src_cfg.credentials)
+        self.name  = params.name
+        self.tags  = list(params.tags)
+        self._url  = params.url.rstrip("/")
+        self._creds: dict[str, str] = dict(params.credentials)
 
         # Connectivity — meaningful when connectivity.enabled in harness.yaml
-        self._allowed_urls:         list[str] = list(src_cfg.allowed_urls)
-        self._allowed_methods:      list[str] = list(src_cfg.allowed_methods)
+        self._allowed_urls:         list[str] = list(params.allowed_urls)
+        self._allowed_methods:      list[str] = list(params.allowed_methods)
         self._connectivity:         ConnectivityConfig | None = connectivity
         self._emitter:              AuditEmitter | None = emitter
         self._tenant_id:            str = tenant_id
         self._agent_ctx:            Any = None   # AgentContext — set at load() time
-        # Connector manifest enforcement — tool_name → {tags, action}
-        self._connector_tool_specs:       dict = dict(src_cfg.connector_tool_specs)
+        # Manifest's declared per-tool content — tool_name → {description, tags}.
+        # Authoritative for registration (see _fetch_tools) — the manifest, not
+        # the live tools/list response, is the source of truth for what the LLM sees.
+        self._tool_specs:                 dict = dict(params.tool_specs)
         # MCP metadata scanning — MCPMetadataScanner instances and their gate
         self._mcp_metadata_scanners:      list = list(metadata_scanners)
         self._scan_mcp_metadata_enabled:  bool = metadata_enabled
@@ -673,11 +715,19 @@ class MCPSource:
     # ── Tool catalog ──────────────────────────────────────────────────────
 
     async def _fetch_tools(self) -> list[Tool]:
-        """Fetch the tool list from the MCP server and convert to SHAI Tools.
+        """Confirm live reachability, then register tools from the manifest.
 
-        Each tool's metadata (name, description, argument descriptions) is
-        scanned by MCPMetadataScanner before registration. Tools with
-        injection payloads in their metadata are blocked and logged.
+        The manifest is the authoritative source of tool name, description,
+        and tags (see MCPSourceParams.tool_specs) — not the live tools/list
+        response. tools/list is still called to confirm the server offers
+        what's declared; a declared tool absent from the live response is
+        skipped (soft — full declared/live reconciliation is an onboarding-time
+        concern, see harness.mcp.reconciliation). A live tool with no manifest
+        entry is never registered.
+
+        Each registered tool's manifest-declared name/description is scanned
+        by MCPMetadataScanner before registration — this is the content that
+        reaches the LLM, so it's what gets scanned.
         """
         request_id = str(uuid.uuid4())
         payload = {
@@ -689,22 +739,28 @@ class MCPSource:
         response = await self._post(payload)
         self._check_jsonrpc_error(response, "tools/list")
 
-        mcp_tools = response.get("result", {}).get("tools", [])
+        live_names = {
+            t.get("name", "").strip()
+            for t in response.get("result", {}).get("tools", [])
+            if t.get("name", "").strip()
+        }
 
         tools: list[Tool] = []
         blocked_count = 0
 
-        for mcp_tool in mcp_tools:
-            tool_name = mcp_tool.get("name", "").strip()
-            if not tool_name:
-                log.warning("mcp tool with empty name skipped",
-                            extra={"source": self.name})
+        for tool_name, spec in self._tool_specs.items():
+            if tool_name not in live_names:
+                log.warning("manifest tool absent from live server — skipped",
+                            extra={"source": self.name, "tool": tool_name})
                 continue
+
+            description = spec.get("description") or None
+            manifest_tool = {"name": tool_name, "description": description or ""}
 
             # Scan metadata for injection payloads before registering
             if self._scan_mcp_metadata_enabled and self._mcp_metadata_scanners:
                 blocked, findings = await self._scan_mcp_metadata(
-                    mcp_tool, tool_name
+                    manifest_tool, tool_name
                 )
                 if blocked:
                     blocked_count += 1
@@ -716,9 +772,6 @@ class MCPSource:
                                "findings": len(findings)},
                     )
 
-            description = mcp_tool.get("description") or None
-            # Merge source-level tags with per-tool tags from connector manifest
-            spec      = self._connector_tool_specs.get(tool_name, {})
             spec_tags = spec.get("tags", [])
             tool_tags = sorted(set(self.tags) | set(spec_tags) | {"mcp"})
             tools.append(Tool(

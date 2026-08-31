@@ -180,20 +180,24 @@ Two things to know. `scope_context_for_subagent()` does **not** copy `approvals`
 
 ### Policy
 
-Two forms — inline or external file:
+`policy.source_rules` decides which sources activate. Every entry is
+`action: suppress`, matched on `source_tags`, `transport`, `agent_ids` or
+`sub_agent_ids` — a rule scoped by a tool-level field is rejected at load
+rather than silently matching every source.
 
 ```yaml
 policy:
-  rules:
-    - id: allow_local
+  source_rules:
+    - id: suppress_untrusted
       match:
-        transport: [local]
-      action: allow
+        source_tags: [untrusted]
+      action: suppress
+      reason: "untrusted sources are not activated"
 ```
 
-Rules are declared inline under `policy.rules` — there is no separate rules
-file. Per-agent rules go in the agent's own `policy_rules:` and are evaluated
-before these.
+Tool-call rules are declared in the agent's own `policy_rules:`. `harness.yaml`
+carries no tool-call rules — `policy.source_rules` there decides which sources
+activate, and nothing else.
 
 Rules are evaluated in declaration order. **First match wins.** No match → implicit `allow`.
 
@@ -343,7 +347,7 @@ sources:
   - slack_mcp
   - local
 
-# Agent-scoped policy rules — evaluated before harness rules
+# Agent-scoped policy rules — the only tool-call rules there are
 policy_rules:
   - id: deny_external_writes
     match:
@@ -411,7 +415,7 @@ match:
 - `redact` — accepted, but named args are replaced before dispatch
 - `suppress` — accepted, but the audit event is suppressed. Rare — use sparingly.
 
-**Intersection model** — an agent's rules run first, then the harness's. First deny anywhere wins. Both must allow for the call to proceed.
+**Rule ordering** — layer 5 walks one ordered list: manifest-compiled denials, then the subagent's rules, then the parent's. First match wins.
 
 ## What next
 

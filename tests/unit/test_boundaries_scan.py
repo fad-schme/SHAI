@@ -238,7 +238,6 @@ async def test_boundaries_use_their_own_block_at(tmp_path):
         "  enabled: true\n"
         "  block_at: high\n"
         "  scanners:\n    - name: regex_pii\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

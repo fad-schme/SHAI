@@ -1,13 +1,13 @@
 """RuleBasedPolicy — reference PolicyEngine backed by YAML-declared rules.
 
-Implements the intersection model:
-  1. Agent-scoped rules (passed as `rules` kwarg) evaluated first, in order.
-  2. Global rules (loaded at construction) evaluated next.
-  3. First match in either pass wins and returns immediately.
-  4. No match anywhere → PolicyDecision(action="allow") — default allow.
+evaluate() takes the rules that govern one tool call as its `rules` kwarg —
+manifest-compiled denials first, then the agent's own rules (subagent before
+parent). First match wins; no match → PolicyDecision(action="allow"). There is
+no second, global pass: per-tool-call policy belongs to the agent's own config
+and, for an MCP source, to its manifest.
 
-evaluate_source() uses source-activation rules (action="suppress").
-Default: SourceDecision(active=True).
+evaluate_source() uses the source-activation rules held on the instance, every
+one of them action="suppress". Default: SourceDecision(active=True).
 
 Rules are validated at construction. Not reloaded at runtime — restart to change.
 """
@@ -32,10 +32,12 @@ class RuleBasedPolicy:
 
     def __init__(
         self,
-        rules: list[RuleConfig] | None = None,
+        source_rules: list[RuleConfig] | None = None,
     ) -> None:
-        """Rules passed as a pre-parsed list from harness.yaml inline policy config."""
-        self._global_rules = list(rules) if rules else []
+        """source_rules: pre-parsed `policy.source_rules` from harness.yaml.
+        They govern source activation only and are never consulted by evaluate().
+        """
+        self._source_rules = list(source_rules) if source_rules else []
 
     # ── Public interface ──────────────────────────────────────────────────
 
@@ -47,20 +49,14 @@ class RuleBasedPolicy:
         *,
         rules: list[RuleConfig] | None = None,
     ) -> PolicyDecision:
-        """Intersection model: agent rules first, then global rules.
+        """Evaluate the rules governing this call, in the order given.
         First match wins. Default allow on no match.
         """
         try:
-            # Pass 1: agent-scoped rules
             if rules:
                 decision = self._evaluate_rules(rules, tool, args, ctx)
                 if decision is not None:
                     return decision
-
-            # Pass 2: global rules
-            decision = self._evaluate_rules(self._global_rules, tool, args, ctx)
-            if decision is not None:
-                return decision
 
             return PolicyDecision(action="allow")
 
@@ -83,9 +79,7 @@ class RuleBasedPolicy:
     ) -> SourceDecision:
         """Check source-activation rules. Default: active=True."""
         try:
-            for rule in self._global_rules:
-                if rule.action != "suppress":
-                    continue
+            for rule in self._source_rules:
                 if self._match_source(rule.match, source, ctx):
                     log.debug(
                         "source suppressed",
@@ -186,6 +180,11 @@ class RuleBasedPolicy:
         self, match: RuleMatchConfig, source: Any, ctx: AgentContext
     ) -> bool:
         if match.source_tags and not set(match.source_tags) & set(source.tags):
+            return False
+        # transport is honoured here exactly as _match_tool honours it. Dropping
+        # it turned a rule narrowed to one transport into one matching every
+        # source — a narrowing rule that widens is the dangerous direction.
+        if match.transport and source.transport not in match.transport:
             return False
         if match.agent_ids and ctx.agent_id not in match.agent_ids:
             return False

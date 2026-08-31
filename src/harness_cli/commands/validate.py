@@ -17,14 +17,14 @@ def cmd_validate(args: argparse.Namespace) -> int:
     console.write(f"Validating {config_path} ...", end=" ")
     try:
         config = load_yaml(config_path)
-        policy_rules = config.policy.parsed_rules()
+        source_rules = config.policy.parsed_source_rules()
         console.write("OK")
     except (ConfigError, ValueError) as e:
         console.error(f"FAIL\nError: {e}")
         return 1
 
     console.write(f"  tenant_id:    {config.tenant_id}")
-    console.write(f"  policy_rules: {len(policy_rules)}")
+    console.write(f"  source_rules: {len(source_rules)}")
     for combo in config.policy.forbidden_tag_combinations:
         console.write(f"  forbidden_tags: {sorted(set(combo))}")
     console.write(f"  audit_sinks:  {[s.name for s in config.audit_sinks]}")

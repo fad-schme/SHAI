@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from harness.adapters.scanners.base import ConfiguredScanner
 from harness.adapters.scanners.rate_limiter import RateLimiter
-from harness.agents.agent_config import AgentConfig
+from harness.agents.agent_config import AgentConfig, RuleConfig
 from harness.agents.registry import AgentRegistry
 from harness.agents.revocation import RevocationStore
 from harness.audit.emitter import AuditEmitter
@@ -22,7 +22,6 @@ from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import build_secrets_provider, load_dict, read_yaml
 from harness.config.schema import HarnessConfig, SourceConfig
-from harness.connectors import resolve_source_config
 from harness.core import wiring
 from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
@@ -30,10 +29,10 @@ from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
 from harness.core.events import AuditEvent, now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
-from harness.core.types import BoundaryName, Decision, ScanStatus
+from harness.core.types import BoundaryName, Decision, ScanStatus, Transport
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.tools.registry import ToolRegistry
-from harness.tools.source import LocalSource, MCPSource, SourceRegistry, ToolSource
+from harness.tools.source import LocalSource, SourceRegistry, ToolSource
 from harness.tools.tool import Tool
 
 if TYPE_CHECKING:
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
     from harness.agents.agent_config import SubAgentConfig
     from harness.core.events import AnyAuditEvent
     from harness.maintenance import Maintenance
+    from harness.mcp.gate import McpBaselineGate
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
@@ -102,6 +102,9 @@ class SHAI:
         rate_limiter: RateLimiter | None,
         source_registry: SourceRegistry,
         connectivity_secret: bytes | None = None,
+        mcp_required_flags: dict[str, bool] | None = None,
+        mcp_baseline_gate: McpBaselineGate | None = None,
+        mcp_policy_rules: dict[str, list[RuleConfig]] | None = None,
     ) -> None:
         # Only built objects are passed in. Everything a boundary reads from
         # harness.yaml is read off self._config at the call site — config is
@@ -147,6 +150,18 @@ class SHAI:
         self._agent_limits: dict[str, ExecutionLimits] = {}
         self._tool_result_scanners      = tool_result_scanners
         self._source_registry           = source_registry
+        # required flags for MCP sources built from manifests — keyed by
+        # manifest id, merged with local sources' required flags in
+        # _wire_agent (local sources carry their own on SourceConfig).
+        self._mcp_required_flags: dict[str, bool] = dict(mcp_required_flags or {})
+        # Gate-level MCP manifest approval check — see harness.mcp.gate. None
+        # when mcp_manifests_dir is unset, matching McpBaselineGate's own
+        # always-approve posture for an unknown source_name.
+        self._mcp_baseline_gate: McpBaselineGate | None = mcp_baseline_gate
+        # Per-source deny rules compiled from each manifest's per-tool
+        # `action: block` — keyed by source name, handed to layer 5 ahead of
+        # the agent's own rules. See harness.mcp.discovery.compile_manifest_rules.
+        self._mcp_policy_rules: dict[str, list[RuleConfig]] = dict(mcp_policy_rules or {})
         # Per-agent resolved tool sets — populated at load_agent() time
         # key: agent_id, value: {tool_name: Tool} for that agent
         # Composite tool identity: agent_id → {tool_name: (source_name, Tool)}
@@ -283,19 +298,47 @@ class SHAI:
             forbidden_tag_combinations=config.policy.forbidden_tag_sets(),
         )
 
-        # Build SourceRegistry and register all declared sources.
-        # resolved_sources holds the post-connector-merge configs — the startup
-        # attestation records what the harness runs with, not what was declared.
+        # Build SourceRegistry: local sources straight from config.sources
+        # (transport: local | skill), MCP sources resolved from the
+        # `transport: mcp` entries in config.sources — see
+        # harness.mcp.discovery. Sources always build and connect regardless
+        # of onboarding approval — approval is checked per tool call instead
+        # (see harness.mcp.gate.McpBaselineGate, built below).
+        # resolved_sources holds every declared SourceConfig — the startup
+        # attestation records what the harness declares, MCP included, even
+        # for a name whose manifest has no approved baseline.
         source_registry = SourceRegistry(policy)
-        resolved_sources: list[SourceConfig] = []
-        for declared in config.sources:
-            src_cfg = resolve_source_config(declared)
+        resolved_sources: list[SourceConfig] = list(config.sources)
+        for src_cfg in config.sources:
+            if src_cfg.transport == Transport.MCP:
+                continue
+            source = LocalSource(src_cfg, registry=tool_registry)
+            source_registry.register(source)
 
-            if src_cfg.transport == "mcp":
-                # Credential values were resolved by the loader pass.
-                # connectivity + emitter let _connect() wire ShaiTransport.
-                source = MCPSource(
-                    src_cfg,
+        mcp_required_flags: dict[str, bool] = {}
+        mcp_manifest_paths: dict[str, Path] = {}
+        mcp_policy_rules: dict[str, list[RuleConfig]] = {}
+        if any(s.transport == Transport.MCP for s in config.sources):
+            from harness.mcp.discovery import (
+                build_mcp_source,
+                compile_manifest_rules,
+                resolve_mcp_sources,
+            )
+
+            for resolved in resolve_mcp_sources(
+                config.sources,
+                mcp_manifests_dir=config.mcp_manifests_dir,
+                baseline_path=config.mcp_baseline.path,
+                baseline_secret=config.mcp_baseline.secret.encode(),
+            ):
+                mcp_required_flags[resolved.manifest.id] = resolved.manifest.required
+                mcp_manifest_paths[resolved.manifest.id] = resolved.path
+                rules = compile_manifest_rules(resolved.manifest)
+                if rules:
+                    mcp_policy_rules[resolved.manifest.id] = rules
+                source = build_mcp_source(
+                    resolved,
+                    secrets_provider=provider,
                     connectivity=config.connectivity,
                     emitter=emitter,
                     tenant_id=config.tenant_id,
@@ -304,11 +347,17 @@ class SHAI:
                     metadata_block_at=config.scan_mcp_metadata.block_at,
                     metadata_action=config.scan_mcp_metadata.action,
                 )
-            else:
-                # LOCAL — backed by the shared tool registry
-                source = LocalSource(src_cfg, registry=tool_registry)
-            source_registry.register(source)
-            resolved_sources.append(src_cfg)
+                source_registry.register(source)
+
+        mcp_baseline_gate = None
+        if mcp_manifest_paths:
+            from harness.mcp.gate import McpBaselineGate
+            mcp_baseline_gate = McpBaselineGate(
+                mcp_manifest_paths,
+                baseline_path=config.mcp_baseline.path,
+                secret=config.mcp_baseline.secret.encode(),
+                cache_ttl_seconds=config.mcp_baseline.cache_ttl_seconds,
+            )
 
         rl_cfg = config.check_tool_call.rate_limit
         rate_limiter = (
@@ -334,6 +383,9 @@ class SHAI:
             rate_limiter=rate_limiter,
             source_registry=source_registry,
             connectivity_secret=connectivity_secret,
+            mcp_required_flags=mcp_required_flags,
+            mcp_baseline_gate=mcp_baseline_gate,
+            mcp_policy_rules=mcp_policy_rules,
         )
 
         await emitter.emit(AuditEvent.build(
@@ -432,12 +484,17 @@ class SHAI:
         ctx = AgentContext(agent_id=cfg.id)
 
         # Activate declared sources for this agent
-        # Build required_flags from SourceConfig — required=True (default) means
-        # a missing or failed source raises ConfigError rather than degrading silently.
+        # Build required_flags starting from every SourceConfig's own
+        # `required` (covers a `transport: mcp` entry whose manifest has no
+        # approved baseline and so was never built), then override with each
+        # built MCP source's own manifest `required` field. required=True
+        # (default either way) means a missing or failed source raises
+        # ConfigError rather than degrading silently.
         required_flags = {
             sc.name: sc.required
             for sc in self._config.sources
         }
+        required_flags.update(self._mcp_required_flags)
         source_tools = await self._source_registry.activate(
             ctx, list(cfg.sources), required_flags=required_flags
         )
@@ -687,6 +744,15 @@ class SHAI:
         # Pass flat {name: Tool} to run_gate — gate only needs the Tool
         tools = {k: v[1] for k, v in agent_tool_map.items()}
 
+        # R3: MCP manifest onboarding approval — every call against an MCP
+        # source is checked against the signed baseline store (see
+        # harness.mcp.gate.McpBaselineGate). A no-op for local sources and
+        # for a deployment with no mcp_manifests_dir configured.
+        if self._mcp_baseline_gate is not None:
+            approved, deny_reason = self._mcp_baseline_gate.check(source_name)
+            if not approved:
+                return await self._deny_pre_gate(deny_reason, name, ctx)
+
         gate = await run_gate(
             name, args, ctx,
             agent_config=agent_config,
@@ -708,6 +774,7 @@ class SHAI:
             approvals=self._approvals,
             normalization=self._config.normalization,
             scan_state=self._scan_state,
+            manifest_rules=self._mcp_policy_rules.get(source_name),
         )
 
         # Record gate outcome to TurnSignals for downstream boundaries

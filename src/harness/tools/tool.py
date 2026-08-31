@@ -97,6 +97,14 @@ class ArgumentRule(BaseModel, frozen=True):
         """Return a violation message, or None if the rule passes.
 
         Never raises — a malformed rule is a violation, not an exception.
+
+        **The message never carries the argument value.** What this returns
+        becomes `ArgumentViolationError`, which gate layer 2 hands to
+        `emit_deny` verbatim, so it lands in `AuditEvent.deny_reason` — a
+        signed, durable field that must hold no tool argument. The message
+        names the argument and which constraint rejected it, which is what an
+        operator triages on; the value itself is recoverable only from the
+        caller's own debug logging, never from the audit trail.
         """
         value = args.get(self.arg)
 
@@ -110,8 +118,7 @@ class ArgumentRule(BaseModel, frozen=True):
             try:
                 if float(value) > self.max_value:
                     return (
-                        f"argument '{self.arg}' value {value} "
-                        f"exceeds max {self.max_value}"
+                        f"argument '{self.arg}' exceeds max {self.max_value}"
                     )
             except (TypeError, ValueError):
                 return f"argument '{self.arg}' is not numeric (max_value check)"
@@ -120,8 +127,7 @@ class ArgumentRule(BaseModel, frozen=True):
             try:
                 if float(value) < self.min_value:
                     return (
-                        f"argument '{self.arg}' value {value} "
-                        f"is below min {self.min_value}"
+                        f"argument '{self.arg}' is below min {self.min_value}"
                     )
             except (TypeError, ValueError):
                 return f"argument '{self.arg}' is not numeric (min_value check)"
@@ -129,16 +135,14 @@ class ArgumentRule(BaseModel, frozen=True):
         if self.allowlist is not None:
             if str(value) not in self.allowlist:
                 return (
-                    f"argument '{self.arg}' value '{value}' "
-                    f"is not in the allowed set"
+                    f"argument '{self.arg}' is not in the allowed set"
                 )
 
         if self.pattern is not None:
             try:
                 if not re.search(self.pattern, str(value)):
                     return (
-                        f"argument '{self.arg}' value '{value}' "
-                        f"does not match required pattern"
+                        f"argument '{self.arg}' does not match required pattern"
                     )
             except re.error as exc:
                 return f"argument '{self.arg}' pattern is invalid: {exc}"

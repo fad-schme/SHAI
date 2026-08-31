@@ -26,7 +26,6 @@ async def _build_harness(tmp_path: Path) -> SHAI:
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -117,7 +116,6 @@ async def test_run_turn_input_blocked(tmp_path: Path):
         "scan_input:\n  enabled: true\n  block_at: info\n"
         "  scanners:\n    - name: regex_pii\n"
         "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -289,7 +287,6 @@ async def _poisoned_harness(tmp_path: Path) -> tuple[SHAI, AgentContext]:
         "  scanners:\n"
         "    - name: injection_scan\n"
         "    - name: identity_spoof_scan\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -479,7 +476,6 @@ async def _mcp_harness(tmp_path: Path) -> tuple[SHAI, AgentContext, _FakeMCPSour
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "connectivity:\n  enabled: true\n  token_secret: test-secret-value\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

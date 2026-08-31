@@ -188,7 +188,6 @@ async def _make_harness(tmp_path: Path) -> SHAI:
         "    - name: identity_spoof_scan\n"
         "scan_output:\n"
         "  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

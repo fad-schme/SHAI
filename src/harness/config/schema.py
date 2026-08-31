@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from harness.connectivity.config import ConnectivityConfig
 from harness.core.types import OnError, ScanAction, Severity, Transport
@@ -332,75 +338,52 @@ class ToolResultScanConfig(BoundaryConfig):
 class SourceConfig(BaseModel, frozen=True, extra="forbid"):
     """Configuration for one tool source declared in harness.yaml.
 
-    Local sources (transport: local) use already-registered tools — no url needed.
-    MCP sources (transport: mcp) connect to an MCP server at the given url.
+    Local sources (transport: local | skill) use already-registered tools —
+    no url needed. An MCP source is declared here by name only — no url,
+    credentials, or allow-lists; those come entirely from the manifest file
+    resolved by convention at `<mcp_manifests_dir>/<name>.yaml` — see
+    `harness.mcp.manifest` and `harness.mcp.discovery`. A `transport: mcp`
+    entry with no matching, approved manifest is not built into a live
+    source at all (see harness.mcp.discovery) — this entry only declares
+    that the name exists and governs its `required` handling.
 
-    credentials:  mapping of credential name to secret:// URI or literal value.
-                  Resolved via SecretsProvider at from_yaml() time.
     tags:         tags applied to ALL tools returned by this source, merged with
                   any tags declared on individual tools.
     required:     when True (default), a missing or failed source raises ConfigError
                   at load_agent() time — the agent is not usable without it. Set to
                   False for optional enrichment sources where degraded operation is
-                  acceptable (e.g. a telemetry source that is nice-to-have).
+                  acceptable (e.g. a telemetry source that is nice-to-have). For an
+                  MCP source, this also governs a manifest with no approved baseline:
+                  required=True fails agent load; required=False is skipped.
     """
     name:        str
-    connector:   str | None = None
-    # Optional connector id (e.g. 'slack', 'github'). When set, loads the
-    # pre-built manifest from harness.connectors and merges it with any
-    # fields declared alongside connector: in harness.yaml.
     transport:   Transport = Transport.LOCAL
-    url:         str | None = None
-    credentials: dict[str, str] = Field(default_factory=dict)
     tags:        list[str] = Field(default_factory=list)
-    tool_names:  list[str] = Field(default_factory=list)  # local sources only: subset of tools to expose
-    required:        bool       = True
+    tool_names:  list[str] = Field(default_factory=list)  # subset of tools to expose
+    required:    bool      = True
     # required=True (default): missing or failed source raises ConfigError at load_agent() time.
     # required=False: missing or failed source is logged and skipped — use for
     #                 optional enrichment sources where degraded operation is acceptable.
-    allowed_urls:    list[str]  = Field(default_factory=list)
-    # URL prefix patterns this source may reach. Default: [{url}/*] from the url field.
-    # Used to populate DispatchToken.allowed_urls when connectivity.enabled.
-    # Pattern syntax: "https://host/path/*" or exact "https://host/path".
-    allowed_methods:      list[str]  = Field(default_factory=list)
-    # HTTP methods permitted. Default: all standard methods when empty.
-    connector_tool_specs: dict       = Field(default_factory=dict)
-    # Per-tool security metadata from the connector manifest.
-    # Maps tool_name → {tags: [...], action: str}. Populated by from_yaml()
-    # when connector: is set. Empty for manual sources.
-
-    @model_validator(mode="after")
-    def _transport_constraints(self) -> SourceConfig:
-        # url is not required when a connector manifest provides it
-        if self.transport == Transport.MCP and not self.url and not self.connector:
-            raise ValueError(
-                f"source '{self.name}': url is required for mcp transport "
-                f"(or set connector: to use a pre-built manifest)"
-            )
-        return self
 
 
 class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
     """Inline policy configuration.
 
-    engine: which PolicyEngine adapter gates tool calls and source activation.
-            Defaults to the built-in `rules` evaluator. Any other name is
-            resolved through the `harness.policy` entry-point group, so an
-            enterprise or third-party engine (OPA, Cedar) is selected here:
+    engine: which PolicyEngine gates tool calls and source activation.
+            The built-in `rules` evaluator.
 
-                policy:
-                  engine:
-                    name: opa
-                    config: {bundle_url: "${OPA_BUNDLE_URL}"}
+            An engine that cannot be built is fatal — a harness with no policy
+            engine allows every tool call.
 
-            Unlike a scanner or an audit sink, an engine that cannot be built
-            is fatal — a harness with no policy engine allows every tool call.
+    source_rules:
+            Which sources activate, evaluated by evaluate_source(). Every entry
+            is `action: suppress`. Match on `source_tags`, `transport`,
+            `agent_ids`, `sub_agent_ids` — a source rule scoped by a tool-level
+            field is rejected here rather than silently ignored, because a
+            narrowing rule that matches nothing narrows nothing.
 
-    rules:  global policy rules evaluated after agent-scoped rules.
-            Defined inline in harness.yaml — no separate rules file needed.
-            Same schema as agent-level policy_rules. Only the `rules` engine
-            evaluates them; every other engine carries its own global rules,
-            so declaring both is rejected rather than silently dropping them.
+            Per-tool-call policy is not here. An agent's tools are governed by
+            its own config; an MCP source's tools by its manifest.
 
     forbidden_tag_combinations:
             Tag sets no single agent may declare together. Each entry is a list
@@ -416,18 +399,42 @@ class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
                     - [sensitive, external_write]
     """
     engine: AdapterRef = Field(default_factory=lambda: AdapterRef(name="rules"))
-    rules: list[dict[str, Any]] = Field(default_factory=list)
+    source_rules: list[dict[str, Any]] = Field(default_factory=list)
     forbidden_tag_combinations: list[list[str]] = Field(default_factory=list)
 
+    # Fields _match_source cannot honour. Accepting one would turn a rule the
+    # operator wrote to narrow an activation into one that matches every source.
+    _SOURCE_UNSUPPORTED = ("tool_names", "tool_tags", "any", "all", "not")
+
     @model_validator(mode="after")
-    def _rules_require_the_rules_engine(self) -> PolicyConfig:
-        if self.rules and self.engine.name != "rules":
-            raise ValueError(
-                f"policy.rules are evaluated by the built-in `rules` engine only, "
-                f"but engine is {self.engine.name!r}. That engine supplies its own "
-                f"global rules — move these rules into its policy source, or they "
-                f"would never be evaluated."
-            )
+    def _source_rules_are_source_scoped(self) -> PolicyConfig:
+        for raw in self.source_rules:
+            rule_id = raw.get("id", "<no id>")
+            if raw.get("action") != "suppress":
+                raise ValueError(
+                    f"policy.source_rules[{rule_id!r}]: action must be 'suppress' — "
+                    f"source rules decide which sources activate, not tool calls"
+                )
+            used = [f for f in self._SOURCE_UNSUPPORTED if (raw.get("match") or {}).get(f)]
+            if used:
+                raise ValueError(
+                    f"policy.source_rules[{rule_id!r}]: match field(s) {used} are "
+                    f"tool-scoped and cannot match a source. Use source_tags, "
+                    f"transport, agent_ids or sub_agent_ids."
+                )
+            # Parse here so a malformed rule fails at config load, naming the
+            # field. parsed_source_rules() is then total, and from_yaml() never
+            # has to guess what went wrong.
+            from harness.agents.agent_config import RuleConfig
+            try:
+                RuleConfig.model_validate(raw)
+            except ValidationError as e:
+                bad = ", ".join(
+                    ".".join(str(x) for x in err["loc"]) for err in e.errors()
+                )
+                raise ValueError(
+                    f"policy.source_rules[{rule_id!r}]: invalid field(s): {bad}"
+                ) from e
         return self
 
     @field_validator("forbidden_tag_combinations")
@@ -441,10 +448,10 @@ class PolicyConfig(BaseModel, frozen=True, extra="forbid"):
                 )
         return v
 
-    def parsed_rules(self) -> list:
-        """Return rules parsed as RuleConfig objects. Called by from_yaml()."""
+    def parsed_source_rules(self) -> list:
+        """Source-activation rules as RuleConfig objects. Called by from_yaml()."""
         from harness.agents.agent_config import RuleConfig
-        return [RuleConfig.model_validate(r) for r in self.rules]
+        return [RuleConfig.model_validate(r) for r in self.source_rules]
 
     def forbidden_tag_sets(self) -> list[frozenset[str]]:
         """Combinations as sets, for AgentRegistry. Called by from_yaml()."""
@@ -487,6 +494,39 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
         return self
 
 
+class MCPBaselineConfig(BaseModel, frozen=True, extra="forbid"):
+    """Signed local store of approved MCP manifest hashes.
+
+    A `transport: mcp` source (see SourceConfig) is only ever built —
+    connected, tools registered — for a name whose manifest hash matches an
+    approved record here at startup (see harness.mcp.discovery); an
+    unapproved or hash-mismatched name is never built at all. Once built,
+    though, the source stays connected even if its manifest changes
+    mid-session — checked again on every check_tool_call for that source
+    (the gate's R3 pre-gate check, harness.mcp.gate.McpBaselineGate), which
+    is what catches a manifest edited after startup without needing a
+    restart; approval stops *actions* from a built source, not its
+    connection, the same posture agent revocation takes (see
+    RevocationConfig). `shai mcp onboard` is the only writer — a clean
+    onboarding pass auto-records `{id, file_hash, recorded_at}`.
+
+    The signing key is resolved via SecretsProvider (secret:// URI), and is
+    deliberately its own secret rather than reusing patterns_db.secret or
+    audit_signing.secret — approving an MCP manifest is a distinct trust
+    action from either.
+
+    cache_ttl_seconds:
+        How long a check is cached on the gate's hot path, per source. **This
+        is the re-onboarding/kill latency** — editing a manifest (or running
+        `shai mcp onboard`) takes effect on calls to that source within one
+        TTL. 0 disables caching: every gate call re-hashes the manifest file
+        and re-reads the baseline store.
+    """
+    path:              str   = "state/mcp_baseline.db"
+    secret:            str   = ""    # secret://ENV_VAR resolved at startup
+    cache_ttl_seconds: float = Field(default=5.0, ge=0, le=300)
+
+
 class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     version:         int = 1
     tenant_id:       str = "default"
@@ -510,3 +550,22 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     patterns_db:     PatternsDBConfig    = Field(default_factory=PatternsDBConfig)
     connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
     revocation:      RevocationConfig     = Field(default_factory=RevocationConfig)
+    mcp_manifests_dir: str | None = None
+    # Base directory a declared `transport: mcp` source name resolves against:
+    # <mcp_manifests_dir>/<name>.yaml — see harness.mcp.discovery. Not scanned;
+    # a name with no `sources:` entry is invisible to the harness. None
+    # (default) means no MCP sources can be declared.
+    mcp_baseline:      MCPBaselineConfig = Field(default_factory=MCPBaselineConfig)
+
+    @model_validator(mode="after")
+    def _mcp_sources_need_baseline_config(self) -> HarnessConfig:
+        has_mcp_sources = any(s.transport == Transport.MCP for s in self.sources)
+        if has_mcp_sources and not self.mcp_manifests_dir:
+            raise ValueError(
+                "mcp_manifests_dir is required when sources: declares a transport: mcp entry"
+            )
+        if has_mcp_sources and not self.mcp_baseline.secret:
+            raise ValueError(
+                "mcp_baseline.secret is required when sources: declares a transport: mcp entry"
+            )
+        return self

@@ -402,7 +402,6 @@ def _write_config(
         "  scanners:\n"
         + "".join(f"    - name: {s}\n" for s in scanners)
         + "scan_output:\n  enabled: false\n"
-        "policy:\n  rules: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     if db_path is not None:

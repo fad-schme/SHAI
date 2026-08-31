@@ -6,9 +6,8 @@ can escape as an exception. Nothing is exported because it happens to be useful
 internally.
 
 Anything not listed in `__all__` is an implementation detail and may change
-without a deprecation. Adapters live behind their entry-point groups
-(`harness.scanners`, `harness.audit_sinks`, `harness.policy`, `harness.secrets`)
-and are selected by name in harness.yaml, not imported.
+without a deprecation. Adapters are selected by name in harness.yaml, not
+imported.
 """
 from importlib.metadata import PackageNotFoundError, version
 
