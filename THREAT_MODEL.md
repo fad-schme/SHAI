@@ -71,9 +71,14 @@ or agent memory that is later loaded into the LLM's context.
 **SHAI control:** `scan_tool_result` runs on every tool return value before it
 re-enters the LLM context, using a document-tuned injection catalog
 (`patterns_for_doc.yaml`). `scan_file` handles file uploads at the ingress
-boundary (structural + content scan).
+boundary (structural + content scan). Content extracted from a file is
+de-obfuscated with the same normalization the text boundaries apply, so an
+encoded or homoglyph payload inside an uploaded document reaches the same
+verdict it would as pasted text. The file *path* is deliberately not
+normalized — de-obfuscating a path yields views that are other paths.
 
-**Tests:** `tests/unit/test_scan_tool_result.py`, `tests/integration/test_end_to_end_turn.py`.
+**Tests:** `tests/unit/test_scan_tool_result.py`, `tests/integration/test_end_to_end_turn.py`,
+`tests/integration/test_file_scan_content_chain.py`.
 
 
 ---
@@ -129,8 +134,15 @@ call caps. Loop detection triggers on similarity within `loop_detection_window`.
 **SHAI control:** `scan_input` runs the injection catalog (`injection_patterns.yaml`
 + `jailbreak_patterns.yaml` + `identity_spoof_patterns.yaml`) plus the
 heuristic scanner (entropy, instruction density, structural markers,
-typoglycemia). Normalisation pipeline decodes base64, hex, URL, rot13, and
-homoglyph obfuscation up to `max_depth`.
+typoglycemia). The normalisation pipeline produces de-obfuscated views for the
+scanners to match against, along three independent lines: substring decoding
+(base64, base32, hex, ascii85, binary, unicode-escape, percent-encoding, morse)
+and whole-string transforms (rot13, reversal), recursing to `max_depth`;
+surface folding (NFKC, homoglyph mapping, and removal of characters that render
+as nothing, which otherwise break the word boundaries the catalogs anchor on);
+and reassembly of fragmented text. A decoded view is admitted when it decodes
+to text, not when its encoded form looks sufficiently random — an attacker
+choosing the plaintext controls the latter.
 
 **Tests:** `tests/unit/test_jailbreak_scan.py`, `tests/unit/test_identity_spoof_scan.py`,
 `tests/unit/test_heuristic_candidates.py`, `tests/integration/test_normalization_pipeline.py`.

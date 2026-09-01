@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import binascii
 import codecs
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -94,7 +95,12 @@ _INVISIBLE = dict.fromkeys(
 _WS_RUN = re.compile(r"\s+")
 # Separators used to fragment a payload between characters or words: runs of
 # whitespace and common punctuation delimiters attackers interleave.
-_FRAGMENT_SEP = re.compile(r"[\s\-/_.|~*]+")
+_FRAGMENT_SEP_CLASS = r"[\s\-/_.|~*]+"
+_FRAGMENT_SEP = re.compile(_FRAGMENT_SEP_CLASS)
+# The same separator, capturing. Splitting on it keeps the separator runs, and
+# their *width* is what tells a gap between two characters of one word from a
+# gap between two words — see _join_char_runs.
+_FRAGMENT_SPLIT = re.compile(f"({_FRAGMENT_SEP_CLASS})")
 # A fragmentation delimiter is punctuation that is either surrounded by spaces
 # (" | ", " -/- ") or is a run of two or more punctuation chars ("--", "::").
 # Ordinary hyphenation ("state-of-the-art") is a single punct char with no
@@ -196,7 +202,7 @@ def _longest_char_run(tokens: list[str]) -> int:
     return longest
 
 
-def _join_char_runs(tokens: list[str]) -> str:
+def _join_char_runs(text: str) -> str:
     """Join runs of single-character tokens, leaving whole words spaced.
 
     "i g n o r e your previous" -> "ignore your previous".
@@ -205,7 +211,29 @@ def _join_char_runs(tokens: list[str]) -> str:
     instead yields "ignoreyourprevious", where the word boundaries are gone —
     and most catalog patterns lead with a ``\\b``-anchored token, so they match
     neither the fragmented text nor that repair of it.
+
+    A fragmented span covering several words is one unbroken run, so joining it
+    whole would produce that same useless output. Separator width is what
+    separates the two cases: an attacker fragmenting text puts a wider gap
+    between words than between the characters of one word. Within each run the
+    narrowest gap is therefore the character separator, and anything wider ends
+    a word. When every gap in a run is the same width the input carries no
+    boundary information at all, and the run joins as one word — the
+    single-word case above.
     """
+    parts = _FRAGMENT_SPLIT.split(text)
+    tokens = parts[0::2]
+    # gaps[i] is the separator that follows tokens[i]; the last token has none.
+    gaps = parts[1::2] + [""]
+    # A leading or trailing separator splits into an empty token; drop both
+    # sides together so the two lists stay aligned.
+    while tokens and not tokens[0]:
+        tokens.pop(0)
+        gaps.pop(0)
+    while tokens and not tokens[-1]:
+        tokens.pop()
+        gaps.pop()
+
     out: list[str] = []
     joined = False
     i = 0
@@ -218,7 +246,15 @@ def _join_char_runs(tokens: list[str]) -> str:
         while j < len(tokens) and len(tokens[j]) == 1:
             j += 1
         if j - i >= _MIN_CHAR_RUN:
-            out.append("".join(tokens[i:j]))
+            narrowest = min(len(g) for g in gaps[i:j - 1])
+            word = tokens[i]
+            for k in range(i + 1, j):
+                if len(gaps[k - 1]) > narrowest:
+                    out.append(word)
+                    word = tokens[k]
+                else:
+                    word += tokens[k]
+            out.append(word)
             joined = True
         else:
             out.extend(tokens[i:j])
@@ -226,7 +262,7 @@ def _join_char_runs(tokens: list[str]) -> str:
     return " ".join(out) if joined else ""
 
 
-def _reassemble(text: str) -> list[tuple[str, str]]:
+def _reassemble(text: str, uncollapsed: str) -> list[tuple[str, str]]:
     """Return reassembled views when ``text`` looks fragmented.
 
     Three fragmentation styles need three different repairs, so this may yield
@@ -247,6 +283,11 @@ def _reassemble(text: str) -> list[tuple[str, str]]:
     what makes this local — the ratio tests are computed over the whole string,
     so fragmenting three words inside an ordinary paragraph dilutes both below
     threshold and the repair would never fire on ratios alone.
+
+    ``uncollapsed`` is ``text`` with its whitespace runs intact. Detection and
+    the separator-substitution views run on ``text`` — the collapsed form the
+    rest of the pipeline works in — while the rejoin reads separator width off
+    ``uncollapsed``, which is the only place it still exists.
 
     Returns an empty list for ordinary prose so it is never destructured.
     """
@@ -271,7 +312,7 @@ def _reassemble(text: str) -> list[tuple[str, str]]:
     spaced = _FRAGMENT_SEP.sub(" ", text).strip()
     if spaced and spaced != text:
         views.append(("reassemble_fragments", spaced))
-    rejoined = _join_char_runs(tokens)
+    rejoined = _join_char_runs(uncollapsed)
     if rejoined and rejoined != text and rejoined != spaced:
         views.append(("reassemble_fragments", rejoined))
     stripped = _FRAGMENT_SEP.sub("", text)
@@ -280,7 +321,7 @@ def _reassemble(text: str) -> list[tuple[str, str]]:
     return views
 
 
-def _fold(text: str) -> tuple[str, list[str]]:
+def _fold(text: str) -> tuple[str, str, list[str]]:
     """Apply the always-on surface transforms: unicode fold, confusable
     mapping, invisible-character removal, whitespace collapse.
 
@@ -304,22 +345,83 @@ def _fold(text: str) -> tuple[str, list[str]]:
     if collapsed != confused:
         fired.append("collapse_whitespace")
 
-    return collapsed, fired
+    # The pre-collapse form is returned alongside it because fragment
+    # reassembly needs separator width, which collapsing destroys.
+    return collapsed, confused.strip(), fired
 
 
-# A small set of very common English words. Enough to tell "recovered natural
-# language" from "rotated gibberish" without shipping a full dictionary. This
-# gates rot13 (see _decode_candidates); it is a signal, not a language model.
-_COMMON_WORDS = frozenset(
-    ["the", "a", "an", "and", "or", "but", "if", "then", "to", "of", "in", "on", "at", "by", "for", "with", "from", "as", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "you", "your", "i", "we", "they", "it", "he", "she", "this", "that", "these", "those", "not", "no", "yes", "can", "will", "would", "should", "could", "ignore", "previous", "instruction", "instructions", "system", "prompt", "now", "please", "tell", "show", "me", "my", "all", "any"]
-)
-_WORD = re.compile(r"[a-z]+")
+# Frequent English letter trigrams. Two whole-string transforms (rot13 and
+# reversal below) always "succeed" mechanically, so they cannot use "did it
+# decode" as an admission test; they need a way to ask whether the result reads
+# as language. A word list cannot answer that — an attacker writes the payload
+# around it, which is exactly how the previous gate was evaded — but the letter
+# statistics of English are not something a legible English sentence can avoid.
+# Palindromic trigrams and reverse-pairs are excluded so the table stays
+# directional: reversed English must not score like English.
+_ENGLISH_TRIGRAMS = frozenset([
+    "ent", "ing", "ion", "tio", "ver", "con", "ate", "hat", "tha", "ect", "pro", "the",
+    "est", "ted", "ati", "age", "ter", "res", "can", "und", "all", "rea", "ith", "men",
+    "too", "ool", "her", "wit", "sca", "oun", "gen", "rat", "com", "ont", "our", "ers",
+    "thi", "nte", "red", "cti", "cal", "ann", "bou", "ity", "ons", "ery", "tur", "che",
+    "ess", "sta", "nne", "tch", "tes", "rce", "for", "str", "den", "rom", "nda", "ins",
+    "ign", "ile", "tin", "pat", "dar", "ame", "sha", "ist", "int", "din", "man", "ner",
+    "dec", "ary", "atc", "ies", "sig", "ext", "hai", "ain", "ove", "tte", "sti", "rit",
+    "nts", "att", "rec", "nce", "act", "out", "lic", "nst", "han", "app", "whe", "ntr",
+    "ore", "ail", "ten", "ule", "tor", "ide", "mat", "cla", "rul", "ure", "era", "tri",
+    "sed", "sou", "urc", "dit", "oth", "tra", "ode", "ble", "hin", "ine", "ead", "cat",
+])
+
+# A token counts as word-like when this share of its trigrams is in the table.
+# Ordinary prose clears it comfortably; rotated or reversed prose does not.
+_TRIGRAM_HIT_RATIO = 0.2
+
+# Below this many recovered word-like tokens the result is noise, not language.
+# One token flipping is well within chance for short or non-prose input.
+_MIN_RECOVERED_TOKENS = 2
+
+_TOKEN = re.compile(r"[a-z]{4,}")
 
 
-def _word_score(text: str) -> int:
-    """Count tokens that are common English words. Used to decide whether a
-    speculative rot13 decode actually recovered natural language."""
-    return sum(1 for w in _WORD.findall(text.lower()) if w in _COMMON_WORDS)
+def _language_score(text: str) -> int:
+    """Count word-like tokens — vocabulary-free, from letter trigrams alone.
+
+    Tokens shorter than four letters carry too little signal to judge, so they
+    are ignored on both sides of the comparison rather than counted as noise.
+
+    Runs on inputs up to the normalizer's size limit, so it stops scoring a
+    token as soon as the verdict is settled and remembers repeated ones — a
+    document is mostly the same few hundred words over and over.
+    """
+    score = 0
+    seen: dict[str, bool] = {}
+    for word in _TOKEN.findall(text.lower()):
+        word_like = seen.get(word)
+        if word_like is None:
+            trigrams = len(word) - 2
+            needed = math.ceil(_TRIGRAM_HIT_RATIO * trigrams)
+            hits = 0
+            for i in range(trigrams):
+                if word[i:i + 3] in _ENGLISH_TRIGRAMS:
+                    hits += 1
+                    if hits >= needed:
+                        break
+            word_like = hits >= needed
+            seen[word] = word_like
+        score += word_like
+    return score
+
+
+def _recovered_language(before_score: int, after: str) -> bool:
+    """True when a whole-string transform turned non-language into language.
+
+    The comparison against the untransformed input, not the absolute score, is
+    what admits the view: a payload embedded in a carrier sentence ("Reverse
+    this: ...") reads partly as English either way, and only the gain
+    distinguishes the transform that recovered it. Both transforms score the
+    same input, so the caller passes its score in rather than recomputing it.
+    """
+    after_score = _language_score(after)
+    return after_score >= _MIN_RECOVERED_TOKENS and after_score > before_score
 
 
 # Whitespace that occurs in ordinary documents. `str.isprintable()` is False for
@@ -438,20 +540,23 @@ def _decode_candidates(text: str) -> list[tuple[str, str]]:
         except (ValueError, UnicodeDecodeError):
             pass
 
+    # Both whole-string transforms score against the same untransformed input.
+    base_score = _language_score(text)
+
     # Reversal, like rot13 below, is whole-string and always "succeeds" — every
     # input reverses into something. Gate it the same way: surface the view only
-    # when reversing recovered natural language that was not already there.
+    # when reversing recovered language that was not already there.
     reversed_text = text[::-1]
-    if reversed_text != text and _word_score(reversed_text) > _word_score(text):
+    if reversed_text != text and _recovered_language(base_score, reversed_text):
         out.append(("reversed", reversed_text))
 
     # rot13 is whole-string, not substring. Applied unconditionally it produces
     # a garbage view for every ordinary input (all alphabetic text "decodes"),
     # inflating scan work and audit noise. Only surface it when rotation makes
-    # the text look *more* like natural language than it started — i.e. it
-    # recovered real words that were not already present.
+    # the text read *more* like language than it started — i.e. it recovered
+    # word-like text that was not already present.
     rotated = codecs.decode(text, "rot13")
-    if rotated != text and _word_score(rotated) > _word_score(text):
+    if rotated != text and _recovered_language(base_score, rotated):
         out.append(("rot13", rotated))
 
     return out
@@ -477,11 +582,11 @@ def canonicalize(
     Raises: nothing. This is a pure, total function — an undecodable or
     malformed input simply yields fewer views.
     """
-    folded, transforms = _fold(text)
+    folded, uncollapsed, transforms = _fold(text)
     views = [folded]
     seen = {folded}
 
-    reassembled = _reassemble(folded)
+    reassembled = _reassemble(folded, uncollapsed)
     for name, view in reassembled:
         if view not in seen:
             views.append(view)
