@@ -51,11 +51,12 @@ from typing import TYPE_CHECKING
 
 from harness.adapters.scanners.base import ScanResult
 from harness.core.context import AgentContext
+from harness.core.normalize import canonicalize_config
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 
 if TYPE_CHECKING:
-    pass
+    from harness.config.schema import NormalizationConfig
 
 log = logging.getLogger(__name__)
 
@@ -944,9 +945,21 @@ class FileContentScanner:
         self,
         text_scanners: list | None = None,
         max_size_mb: float = 100.0,
+        normalization: NormalizationConfig | None = None,
     ) -> None:
+        """normalization applies to extracted content only.
+
+        The boundary deliberately hands this scanner a *path* and normalizes
+        nothing, because de-obfuscating a path produces views that are other
+        paths — every one of them not-found, each re-opening the file. Content
+        pulled out of that path is ordinary document text and needs the same
+        de-obfuscation every other boundary applies, so the config arrives here
+        rather than at the boundary: this is where the path stops and the
+        content starts.
+        """
         self._text_scanners = list(text_scanners) if text_scanners else []
         self._max_size_mb   = max_size_mb
+        self._normalization = normalization
 
     def _payloads_blocking(self, text: str) -> list[tuple[str, str]]:
         """Extract the surfaces to scan. Blocking — run off the event loop."""
@@ -970,6 +983,42 @@ class FileContentScanner:
             payloads.append(("image_metadata", metadata))
         return payloads
 
+    def _views(self, payload: str) -> list[str]:
+        """De-obfuscated views of one extracted payload.
+
+        Built once per payload and shared across the whole chain, not once per
+        scanner: an extracted document is large, and normalizing it per scanner
+        would make the cost multiplicative in chain length for identical
+        output. This is the same reason run_scan normalizes once per boundary
+        call rather than inside its scanner loop.
+        """
+        if self._normalization is not None and self._normalization.enabled:
+            return canonicalize_config(payload, self._normalization).views
+        return [payload]
+
+    async def _scan_views(
+        self, scanner, views: list[str], ctx: AgentContext
+    ) -> list[Finding]:
+        """Run one scanner across every view of one payload.
+
+        De-duplicates by (category, severity) for the same reason the text
+        boundaries do: a payload matched in the surface form and again in its
+        base64 decode is one finding about one document, not two.
+
+        Cannot reuse the boundary helper of the same name — adapters do not
+        import from harness.boundaries, and inverting that to share thirty
+        lines would put the layering the wrong way round.
+        """
+        merged: list[Finding] = []
+        seen: set[tuple[str, int]] = set()
+        for view in views:
+            for finding in (await scanner.scan(view, ctx)).findings:
+                key = (finding.category, finding.severity._index())
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(finding)
+        return merged
+
     async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
         """text is the file path (str) — passed by run_file_scan."""
         # Extraction is blocking (archive decompression, PDF parsing); the
@@ -978,11 +1027,14 @@ class FileContentScanner:
 
         findings: list[Finding] = []
         for surface, payload in payloads:
+            views = self._views(payload)
             for scanner in self._text_scanners:
                 # Exceptions propagate. run_scan owns the on_error policy, and
                 # a failure here no longer costs the structural findings —
                 # those come from a different scanner.
-                text_result = await scanner.scan(payload, ctx)
+                text_result = ScanResult(
+                    findings=await self._scan_views(scanner, views, ctx)
+                )
                 # Carry the producing scanner's technique, not this composite's.
                 # run_scan only fills in families a scanner left unset, so a
                 # regex-catalog hit inside a document stays distinguishable from

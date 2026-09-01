@@ -21,7 +21,7 @@ from harness.core.errors import ConfigError
 from harness.policy.rules import RuleBasedPolicy
 
 if TYPE_CHECKING:
-    from harness.config.schema import PolicyConfig
+    from harness.config.schema import NormalizationConfig, PolicyConfig
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
@@ -142,7 +142,8 @@ def _build_text_scanners(
 
 
 def _build_file_scanners(
-    adapter_refs: list, *, max_size_mb: float
+    adapter_refs: list, *, max_size_mb: float,
+    normalization: NormalizationConfig | None = None,
 ) -> list[ConfiguredScanner]:
     """Build the scan_file scanner list.
 
@@ -174,7 +175,14 @@ def _build_file_scanners(
     return [
         ConfiguredScanner(FileScanner(max_size_mb=max_size_mb)),
         ConfiguredScanner(
-            FileContentScanner(text_scanners=text_scanners, max_size_mb=max_size_mb)
+            FileContentScanner(
+                text_scanners=text_scanners,
+                max_size_mb=max_size_mb,
+                # Content only. The structural scanner above takes none:
+                # it reads the path, and a de-obfuscated path is a
+                # different path.
+                normalization=normalization,
+            )
         ),
     ]
 

@@ -258,6 +258,7 @@ class SHAI:
         file_scanners   = wiring._build_file_scanners(
             config.scan_file.scanners,
             max_size_mb=config.scan_file.max_size_mb,
+            normalization=config.normalization,
         )
 
         policy = wiring._build_policy(config.policy)
@@ -804,12 +805,17 @@ class SHAI:
             emitter=self._emitter,
             tenant_id=self._tenant_id,
             state=self._scan_state,
-            # No normalization: the text this boundary carries is a *path*, not
-            # content. De-obfuscating it produces views that are different paths
-            # — a split on "AppData", a decoded base64-looking directory — and
-            # FileScanner reports HIGH `file.not_found` for every one of them,
-            # while both file scanners re-open the file once per view. File
-            # content is normalized where it is extracted, not here.
+            # No normalization *of the path*, which is the text this boundary
+            # carries. De-obfuscating it produces views that are different
+            # paths — a split on "AppData", a decoded base64-looking directory
+            # — and FileScanner reports HIGH `file.not_found` for every one of
+            # them, while both file scanners re-open the file once per view.
+            #
+            # Extracted content is a different string and is normalized:
+            # FileContentScanner receives config.normalization at construction
+            # (see wiring._build_file_scanners) and de-obfuscates each payload
+            # it pulls out of the file. Passing it here instead would apply it
+            # to the path.
             normalization=None,
             audit_tags=self._audit_tags_for(ctx),
         )
