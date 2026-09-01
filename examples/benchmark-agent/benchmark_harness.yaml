@@ -7,7 +7,6 @@ normalization:
   enabled: true
   decode: true
   max_depth: 2
-  entropy_threshold: 3.5
   max_bytes: 262144
 
 # Input scanning: injection + PII on every user message.

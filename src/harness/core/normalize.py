@@ -15,7 +15,6 @@ from __future__ import annotations
 import base64
 import binascii
 import codecs
-import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -164,18 +163,6 @@ class NormalizationResult:
     def changed(self) -> bool:
         """True when de-obfuscation produced anything beyond the folded form."""
         return len(self.views) > 1 or bool(self.transforms)
-
-
-def _shannon_entropy(s: str) -> float:
-    """Bits-per-character entropy. Used to skip low-entropy base64 look-alikes
-    (ordinary prose matches the base64 alphabet but carries little entropy)."""
-    if not s:
-        return 0.0
-    counts: dict[str, int] = {}
-    for ch in s:
-        counts[ch] = counts.get(ch, 0) + 1
-    n = len(s)
-    return -sum((c / n) * math.log2(c / n) for c in counts.values())
 
 
 def _split_glued(text: str) -> str:
@@ -372,7 +359,7 @@ def _is_text(decoded: str) -> bool:
     return bool(stripped) and stripped.isprintable()
 
 
-def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, str]]:
+def _decode_candidates(text: str) -> list[tuple[str, str]]:
     """Return (transform_name, decoded_text) for every substring that decodes
     cleanly under a supported scheme. Speculative: a failed decode yields
     nothing, and callers scan both the decoded output and the original."""
@@ -380,8 +367,8 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
 
     for m in _B64_CANDIDATE.finditer(text):
         chunk = m.group(0)
-        if _shannon_entropy(chunk) < entropy_threshold:
-            continue  # ordinary text that happens to be base64-legal
+        if len(chunk) % 4:
+            continue  # cannot be well-formed base64, so do not attempt it
         try:
             raw = base64.b64decode(chunk, validate=True)
             decoded = raw.decode("utf-8")
@@ -401,8 +388,8 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
 
     for m in _B32_CANDIDATE.finditer(text):
         chunk = m.group(0)
-        if _shannon_entropy(chunk) < entropy_threshold:
-            continue  # SHOUTED prose matches the base32 alphabet too
+        if len(chunk) % 8:
+            continue  # cannot be well-formed base32, so do not attempt it
         try:
             decoded = base64.b32decode(chunk, casefold=False).decode("utf-8")
         except (binascii.Error, ValueError, UnicodeDecodeError):
@@ -475,7 +462,6 @@ def canonicalize(
     *,
     decode: bool = True,
     max_depth: int = 2,
-    entropy_threshold: float = 3.5,
     max_bytes: int = 262144,
 ) -> NormalizationResult:
     """Produce scan views of ``text``.
@@ -522,7 +508,7 @@ def canonicalize(
         while frontier and depth < max_depth:
             next_frontier: list[str] = []
             for candidate in frontier:
-                for name, decoded in _decode_candidates(candidate, entropy_threshold):
+                for name, decoded in _decode_candidates(candidate):
                     if decoded in seen:
                         continue
                     seen.add(decoded)
@@ -539,14 +525,15 @@ def canonicalize(
 def canonicalize_config(text: str, config: NormalizationConfig) -> NormalizationResult:
     """canonicalize() driven directly by a NormalizationConfig.
 
-    Every boundary that normalizes text reads the same four fields off its
+    Every boundary that normalizes text reads the same fields off its
     NormalizationConfig one at a time; this is that projection in one place
-    instead of copied at each call site.
+    instead of copied at each call site. Deliberately not `**config`: the
+    config carries `enabled`, which the boundary acts on rather than the
+    normalizer.
     """
     return canonicalize(
         text,
         decode=config.decode,
         max_depth=config.max_depth,
-        entropy_threshold=config.entropy_threshold,
         max_bytes=config.max_bytes,
     )

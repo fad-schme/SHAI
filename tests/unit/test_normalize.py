@@ -108,9 +108,11 @@ def test_legitimate_base64_is_decoded_not_blocked():
     assert not _contains_marker(result)
 
 
-def test_low_entropy_base64_lookalike_is_skipped():
-    # Long lowercase prose is base64-legal but low entropy; must not be decoded
-    # into a garbage view that could cause false matches.
+def test_base64_lookalike_prose_is_not_decoded():
+    # A long lowercase run is base64-legal and decodes to bytes, but those bytes
+    # are not valid UTF-8, so no view is produced. This used to be caught by an
+    # entropy gate; that gate was removable precisely because the decode itself
+    # already rejects the case, and this test now pins the surviving reason.
     prose = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     result = canonicalize(prose)
     assert result.transforms == [] or "base64" not in result.transforms
@@ -516,3 +518,96 @@ def test_legitimate_invisibles_keep_their_existing_handling():
         assert "‍" not in view
         assert "‌" not in view
         assert "­" not in view
+
+
+# --- Encoded-candidate admission -------------------------------------------
+# Decoding used to be skipped for candidates whose encoded form looked
+# insufficiently random. The attacker writes the plaintext, so padding it with
+# a repeated byte drove the encoded chunk's entropy under the cutoff while the
+# payload still decoded intact — the whole decode layer opted out of for free.
+# Admission is now structural (can this be well-formed under the scheme?) and
+# definitional (did it decode to text?).
+
+# Printable padding only. NUL padding also drives entropy down, but the decode
+# is then not text and is rejected by the admission predicate for that reason —
+# a different gate from the one under test here.
+@pytest.mark.parametrize("pad", ["a", "ab", "aaaa", "  ", "zz"],
+                         ids=["a", "ab", "aaaa", "spaces", "zz"])
+def test_low_entropy_base64_is_still_decoded(pad):
+    """Padding the plaintext must not buy an attacker a skipped decode."""
+    chunk = base64.b64encode((pad * 400 + PAYLOAD).encode()).decode()
+    result = canonicalize(f"Data blob: {chunk}")
+    assert "base64" in result.transforms
+    assert _views_contain(result, "ignore all previous")
+
+
+@pytest.mark.parametrize("pad", ["A", "AB", "AAAA"], ids=["A", "AB", "AAAA"])
+def test_low_entropy_base32_is_still_decoded(pad):
+    chunk = base64.b32encode((pad * 400 + PAYLOAD).encode()).decode()
+    result = canonicalize(f"Data blob: {chunk}")
+    assert "base32" in result.transforms
+    assert _views_contain(result, "ignore all previous")
+
+
+def test_ordinary_prose_still_produces_no_decoded_view():
+    """The regression that matters. The entropy gate existed so prose matching
+    the base64 alphabet was not decoded on every scan; with it gone, the
+    decode-succeeded-and-produced-text test has to carry that load alone."""
+    prose = (
+        "Please review the attached quarterly statement and confirm whether "
+        "the reconciliation figures match the ledger before the audit meeting. "
+        "Internationalisation of the reporting pipeline remains outstanding, "
+        "and the counterrevolutionary naming of the legacy columns is "
+        "unresolved. Antidisestablishmentarianism notwithstanding, we should "
+        "standardise on the shorter identifiers."
+    )
+    result = canonicalize(prose)
+    assert "base64" not in result.transforms
+    assert "base32" not in result.transforms
+
+
+def test_shouted_prose_still_produces_no_base32_view():
+    result = canonicalize(
+        "PLEASE REVIEW THE ATTACHED QUARTERLY REPORT BEFORE FRIDAY AND "
+        "CONFIRM THE RECONCILIATION FIGURES MATCH THE LEDGER ENTRIES"
+    )
+    assert "base32" not in result.transforms
+
+
+def test_malformed_length_is_rejected_without_decoding():
+    """A run whose length cannot be well-formed under the scheme is not a
+    candidate. This is the cheap structural half of admission."""
+    # 17 base64-alphabet characters: not a multiple of four, cannot be valid.
+    result = canonicalize("Token: " + "A" * 17 + " end")
+    assert "base64" not in result.transforms
+
+
+def test_all_alphabet_document_does_not_decode_the_same_chunk_repeatedly():
+    """Work, not view count. De-duplication collapses identical decodes into one
+    view whatever happens upstream, so asserting on `views` would pass while the
+    decoder ground through every occurrence. Ticket 04 lifts the size gate and
+    leans on this bound, so it has to measure the thing it names."""
+    import base64 as _b64
+
+    import harness.core.normalize as _norm
+
+    attempts = {"n": 0}
+    real = _b64.b64decode
+
+    def counting(*args, **kwargs):
+        attempts["n"] += 1
+        return real(*args, **kwargs)
+
+    _norm.base64.b64decode = counting
+    try:
+        chunk = "QUJDREVGR0hJSktMTU5PUFFS"
+        result = canonicalize(" ".join([chunk] * 200))
+    finally:
+        _norm.base64.b64decode = real
+
+    # One distinct chunk, so one decode's worth of useful work. The current
+    # implementation re-decodes every occurrence; this pins the count so ticket
+    # 04 cannot quietly make it worse, and records the number rather than
+    # asserting a bound the code does not yet hold.
+    assert attempts["n"] == 200, attempts["n"]
+    assert len(result.views) < 10

@@ -57,7 +57,6 @@ class NormalizationConfig(BaseModel, frozen=True, extra="forbid"):
     enabled:           bool  = True
     decode:            bool  = True   # base64 / hex / url / rot13 substring decode
     max_depth:         int   = 2      # recursion depth for nested encodings
-    entropy_threshold: float = 3.5    # min entropy for a base64 decode candidate
     max_bytes:         int   = 262144 # inputs larger than this are folded, not decoded
 
 
