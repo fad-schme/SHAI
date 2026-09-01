@@ -315,10 +315,18 @@ Runs before every scan boundary. Decodes base64, hex, URL, rot13, unicode homogl
 
 ```yaml
 normalization:
-  enabled: true       # default
+  enabled: true               # default
   decode: true
-  max_depth: 2        # recursive decode limit
+  max_depth: 2                # recursive decode limit
+  max_expansion_bytes: 8388608  # cap on de-obfuscated material per scan
 ```
+
+Document size does not limit what is examined — the attacker chooses the size,
+so a size gate is a switch they control. `max_expansion_bytes` caps how much
+de-obfuscated material one scan may produce instead. A scan that reaches the cap
+adds a `normalization.budget_exhausted` finding and sets
+`normalization_budget_exhausted` in its audit event, so a document examined in
+part is never mistaken for one examined in full.
 
 Unless you have a specific reason to turn this off, leave it on.
 

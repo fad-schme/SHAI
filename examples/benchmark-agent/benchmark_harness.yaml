@@ -7,7 +7,7 @@ normalization:
   enabled: true
   decode: true
   max_depth: 2
-  max_bytes: 262144
+  max_expansion_bytes: 8388608
 
 # Input scanning: injection + PII on every user message.
 scan_input:

@@ -59,7 +59,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from harness.adapters.circuit_breaker import CircuitBreaker
 from harness.adapters.scanners.base import ScanResult
 from harness.core.events import AuditEvent, now_ms
-from harness.core.normalize import canonicalize_config
+from harness.core.normalize import canonicalize_iter_config
 from harness.core.types import (
     BoundaryName,
     Decision,
@@ -210,47 +210,64 @@ async def _emit_system_event(
         log.debug("failed to emit system event for scanner %s", scanner_name)
 
 
+class _ScannerAccumulator:
+    """One scanner's results, accumulated across views as they stream past.
+
+    Findings are de-duplicated by (category, severity), so a payload detected in
+    several views — the surface form and its base64 decode, say — produces one
+    finding rather than several. The key is order-independent, so accumulating
+    incrementally gives the same set the old merge-at-the-end did.
+
+    `redacted_text` is taken from the surface-form scan and no other: redaction
+    offsets computed on a decoded view do not map back onto the text the agent
+    sees, and the pipeline never substitutes a decoded view for it.
+    """
+
+    __slots__ = ("findings", "_seen", "redacted_text", "failure")
+
+    def __init__(self) -> None:
+        self.findings: list[Finding] = []
+        self._seen: set[tuple[str, int]] = set()
+        self.redacted_text: str | None = None
+        self.failure: BaseException | None = None
+
+    def add(self, result: ScanResult, *, surface: bool) -> None:
+        if surface:
+            self.redacted_text = result.redacted_text
+        for f in result.findings:
+            key = (f.category, f.severity._index())
+            if key not in self._seen:
+                self._seen.add(key)
+                self.findings.append(f)
+
+    def result(self) -> ScanResult:
+        return ScanResult(findings=self.findings, redacted_text=self.redacted_text)
+
+
 async def _scan_views(
     scanner: Scanner,
     views: list[str],
     ctx: AgentContext,
 ) -> ScanResult:
-    """Run one scanner across every normalization view and merge results.
+    """Run one scanner across a materialised view list and merge results.
 
-    Findings from all views are concatenated then de-duplicated by
-    (category, severity) so a payload detected in multiple views (e.g. the
-    surface form and its base64 decode) produces one finding, not several.
-
-    redacted_text is taken only from the surface-form scan (views[0]); redaction
-    positions from a decoded view do not map back onto the original text, and
-    the pipeline never substitutes a decoded view for what the agent sees.
+    The gate's argument scanning uses this: tool arguments are small, so
+    holding their views is not the memory shape `run_scan` streams to avoid.
+    Merge semantics are the accumulator's, so both paths de-duplicate and pick
+    `redacted_text` identically.
     """
     results = await asyncio.gather(
         *[scanner.scan(view, ctx) for view in views],
         return_exceptions=True,
     )
-
-    merged: list[Finding] = []
-    seen: set[tuple[str, int]] = set()
-    surface_redacted: str | None = None
+    acc = _ScannerAccumulator()
     for i, r in enumerate(results):
-        # BaseException, not Exception: CancelledError derives from the former,
-        # and testing only for the latter let a cancelled view-scan fall through
-        # to `r.redacted_text` and become an AttributeError — cancellation
-        # silently reported as a scanner failure at every boundary. Re-raising
-        # the original keeps it a CancelledError for the callers that now
-        # distinguish it (run_scan, and the gate's layer 7).
+        # BaseException, not Exception: a CancelledError must stay a
+        # cancellation rather than becoming a scanner failure.
         if isinstance(r, BaseException):
-            raise r  # surfaced to run_scan's per-scanner exception handling
-        if i == 0:
-            surface_redacted = r.redacted_text
-        for f in r.findings:
-            key = (f.category, f.severity._index())
-            if key not in seen:
-                seen.add(key)
-                merged.append(f)
-    return ScanResult(findings=merged, redacted_text=surface_redacted)
-
+            raise r
+        acc.add(r, surface=(i == 0))
+    return acc.result()
 
 async def run_scan(
     text: str,
@@ -343,34 +360,87 @@ async def run_scan(
         await emitter.emit(event)
         return ScanVerdict(status=ScanStatus.BLOCK)
 
-    if normalization is not None and normalization.enabled:
-        norm = canonicalize_config(text, normalization)
-        views = norm.views
-        transforms = norm.transforms
-    else:
-        views = [text]
-        transforms = []
-
     # ── Run scanners with circuit breaker awareness ───────────────────────
+    # Views stream: each is produced, scanned by every scanner, and released
+    # before the next exists. Iterating scanners on the outside would need every
+    # view resident for the whole call — view count × document size — which is
+    # what this ordering avoids. Normalization still runs once per boundary
+    # call, not once per scanner.
+    #
     # Scanners whose breaker is OPEN are skipped entirely; their slot in
-    # raw_results gets a _CircuitOpenSentinel instead of a ScanResult.
+    # raw_results gets a _CircuitOpenSentinel instead of a ScanResult. The
+    # breaker is read once per call, before any view exists, so it cannot be
+    # re-evaluated or re-recorded per view.
     class _CircuitOpenSentinel:
         """Marker: scanner was skipped because its circuit breaker is OPEN."""
         def __init__(self, scanner_name: str) -> None:
             self.scanner_name = scanner_name
 
-    async def _guarded_scan(scanner: Scanner, views: list[str]) -> ScanResult | _CircuitOpenSentinel:
-        breaker = state.get_breaker(scanner)
-        if breaker.is_open:
-            return _CircuitOpenSentinel(scanner.name)
-        result = await _scan_views(scanner, views, ctx)
-        breaker.record_success()
-        return result
+    if normalization is not None and normalization.enabled:
+        view_stream = canonicalize_iter_config(text, normalization)
+    else:
+        view_stream = None
 
-    raw_results = await asyncio.gather(
-        *[_guarded_scan(c.scanner, views) for c in scanners],
-        return_exceptions=True,
-    )
+    transforms: list[str] = []
+    live: list[tuple[ConfiguredScanner, _ScannerAccumulator]] = []
+    raw_results: list[Any] = []
+    for configured in scanners:
+        if state.get_breaker(configured.scanner).is_open:
+            raw_results.append(_CircuitOpenSentinel(configured.scanner.name))
+        else:
+            acc = _ScannerAccumulator()
+            live.append((configured, acc))
+            raw_results.append(acc)
+
+    async def _scan_view(scanner: Scanner, view: str) -> ScanResult | BaseException:
+        try:
+            return await scanner.scan(view, ctx)
+        # BaseException, not Exception: CancelledError derives from the former,
+        # and catching only the latter let a cancelled view-scan fall through to
+        # `result.redacted_text` and become an AttributeError — cancellation
+        # silently reported as a scanner failure at every boundary. Captured
+        # here and replayed below, so it stays a CancelledError for the callers
+        # that distinguish it (run_scan, and the gate's layer 7).
+        except BaseException as exc:  # noqa: BLE001 — replayed, not swallowed
+            return exc
+
+    surface = True
+    for view, fired in (view_stream if view_stream is not None else [(text, [])]):
+        for name in fired:
+            if name not in transforms:
+                transforms.append(name)
+        pending = [(acc, c.scanner) for c, acc in live if acc.failure is None]
+        if not pending:
+            break
+        outcomes = await asyncio.gather(
+            *[_scan_view(scanner, view) for _, scanner in pending]
+        )
+        for (acc, _), outcome in zip(pending, outcomes):
+            if isinstance(outcome, BaseException):
+                acc.failure = outcome
+            else:
+                acc.add(outcome, surface=surface)
+        surface = False
+        del view
+
+    # Collapse each accumulator to the shape the reporting loop below expects:
+    # a ScanResult, the exception the scanner raised, or the breaker sentinel.
+    for i, entry in enumerate(raw_results):
+        if isinstance(entry, _ScannerAccumulator):
+            raw_results[i] = entry.failure if entry.failure else entry.result()
+
+    for configured, acc in live:
+        if acc.failure is None:
+            state.get_breaker(configured.scanner).record_success()
+
+    # De-obfuscation stopped at its expansion budget: this document was examined
+    # in part, not in full. Reported as a finding rather than as the absence of a
+    # transform, because "partly examined" and "nothing to find" must not look
+    # the same to a caller — and a document that exhausts the budget is itself
+    # anomalous. Advisory severity: the truncation is a fact about the scan, not
+    # a detection, and promoting it to a block would let any large document deny
+    # itself service.
+    budget_exhausted = view_stream is not None and view_stream.budget_exhausted
 
     all_findings:   list[Finding] = []
     adapter_names:  list[str]     = []
@@ -521,6 +591,15 @@ async def run_scan(
                 current_text, result.findings, result, redact_with
             )
 
+    if budget_exhausted:
+        all_findings.append(Finding(
+            scanner="normalization",
+            category="normalization.budget_exhausted",
+            severity=Severity.MEDIUM,
+            detail="de-obfuscation stopped at the expansion budget; "
+                   "this input was examined in part",
+        ))
+
     # ── Promoted candidates: inject findings from human-promoted heuristic matches ──
     all_findings = _check_promoted_candidates(text, all_findings, state)
 
@@ -571,6 +650,9 @@ async def run_scan(
     extra: dict = {}
     if transforms:
         extra["normalization"] = transforms
+    if budget_exhausted:
+        # Counts and flags only, never document text — invariant 3.
+        extra["normalization_budget_exhausted"] = True
     if degraded:
         extra["degraded"] = True
     if forced and forced_block_extra:

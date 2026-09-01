@@ -227,3 +227,36 @@ async def test_multi_word_fragmentation_reaches_a_bounded_pattern(name, text):
 async def test_fragmentation_benign_controls_stay_clear(benign):
     verdict = await _scan_bounded(benign)
     assert verdict.status == ScanStatus.ALLOW
+
+
+# --- Work budget ------------------------------------------------------------
+# De-obfuscation used to switch off above an input size the attacker chooses.
+# It now runs across the whole document and bounds how much material it may
+# produce instead, reporting the fact when it stops early.
+
+@pytest.mark.asyncio
+async def test_payload_past_the_old_size_bound_is_blocked():
+    padded = "A" * 300_000 + " " + _b64(MARKER)
+    verdict, _ = await _scan(padded, normalization=NormalizationConfig())
+    assert verdict.status == ScanStatus.BLOCK
+
+
+@pytest.mark.asyncio
+async def test_exhausted_budget_is_recorded_without_raw_text():
+    """An operator must be able to tell a partly examined document from a fully
+    examined one, and the record must carry the fact without the document."""
+    dense = " ".join(_b64(f"{MARKER} {i}") for i in range(4000))
+    _, event = await _scan(
+        dense, normalization=NormalizationConfig(max_expansion_bytes=4096))
+    assert event.extra.get("normalization_budget_exhausted") is True
+    assert MARKER not in str(event.extra)
+    assert dense[:64] not in str(event.extra)
+
+
+@pytest.mark.asyncio
+async def test_ordinary_document_reports_no_exhaustion():
+    verdict, event = await _scan(
+        "Please review the attached quarterly report. " * 2000,
+        normalization=NormalizationConfig())
+    assert verdict.status == ScanStatus.ALLOW
+    assert "normalization_budget_exhausted" not in event.extra

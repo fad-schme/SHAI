@@ -76,7 +76,7 @@ scan_file:
   block_at: high
   action: block
   on_error: fail_closed
-  max_size_mb: 100    # files exceeding this are rejected before content scanning
+  max_size_mb: 100    # how much of a file is read; the rest is not inspected
   scanners:
     - name: injection_scan
     - name: jailbreak_scan

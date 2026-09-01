@@ -57,7 +57,11 @@ class NormalizationConfig(BaseModel, frozen=True, extra="forbid"):
     enabled:           bool  = True
     decode:            bool  = True   # base64 / hex / url / rot13 substring decode
     max_depth:         int   = 2      # recursion depth for nested encodings
-    max_bytes:         int   = 262144 # inputs larger than this are folded, not decoded
+    # Total bytes of de-obfuscated material one scan may produce. Document size
+    # does not limit what is examined — the attacker chooses the size, so a size
+    # gate is a switch they control. This caps expansion instead, and a scan that
+    # reaches it reports partial de-obfuscation rather than passing quietly.
+    max_expansion_bytes: int = 8388608
 
 
 class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
@@ -126,7 +130,10 @@ class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
     EXIF/XMP metadata blob — never the path. The structural pass (MIME, size,
     extension, PDF JS, SVG, ZIP, Office macros) always runs ahead of it.
 
-    max_size_mb: reject files above this size before any scanning.
+    max_size_mb: files above this size are refused. The structural pass still
+    runs and reports `file.size_exceeded` at HIGH, which blocks at the default
+    posture; the content is never read, so no scan cost is incurred for a file
+    whose size an attacker chose.
     """
     # Off unless the operator asks for it: scan_file reads uploaded files from
     # disk, and a harness that never receives uploads should not be doing that.

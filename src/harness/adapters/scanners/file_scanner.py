@@ -245,8 +245,8 @@ def _check_size(path: Path, max_mb: float, findings: list[Finding]) -> None:
         findings.append(Finding(
             scanner="file_scanner",
             category="file.size_exceeded",
-            severity=Severity.MEDIUM,
-            detail=f"File size exceeds {max_mb:.0f} MB limit",
+            severity=Severity.HIGH,
+            detail=f"File size exceeds the {max_mb:g} MB limit; content not scanned",
         ))
 
 
@@ -967,7 +967,13 @@ class FileContentScanner:
         if not self._text_scanners or not path.exists():
             return []
         if not _within_size_limit(path, self._max_size_mb):
-            # Structural scanner reports file.size_exceeded; do not read it.
+            # Refused, not partly inspected: the structural scanner reports
+            # file.size_exceeded at HIGH, which blocks at the default posture,
+            # so the caller is told the file was rejected rather than handed a
+            # verdict about the part of it that happened to fit. Reading a
+            # bounded portion instead would let an attacker choose how much
+            # scanning work each upload costs, and the limit exists to bound
+            # exactly that. Do not read it.
             return []
         if not _safe_to_extract(path, self._max_size_mb):
             # Archive bomb. A size gate cannot catch these — they are small on
@@ -1020,11 +1026,31 @@ class FileContentScanner:
         return merged
 
     async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
-        """text is the file path (str) — passed by run_file_scan."""
-        # Extraction is blocking (archive decompression, PDF parsing); the
-        # chain itself is async and stays on the event loop.
-        payloads = await asyncio.to_thread(self._payloads_blocking, text)
+        """text is the file path (str) — passed by run_file_scan.
 
+        Both halves run off the event loop. Extraction is obviously blocking
+        (archive decompression, PDF parsing), but so is the chain: the catalog
+        scanners are `async def` over pure CPU-bound regex, and running them
+        inline froze the loop for the whole scan — measured at 17.8 s for a 1 MB
+        document, stalling every other agent turn in the process. In a worker
+        thread the same work takes the same time but the loop keeps being
+        scheduled, because CPython preempts every switch interval even though
+        `re` holds the GIL for the length of a match.
+
+        A fresh loop per call is safe here: no chain scanner touches asyncio, so
+        none of them hold state bound to the caller's loop.
+        """
+        payloads = await asyncio.to_thread(self._payloads_blocking, text)
+        if not payloads:
+            return ScanResult()
+        return await asyncio.to_thread(
+            lambda: asyncio.run(self._scan_chain(payloads, ctx))
+        )
+
+    async def _scan_chain(
+        self, payloads: list[tuple[str, str]], ctx: AgentContext
+    ) -> ScanResult:
+        """Every chain scanner over every view of every extracted payload."""
         findings: list[Finding] = []
         for surface, payload in payloads:
             views = self._views(payload)
