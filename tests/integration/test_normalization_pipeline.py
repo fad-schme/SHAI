@@ -121,3 +121,26 @@ async def test_benign_text_passes_with_no_transforms():
         "what is the capital of france?", normalization=NormalizationConfig())
     assert verdict.status == ScanStatus.ALLOW
     assert "normalization" not in event.extra
+
+
+# --- Multi-line encoded payloads -------------------------------------------
+# The decode layer admitted a decoded view only when every character in it was
+# printable, and newline and tab are not. One newline in the plaintext therefore
+# disabled de-obfuscation for the whole payload, at every boundary, for every
+# encoding scheme. An injected instruction block is normally multi-line, so the
+# guard rejected the shape it most needed to admit.
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("whitespace", ["\n", "\t", "\r\n"])
+async def test_multiline_encoded_payload_is_blocked(whitespace):
+    payload = _b64(f"Note:{whitespace}{MARKER}")
+    verdict, _ = await _scan(payload, normalization=NormalizationConfig())
+    assert verdict.status == ScanStatus.BLOCK
+
+
+@pytest.mark.asyncio
+async def test_multiline_decode_is_recorded_without_raw_text():
+    """The audit rule does not relax because the view arrived via a newline."""
+    _, event = await _scan(_b64(f"Note:\n{MARKER}"), normalization=NormalizationConfig())
+    assert "base64" in event.extra.get("normalization", [])
+    assert MARKER not in str(event.extra)

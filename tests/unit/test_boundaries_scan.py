@@ -278,3 +278,51 @@ def test_api_key_pattern(text, should_match):
     assert bool(_API_KEY_PAT.search(text)) == should_match, (
         f"Expected {'match' if should_match else 'no match'} for: {text[:40]}"
     )
+
+
+# ── Invariant 2: CancelledError propagates out of run_scan ────────────────
+#
+# CancelledError derives from BaseException. `_scan_views` tested only for
+# Exception, so a cancelled view-scan fell through to `r.redacted_text` and
+# surfaced as an AttributeError — cancellation reported as a scanner failure
+# and answered with a fail-closed BLOCK. Invariant 2 names CancelledError:
+# emit the boundary's event, then re-raise it unchanged.
+
+import asyncio as _asyncio
+
+
+class _CancellingScanner:
+    name = "canceller"
+    method_family = "unknown"
+
+    async def scan(self, text, ctx):
+        raise _asyncio.CancelledError()
+
+
+async def test_run_scan_propagates_cancellation_after_emitting():
+    import pytest
+
+    from harness.adapters.scanners.base import ConfiguredScanner
+    from harness.audit.emitter import AuditEmitter
+    from harness.boundaries._scan import ScanState, run_scan
+    from harness.config.schema import AdapterRef, BoundaryConfig
+    from harness.core.context import AgentContext
+    from harness.core.types import BoundaryName, Decision
+    from tests.conftest import RecordingSink
+
+    sink = RecordingSink()
+    emitter = AuditEmitter([sink])
+    config = BoundaryConfig(enabled=True, scanners=[AdapterRef(name="canceller")])
+
+    with pytest.raises(_asyncio.CancelledError):
+        await run_scan(
+            "some text", AgentContext(agent_id="a1"),
+            boundary=BoundaryName.INPUT_SCAN,
+            scanners=[ConfiguredScanner(scanner=_CancellingScanner(), action=None)],
+            config=config, emitter=emitter, tenant_id="t",
+            state=ScanState(),
+        )
+
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.BLOCKED
+    assert "cancelled" in sink.events[0].deny_reason

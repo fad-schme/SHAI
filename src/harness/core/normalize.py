@@ -312,6 +312,43 @@ def _word_score(text: str) -> int:
     return sum(1 for w in _WORD.findall(text.lower()) if w in _COMMON_WORDS)
 
 
+# Whitespace that occurs in ordinary documents. `str.isprintable()` is False for
+# all three, so it cannot serve as the admission test on its own — see _is_text.
+_TEXT_WHITESPACE = dict.fromkeys([0x09, 0x0A, 0x0D], None)
+
+
+def _is_text(decoded: str) -> bool:
+    """True when a speculative decode produced something that reads as text.
+
+    Admission has to reject the binary soup that decoding ordinary prose under a
+    guessed scheme produces: every admitted view is scanned by every scanner at
+    every boundary, so a permissive test multiplies work across the whole
+    pipeline for nothing.
+
+    `str.isprintable()` was that test and rejected too much. It is False for
+    newline and tab, so a decoded payload spanning more than one line was
+    dropped and the encoded form reached the scanners only in its opaque surface
+    form — and multi-line is the ordinary shape of an injected instruction
+    block, not an exotic one. Ignoring the three whitespace characters that
+    appear in real documents keeps the rejection (NUL and the other C0/C1
+    controls still disqualify a decode) and drops the false one.
+
+    A decode that is *only* whitespace is rejected: it carries no signal, and
+    admitting it would add a view that every scanner scans at every boundary for
+    nothing.
+
+    The printable case is tested first because it is the common one and costs no
+    allocation. `str.translate` builds a new string, and a decoded candidate is
+    not small once the size gate on decoding is lifted — paying for a full copy
+    on every successful decode would work against the memory bound the rest of
+    the pipeline is trying to hold.
+    """
+    if decoded.isprintable():
+        return True
+    stripped = decoded.translate(_TEXT_WHITESPACE)
+    return bool(stripped) and stripped.isprintable()
+
+
 def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, str]]:
     """Return (transform_name, decoded_text) for every substring that decodes
     cleanly under a supported scheme. Speculative: a failed decode yields
@@ -327,7 +364,7 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
             decoded = raw.decode("utf-8")
         except (binascii.Error, ValueError, UnicodeDecodeError):
             continue
-        if decoded.isprintable():
+        if _is_text(decoded):
             out.append(("base64", decoded))
 
     for m in _HEX_CANDIDATE.finditer(text):
@@ -336,7 +373,7 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
             decoded = bytes.fromhex(chunk).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             continue
-        if decoded.isprintable():
+        if _is_text(decoded):
             out.append(("hex", decoded))
 
     for m in _B32_CANDIDATE.finditer(text):
@@ -347,7 +384,7 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
             decoded = base64.b32decode(chunk, casefold=False).decode("utf-8")
         except (binascii.Error, ValueError, UnicodeDecodeError):
             continue
-        if decoded.isprintable():
+        if _is_text(decoded):
             out.append(("base32", decoded))
 
     for m in _A85_CANDIDATE.finditer(text):
@@ -355,7 +392,7 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
             decoded = base64.a85decode(m.group(0), adobe=True).decode("utf-8")
         except (binascii.Error, ValueError, UnicodeDecodeError):
             continue
-        if decoded.isprintable():
+        if _is_text(decoded):
             out.append(("ascii85", decoded))
 
     for m in _BINARY_CANDIDATE.finditer(text):
@@ -364,7 +401,7 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
             decoded = bytes(int(b, 2) for b in bits).decode("utf-8")
         except (ValueError, UnicodeDecodeError):
             continue
-        if decoded.isprintable():
+        if _is_text(decoded):
             out.append(("binary", decoded))
 
     for m in _UESC_CANDIDATE.finditer(text):
@@ -372,7 +409,7 @@ def _decode_candidates(text: str, entropy_threshold: float) -> list[tuple[str, s
             decoded = codecs.decode(m.group(0), "unicode_escape")
         except (UnicodeDecodeError, ValueError):
             continue
-        if decoded.isprintable():
+        if _is_text(decoded):
             out.append(("unicode_escape", decoded))
 
     for m in _MORSE_CANDIDATE.finditer(text):

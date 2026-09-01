@@ -373,3 +373,84 @@ def test_split_glued_fires_on_camel_case_identifiers():
     result = canonicalize("call getUserName then setUserEmail")
     assert "split_glued" in result.transforms
     assert any("get User Name" in v for v in result.views)
+
+
+# --- Decoded-view admission -------------------------------------------------
+# A speculative decode is admitted as a scan view only when it produced text.
+# The predicate used to be str.isprintable(), which is False for newline and
+# tab, so any decoded payload spanning more than one line was discarded and the
+# encoded form was scanned only in its opaque surface form. Multi-line is the
+# ordinary shape of an injected instruction block.
+
+def _encode(scheme: str, text: str) -> str:
+    """Encode under one of the six schemes whose views were gated on
+    isprintable(). Morse is absent deliberately: its table has no whitespace, so
+    it cannot carry the case under test."""
+    raw = text.encode()
+    if scheme == "base64":
+        return base64.b64encode(raw).decode()
+    if scheme == "base32":
+        return base64.b32encode(raw).decode()
+    if scheme == "hex":
+        return raw.hex()
+    if scheme == "ascii85":
+        return "<~" + base64.a85encode(raw).decode() + "~>"
+    if scheme == "binary":
+        return " ".join(format(b, "08b") for b in raw)
+    if scheme == "unicode_escape":
+        return "".join(f"\\u{ord(c):04x}" for c in text)
+    raise AssertionError(f"unknown scheme {scheme!r}")
+
+
+_SCHEMES = ("base64", "base32", "hex", "ascii85", "binary", "unicode_escape")
+
+
+@pytest.mark.parametrize("scheme", _SCHEMES)
+@pytest.mark.parametrize("whitespace", ["\n", "\t", "\r\n"])
+def test_decoded_view_survives_whitespace_in_the_plaintext(scheme, whitespace):
+    """One newline in the plaintext must not disable the decode layer."""
+    encoded = _encode(scheme, f"Note:{whitespace}{PAYLOAD}")
+    result = canonicalize(f"Reference material: {encoded}")
+    assert scheme in result.transforms
+    assert _views_contain(result, "ignore all previous")
+
+
+@pytest.mark.parametrize("scheme", _SCHEMES)
+def test_single_line_decoding_still_works(scheme):
+    """Regression: the payloads that decoded before must still decode."""
+    result = canonicalize(f"Reference material: {_encode(scheme, PAYLOAD)}")
+    assert scheme in result.transforms
+    assert _views_contain(result, "ignore all previous")
+
+
+def test_decode_yielding_nul_produces_no_view():
+    """NUL is not text. Admitting it would turn binary blobs into scan views."""
+    blob = bytes(range(1, 40)) + b"\x00" + bytes(range(40, 80))
+    result = canonicalize(f"Data: {base64.b64encode(blob).decode()}")
+    assert "base64" not in result.transforms
+
+
+def test_decode_yielding_c0_controls_produces_no_view():
+    """Control characters other than the ordinary whitespace three are rejected."""
+    blob = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0B, 0x0C, 0x0E,
+                  0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18])
+    result = canonicalize(f"Data: {base64.b64encode(blob).decode()}")
+    assert "base64" not in result.transforms
+
+
+def test_prose_matching_the_base64_alphabet_still_produces_no_view():
+    """The entropy gate, not the admission predicate, is what keeps ordinary
+    prose out of the decode path. This proves widening the predicate did not
+    move that boundary."""
+    result = canonicalize(
+        "Please review the attached quarterly statement and confirm whether the "
+        "reconciliation figures match the ledger before the audit meeting."
+    )
+    assert "base64" not in result.transforms
+
+
+def test_whitespace_only_decode_produces_no_view():
+    """A decode that is nothing but line endings carries no signal. Admitting it
+    would add a view for every scanner to scan at every boundary for nothing."""
+    result = canonicalize("Dump: " + ("0a" * 8) + " and " + ("09" * 8))
+    assert "hex" not in result.transforms
