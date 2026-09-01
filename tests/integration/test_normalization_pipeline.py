@@ -144,3 +144,22 @@ async def test_multiline_decode_is_recorded_without_raw_text():
     _, event = await _scan(_b64(f"Note:\n{MARKER}"), normalization=NormalizationConfig())
     assert "base64" in event.extra.get("normalization", [])
     assert MARKER not in str(event.extra)
+
+
+# --- Invisible-character smuggling -----------------------------------------
+# A character that renders as nothing, inserted mid-word, breaks the word
+# boundary a signature anchors on. The zero-width family was stripped; the
+# variation selectors and Hangul fillers were not, and they survive NFKC.
+
+@pytest.mark.parametrize(
+    "name,ch",
+    [("vs16", "️"), ("hangul_filler", "ㅤ"), ("braille_blank", "⠀"),
+     ("musical_beam", "𝅳"), ("zwsp_control", "​")],
+)
+@pytest.mark.asyncio
+async def test_invisible_smuggled_payload_is_blocked(name, ch):
+    peppered = " ".join(
+        w[:2] + ch + w[2:] if len(w) >= 4 else w for w in MARKER.split(" ")
+    )
+    verdict, _ = await _scan(peppered, normalization=NormalizationConfig())
+    assert verdict.status == ScanStatus.BLOCK, f"{name} not blocked"

@@ -55,15 +55,38 @@ _CONFUSABLES = {
     "\uff41": "a", "\uff45": "e", "\uff49": "i", "\uff4f": "o",
 }
 
-# Zero-width and formatting characters used to fragment or hide tokens.
-# Includes bidi controls (embed/override/isolate) and the Unicode Tag block:
-# both are live invisible-instruction smuggling vectors — the Tag block can
-# encode a full ASCII payload that renders as nothing.
+# Characters that render as nothing. One inserted mid-word costs an attacker
+# nothing and destroys the word boundary that catalog patterns anchor on:
+# `ig<U+FE0F>nore` is invisible to a reader and does not match `\bignore\b`.
+#
+# Membership rule, so extending this stays a decision rather than a habit: a
+# codepoint measured to survive folding, plus the rest of its block where that
+# block is homogeneous in function. Whole blocks are listed as ranges because
+# half a block is an arbitrary line an attacker picks the other side of. This
+# is still not the full Unicode default-ignorable set — that adds a long tail
+# with no measured payloads behind it and a lot of surface to reason about.
+#
+# Stripping runs *before* NFKC (see _fold) so that an invisible inserted
+# between two composable characters cannot block their composition. That order
+# is only safe while the set is closed under folding: U+3164 and U+FFA0 both
+# NFKC-fold to U+1160, so all three are listed. Nothing else in Unicode folds
+# into this set — verified, not assumed — so one pass before the fold suffices.
 _INVISIBLE = dict.fromkeys(
     [
-        0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0xFEFF, 0x2060, 0x00AD, 0x180E,
+        0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0xFEFF, 0x00AD,
         0x202A, 0x202B, 0x202C, 0x202D, 0x202E,          # bidi embed / override / pop
         0x2066, 0x2067, 0x2068, 0x2069,                  # bidi isolates
+        0x061C,                                          # Arabic letter mark (bidi)
+        0x034F,                                          # combining grapheme joiner
+        0x2800,                                          # Braille blank pattern
+        *range(0x2060, 0x2065),                          # word joiner + invisible operators
+        *range(0x180B, 0x1810),                          # Mongolian FVS 1-4 + vowel separator
+        *range(0xFE00, 0xFE10),                          # variation selectors 1-16
+        *range(0xE0100, 0xE01F0),                        # variation selectors 17-256
+        0x115F, 0x1160, 0x3164, 0xFFA0,                  # Hangul fillers (see fold note)
+        0x17B4, 0x17B5,                                  # Khmer inherent vowels
+        *range(0xFFF9, 0xFFFC),                          # interlinear annotation
+        *range(0x1D173, 0x1D17B),                        # musical format controls
         *range(0xE0000, 0xE0080),                        # Unicode Tag block (invisible ASCII)
     ],
     None,

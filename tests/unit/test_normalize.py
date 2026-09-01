@@ -454,3 +454,65 @@ def test_whitespace_only_decode_produces_no_view():
     would add a view for every scanner to scan at every boundary for nothing."""
     result = canonicalize("Dump: " + ("0a" * 8) + " and " + ("09" * 8))
     assert "hex" not in result.transforms
+
+
+# --- Invisible-character coverage -------------------------------------------
+# Characters that render as nothing and survive NFKC. One inserted mid-word
+# destroys the word boundary catalog patterns anchor on, so a peppered payload
+# must fold to the same view as the clean one.
+
+_INVISIBLE_SURVIVORS = [
+    ("vs16", "️"), ("vs1", "︀"),
+    ("hangul_filler", "ㅤ"), ("jungseong_filler", "ᅠ"),
+    ("choseong_filler", "ᅟ"), ("halfwidth_filler", "ﾠ"),
+    ("braille_blank", "⠀"), ("cgj", "͏"),
+    ("arabic_letter_mark", "؜"),
+    ("invisible_times", "⁢"), ("invisible_separator", "⁣"),
+    ("invisible_plus", "⁤"),
+    ("interlinear_anchor", "￹"),
+    ("khmer_viriam", "឵"),
+    ("musical_beam", "𝅳"),
+    # Blocks are covered whole: half a block is a line an attacker steps over.
+    ("mongolian_fvs4", "᠏"),
+]
+
+# Handled before this change. Kept as controls: a run where these strip and the
+# rest do not localises a gap to set membership rather than to the mechanism.
+_INVISIBLE_ALREADY_COVERED = [
+    ("zwsp", "​"), ("zwnj", "‌"),
+    ("word_joiner", "⁠"), ("tag_space", "󠀠"),
+]
+
+
+def _sprinkle(text: str, ch: str) -> str:
+    """Insert ch inside every word of four characters or more."""
+    return " ".join(w[:2] + ch + w[2:] if len(w) >= 4 else w for w in text.split(" "))
+
+
+@pytest.mark.parametrize(
+    "name,ch", _INVISIBLE_SURVIVORS + _INVISIBLE_ALREADY_COVERED,
+    ids=[n for n, _ in _INVISIBLE_SURVIVORS + _INVISIBLE_ALREADY_COVERED],
+)
+def test_invisible_character_folds_to_the_clean_view(name, ch):
+    assert canonicalize(_sprinkle(PAYLOAD, ch)).views[0] == canonicalize(PAYLOAD).views[0]
+
+
+@pytest.mark.parametrize("ch", ["ㅤ", "ﾠ"], ids=["u3164", "uffa0"])
+def test_compatibility_form_whose_fold_target_is_also_invisible(ch):
+    """These NFKC-fold to U+1160, which is itself invisible. Stripping runs
+    before the fold, so covering only the fold target would miss a direct
+    occurrence of the compatibility form and covering only the form would miss
+    a direct U+1160 — both ends have to be in the set."""
+    assert canonicalize(_sprinkle(PAYLOAD, ch)).views[0] == canonicalize(PAYLOAD).views[0]
+
+
+def test_legitimate_invisibles_keep_their_existing_handling():
+    """ZWJ in an emoji sequence, ZWNJ in Persian, and soft hyphens are already
+    removed from the scan view. Views are scan-only and never substituted back
+    into the conversation, so removal is safe. This pins that behaviour rather
+    than changing it — widening the set must not disturb it."""
+    for text in ("a 👨‍👩 b", "mi‌khaham", "inter­national"):
+        view = canonicalize(text).views[0]
+        assert "‍" not in view
+        assert "‌" not in view
+        assert "­" not in view
