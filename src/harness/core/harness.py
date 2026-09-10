@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from harness.core.events import AnyAuditEvent
     from harness.maintenance import Maintenance
     from harness.mcp.gate import McpBaselineGate
+    from harness.mcp.manifest import MCPManifest
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ class SHAI:
         mcp_required_flags: dict[str, bool] | None = None,
         mcp_baseline_gate: McpBaselineGate | None = None,
         mcp_policy_rules: dict[str, list[RuleConfig]] | None = None,
+        mcp_manifests: dict[str, MCPManifest] | None = None,
     ) -> None:
         # Only built objects are passed in. Everything a boundary reads from
         # harness.yaml is read off self._config at the call site — config is
@@ -162,6 +164,9 @@ class SHAI:
         # `action: block` — keyed by source name, handed to layer 5 ahead of
         # the agent's own rules. See harness.mcp.discovery.compile_manifest_rules.
         self._mcp_policy_rules: dict[str, list[RuleConfig]] = dict(mcp_policy_rules or {})
+        # Approved manifest per built MCP source, keyed by source name. The
+        # dispatch token for an MCP tool is bound to its allow-lists.
+        self._mcp_manifests: dict[str, MCPManifest] = dict(mcp_manifests or {})
         # Per-agent resolved tool sets — populated at load_agent() time
         # key: agent_id, value: {tool_name: Tool} for that agent
         # Composite tool identity: agent_id → {tool_name: (source_name, Tool)}
@@ -319,6 +324,7 @@ class SHAI:
         mcp_required_flags: dict[str, bool] = {}
         mcp_manifest_paths: dict[str, Path] = {}
         mcp_policy_rules: dict[str, list[RuleConfig]] = {}
+        mcp_manifests: dict[str, MCPManifest] = {}
         if any(s.transport == Transport.MCP for s in config.sources):
             from harness.mcp.discovery import (
                 build_mcp_source,
@@ -334,6 +340,7 @@ class SHAI:
             ):
                 mcp_required_flags[resolved.manifest.id] = resolved.manifest.required
                 mcp_manifest_paths[resolved.manifest.id] = resolved.path
+                mcp_manifests[resolved.manifest.id] = resolved.manifest
                 rules = compile_manifest_rules(resolved.manifest)
                 if rules:
                     mcp_policy_rules[resolved.manifest.id] = rules
@@ -387,6 +394,7 @@ class SHAI:
             mcp_required_flags=mcp_required_flags,
             mcp_baseline_gate=mcp_baseline_gate,
             mcp_policy_rules=mcp_policy_rules,
+            mcp_manifests=mcp_manifests,
         )
 
         await emitter.emit(AuditEvent.build(
@@ -754,6 +762,24 @@ class SHAI:
             if not approved:
                 return await self._deny_pre_gate(deny_reason, name, ctx)
 
+        # An MCP call is decided by the tool's transport, never by its
+        # source_name: ToolRegistry does not check source_name, so a local tool
+        # can carry an MCP source's name and must not inherit its allow-lists.
+        is_mcp_tool = tool_entry is not None and tool_entry[1].transport == Transport.MCP
+        manifest = self._mcp_manifests.get(source_name) if is_mcp_tool else None
+
+        # An MCP tool's dispatch token is bound to the destinations its
+        # manifest declares. With none declared there is nothing to bind it to,
+        # and an unbound token would pass ShaiTransport's URL check unchecked,
+        # so the call is refused rather than minted for.
+        if (self._connectivity.enabled and is_mcp_tool
+                and (manifest is None or not manifest.allowed_urls)):
+            return await self._deny_pre_gate(
+                f"MCP source '{source_name}' declares no allowed_urls — "
+                "a dispatch token cannot be bound to a destination",
+                name, ctx,
+            )
+
         gate = await run_gate(
             name, args, ctx,
             agent_config=agent_config,
@@ -768,7 +794,7 @@ class SHAI:
             # The gate calls this only when it allows, and before it emits, so
             # token_id lands on the event that authorised the dispatch.
             issue_token=(
-                (lambda: self._mint_dispatch_token(name, source_name, ctx))
+                (lambda: self._mint_dispatch_token(name, source_name, manifest, ctx))
                 if self._connectivity.enabled and self._connectivity_secret
                 else None
             ),
@@ -987,42 +1013,32 @@ class SHAI:
     # ── Internal helpers ──────────────────────────────────────────────────
 
     def _mint_dispatch_token(
-        self, tool_name: str, source_name: str, ctx: AgentContext
+        self,
+        tool_name: str,
+        source_name: str,
+        manifest: MCPManifest | None,
+        ctx: AgentContext,
     ) -> tuple[str, str]:
         """Issue a dispatch token for an allowed call. Returns (encoded, token_id).
 
-        Called by the gate on its allow path only. The destination allow-lists
-        come from the source that owns the tool, falling back to the source's
-        own host when it declares none — a token is never issued unbounded.
+        Called by the gate on its allow path only. manifest is the approved
+        manifest of an MCP tool's source, None for every other tool. An MCP
+        tool's token carries that manifest's allow-lists, the same lists
+        ShaiTransport enforces for the source. check_tool_call refuses the call
+        before the gate runs when the manifest declares no allowed_urls. Any
+        other tool has no network target, so its token binds no URL and no
+        method and can never pass ShaiTransport.
         """
-        from harness.connectivity.token import (
-            default_allowed_urls,
-            encode_token,
-            sign_token,
-        )
+        from harness.connectivity.token import encode_token, sign_token
 
-        source_cfg = next(
-            (s for s in self._config.sources if s.name == source_name), None
-        )
-        allowed_urls = (
-            list(source_cfg.allowed_urls)
-            if source_cfg and source_cfg.allowed_urls
-            else (default_allowed_urls(source_cfg.url)
-                  if source_cfg and source_cfg.url else [])
-        )
-        allowed_methods = (
-            list(source_cfg.allowed_methods)
-            if source_cfg and source_cfg.allowed_methods
-            else ["GET", "POST", "PUT", "DELETE", "PATCH"]
-        )
         token = sign_token(
             agent_id=ctx.agent_id,
             sub_agent_id=ctx.sub_agent_id,
             tenant_id=self._tenant_id,
             tool_name=tool_name,
             source_name=source_name,
-            allowed_urls=allowed_urls,
-            allowed_methods=allowed_methods,
+            allowed_urls=list(manifest.allowed_urls) if manifest else [],
+            allowed_methods=list(manifest.allowed_methods) if manifest else [],
             secret=self._connectivity_secret,
             ttl_seconds=self._connectivity.token_ttl_seconds,
         )

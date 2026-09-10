@@ -13,7 +13,6 @@ from harness.connectivity.config import ConnectivityConfig
 from harness.connectivity.token import (
     DispatchToken,
     TokenError,
-    default_allowed_urls,
     encode_token,
     matches_allowed_url,
     sign_token,
@@ -26,7 +25,6 @@ __all__ = [
     "ConnectivityConfig",
     "DispatchToken",
     "TokenError",
-    "default_allowed_urls",
     "encode_token",
     "matches_allowed_url",
     "sign_token",

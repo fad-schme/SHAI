@@ -791,13 +791,20 @@ class MCPSource:
     # ── JSON-RPC helpers ──────────────────────────────────────────────────
 
     async def _post(self, payload: dict, dispatch_token: str | None = None) -> dict:
-        """POST a JSON-RPC request to /message?sessionId=<session_id>."""
+        """POST a JSON-RPC request to /message?sessionId=<session_id>.
+
+        dispatch_token travels as the request extension ShaiTransport reads.
+        The transport validates it before turning it into the X-Shai-Token
+        header, so it is never set as a header here.
+        """
         params = {"sessionId": self._session_id} if self._session_id else {}
+        extensions = {"shai_dispatch_token": dispatch_token} if dispatch_token else {}
         try:
             response = await self._client.post(
                 "/message",
                 json=payload,
                 params=params,
+                extensions=extensions,
             )
             response.raise_for_status()
             return response.json()

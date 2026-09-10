@@ -97,6 +97,92 @@ def _response(status=200, content=b'{"result": "ok"}') -> httpx.Response:
     return httpx.Response(status_code=status, content=content)
 
 
+# ── MCPSource → ShaiTransport wiring ───────────────────────────────────────
+#
+# A real MCPSource whose client runs through a real ShaiTransport. Only the
+# inner transport, the network, is mocked. _post is exercised as written:
+# patching it away is how a dropped token went unnoticed.
+
+def _wired_source(seen: list[httpx.Request], sink: RecordingSink):
+    from harness.tools.source import MCPSource, MCPSourceParams
+
+    def network(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {}})
+
+    src = MCPSource(MCPSourceParams(
+        SOURCE, "https://mcp.slack.com", allowed_urls=ALLOWED, allowed_methods=METHODS,
+    ))
+    src._client = httpx.AsyncClient(
+        base_url="https://mcp.slack.com",
+        transport=_transport(emitter=AuditEmitter([sink]),
+                             inner=httpx.MockTransport(network)),
+    )
+    src._session_id = "sess"
+    src._connected = True
+    return src
+
+
+async def test_mcp_source_call_carries_dispatch_token_to_the_wire():
+    """Regression: MCPSource._post took dispatch_token and never attached it,
+    so every real tool call reached ShaiTransport untokened."""
+    from harness.connectivity.token import verify_token
+
+    seen: list[httpx.Request] = []
+    sink = RecordingSink()
+    src = _wired_source(seen, sink)
+    token = _token()
+
+    await src.call("search_docs", {"q": "x"}, dispatch_token=token)
+
+    assert seen[0].headers.get("X-Shai-Token") == token
+    events = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
+    assert len(events) == 1
+    assert events[0].status == "allowed"
+    assert events[0].token_id == verify_token(token, SECRET).token_id
+    await src.close()
+
+
+async def test_mcp_source_call_refuses_replayed_token():
+    from harness.core.errors import ConfigError
+
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, RecordingSink())
+    token = _token()
+    await src.call("search_docs", {}, dispatch_token=token)
+
+    # _post reports every request failure as ConfigError; the policy refusal
+    # is its cause.
+    with pytest.raises(ConfigError) as exc:
+        await src.call("search_docs", {}, dispatch_token=token)
+    assert isinstance(exc.value.__cause__, NetworkPolicyError)
+    assert len(seen) == 1
+    await src.close()
+
+
+async def test_mcp_source_call_refuses_token_for_another_source():
+    from harness.core.errors import ConfigError
+
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, RecordingSink())
+
+    with pytest.raises(ConfigError) as exc:
+        await src.call("search_docs", {}, dispatch_token=_token(source_name="other_mcp"))
+    assert isinstance(exc.value.__cause__, NetworkPolicyError)
+    assert seen == []
+    await src.close()
+
+
+async def test_mcp_source_call_without_token_sends_no_token_header():
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, RecordingSink())
+
+    await src.call("search_docs", {})
+
+    assert "X-Shai-Token" not in seen[0].headers
+    await src.close()
+
+
 # ── URL enforcement ────────────────────────────────────────────────────────
 
 async def test_allowed_url_passes():

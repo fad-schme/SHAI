@@ -12,6 +12,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Dispatch tokens for MCP tools are bound to the source's manifest.** With
+  connectivity enabled, minting read allow-lists from the `sources:` entry,
+  which carries none, so every allowed call to a declared MCP source raised out
+  of `check_tool_call`; the token now carries the manifest's `allowed_urls` and
+  `allowed_methods`, and a manifest declaring no `allowed_urls` is refused at
+  the gate. A local tool's token binds no URL and no method, whatever
+  `source_name` it carries.
+
+### Removed
+- **`harness.connectivity.default_allowed_urls`.** Its only caller derived a
+  token's allow-list from the source host when none was declared; tokens are
+  now bound to the manifest's declared `allowed_urls` only.
+
 ### Added
 - **`@shai_tool` accepts `argument_rules` and `irreversibility`** — the two
   security fields the gate enforces but the decorator had no way to express, so

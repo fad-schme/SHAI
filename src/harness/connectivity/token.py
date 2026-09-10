@@ -116,18 +116,6 @@ def matches_allowed_url(url: str, patterns: list[str]) -> bool:
     return False
 
 
-def default_allowed_urls(source_url: str) -> list[str]:
-    """Derive the default allowed_urls from a source URL.
-
-    https://mcp.slack.com/sse  →  ["https://mcp.slack.com/*"]
-    """
-    # Strip path — allow anything on the same host/scheme
-    from urllib.parse import urlparse
-    parsed = urlparse(source_url)
-    base = f"{parsed.scheme}://{parsed.netloc}/*"
-    return [base]
-
-
 # ── Signing ────────────────────────────────────────────────────────────────
 #
 # Envelope mechanics — canonical encoding, HMAC, base64url, expiry — live in
