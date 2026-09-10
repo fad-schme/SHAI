@@ -17,6 +17,7 @@ def _minimal() -> dict:
     return {
         "scan_input":  {"enabled": False},
         "scan_output": {"enabled": False},
+        "connectivity": {"token_secret": "test-connectivity-secret"},
         "policy":      {},
         "audit_sinks": [{"name": "stdout"}],
     }
@@ -48,7 +49,7 @@ def test_load_yaml_malformed(tmp_path: Path):
 def test_load_yaml_disabled_boundaries(tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -62,6 +63,7 @@ def test_env_var_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("TEST_SINK", "stdout")
     p = tmp_path / "h.yaml"
     p.write_text(
+        "connectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: ${TEST_SINK}\n"
@@ -74,6 +76,7 @@ def test_missing_env_var_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     monkeypatch.delenv("MISSING_VAR_X", raising=False)
     p = tmp_path / "h.yaml"
     p.write_text(
+        "connectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: ${MISSING_VAR_X}\n"
@@ -86,6 +89,7 @@ def test_nested_env_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("SINK_NAME", "stdout")
     p = tmp_path / "h.yaml"
     p.write_text(
+        "connectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: ${SINK_NAME}\n"
@@ -97,6 +101,7 @@ def test_nested_env_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 def test_non_string_values_unchanged(tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
+        "connectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -108,6 +113,7 @@ def test_non_string_values_unchanged(tmp_path: Path):
 def test_unknown_field_in_yaml_rejected(tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
+        "connectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"

@@ -396,7 +396,7 @@ def _write_config(
     """harness.yaml with scan_input on so the declared scanners are built."""
     cfg = tmp_path / "harness.yaml"
     body = (
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n"
         "  enabled: true\n"
         "  scanners:\n"
@@ -480,7 +480,7 @@ class TestPatternsDBWiring:
     async def test_enabled_without_secret_is_a_config_error(self, tmp_path):
         cfg = tmp_path / "harness.yaml"
         cfg.write_text(
-            "version: 1\n"
+            "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
             "patterns_db:\n  enabled: true\n"

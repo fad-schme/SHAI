@@ -26,7 +26,7 @@ async def _harness(tmp_path: Path, **limits) -> SHAI:
     """Real SHAI with one agent carrying the given execution limits."""
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -131,7 +131,7 @@ async def test_subagent_shares_the_parent_session_budget(tmp_path: Path):
 def _bare_harness_yaml(tmp_path: Path) -> Path:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"

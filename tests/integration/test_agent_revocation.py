@@ -28,7 +28,7 @@ async def _harness(tmp_path: Path, *, revocation: bool = True) -> tuple[SHAI, Pa
     revoked_path = tmp_path / "state" / "revoked.json"
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         + (

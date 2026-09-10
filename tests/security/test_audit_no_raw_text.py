@@ -26,7 +26,7 @@ async def _build_harness(tmp_path: Path, *, scan: bool = True) -> tuple[SHAI, St
     enabled = "true" if scan else "false"
     scanners = "  scanners:\n    - name: regex_pii\n    - name: injection_scan\n" if scan else ""
     cfg.write_text(
-        f"version: 1\n"
+        f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         f"scan_input:\n  enabled: {enabled}\n{scanners}"
         f"scan_output:\n  enabled: {enabled}\n{scanners}"
         f"audit_sinks:\n  - name: stdout\n"

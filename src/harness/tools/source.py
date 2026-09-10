@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
@@ -374,13 +374,15 @@ class MCPSource:
         self,
         params: MCPSourceParams,
         *,
-        connectivity:      ConnectivityConfig | None = None,
-        emitter:           AuditEmitter | None = None,
+        connectivity:      ConnectivityConfig,
+        emitter:           AuditEmitter,
         tenant_id:         str = "default",
         metadata_scanners: Sequence[Any] = (),
         metadata_enabled:  bool = True,
         metadata_block_at: Severity | None = None,
         metadata_action:   ScanAction | None = None,
+        mint_connect_token: Callable[..., Awaitable[str]] | None = None,
+        onboarding:        bool = False,
     ) -> None:
         """Build an MCP source from its manifest-derived params plus harness
         collaborators.
@@ -391,14 +393,23 @@ class MCPSource:
         manifest, regardless of onboarding approval — see harness.mcp.gate
         for where approval is actually checked (per tool call).
 
-        connectivity/emitter default to None, which is the connectivity-off
-        posture: _connect() then builds no ShaiTransport. metadata_scanners
-        defaults to empty, which makes metadata scanning a no-op regardless
-        of metadata_enabled.
+        Every request runs through ShaiTransport. A runtime source must have
+        mint_connect_token, so every connect-phase request is tokened.
+        onboarding=True is set only by `shai mcp onboard` (harness.mcp.onboard):
+        that connection produces the approval tokens are minted from, so it is
+        the one connection without a minter, exempt from the token check only.
+        metadata_scanners defaults to empty, which makes metadata scanning a
+        no-op regardless of metadata_enabled.
         """
         if not params.url:
             raise ConfigError(
                 f"MCP source '{params.name}': url is required",
+                op="mcp_source_init",
+            )
+        if mint_connect_token is None and not onboarding:
+            raise ConfigError(
+                f"MCP source '{params.name}': a runtime source needs a connect "
+                "token minter; only the onboarding connection runs without one",
                 op="mcp_source_init",
             )
         self.name  = params.name
@@ -406,13 +417,18 @@ class MCPSource:
         self._url  = params.url.rstrip("/")
         self._creds: dict[str, str] = dict(params.credentials)
 
-        # Connectivity — meaningful when connectivity.enabled in harness.yaml
+        # Connectivity — every request of this source runs through ShaiTransport
         self._allowed_urls:         list[str] = list(params.allowed_urls)
         self._allowed_methods:      list[str] = list(params.allowed_methods)
-        self._connectivity:         ConnectivityConfig | None = connectivity
-        self._emitter:              AuditEmitter | None = emitter
+        self._connectivity:         ConnectivityConfig = connectivity
+        self._emitter:              AuditEmitter = emitter
+        self._onboarding:           bool = onboarding
         self._tenant_id:            str = tenant_id
         self._agent_ctx:            Any = None   # AgentContext — set at load() time
+        # The facade's minter for connect tokens, None only on the onboarding
+        # connection. Every other connect-phase request carries one, minted
+        # from the source's onboarding approval immediately before the request.
+        self._mint_connect_token = mint_connect_token
         # Manifest's declared per-tool content — tool_name → {description, tags}.
         # Authoritative for registration (see _fetch_tools) — the manifest, not
         # the live tools/list response, is the source of truth for what the LLM sees.
@@ -459,10 +475,10 @@ class MCPSource:
         """Invoke a tool on the MCP server. Returns the tool result.
 
         dispatch_token:
-            When connectivity.enabled, pass gate.dispatch_token here.
-            ShaiTransport will attach it as X-Shai-Token on the outbound
-            request and emit a NetworkAuditEvent. When None, no token header
-            is added (default — no-op when connectivity is disabled).
+            Pass gate.dispatch_token here. ShaiTransport validates it,
+            attaches it as X-Shai-Token on the outbound request and emits a
+            NetworkAuditEvent. A call without one is governed by
+            no_token_policy.
 
         Raises MCPInvocationError on server-side errors.
         Raises ConfigError if the source is not connected.
@@ -576,30 +592,29 @@ class MCPSource:
         # threshold was reached under action=block, WARN when it was reached
         # under action=alert (registered, but flagged), ALLOW otherwise —
         # including ALLOW-with-findings for anything below the threshold.
-        if self._emitter is not None:
-            await self._emitter.emit(AuditEvent.build(
-                boundary=BoundaryName.MCP_METADATA_SCAN,
-                decision=(
-                    Decision.BLOCKED if should_block
-                    else Decision.WARN if reached
-                    else Decision.ALLOW
-                ),
-                ctx=self._agent_ctx or AgentContext(agent_id="unknown"),
-                tenant_id=self._tenant_id or "default",
-                duration_ms=now_ms() - start,
-                tool_name=tool_name,
-                transport=str(Transport.MCP),
-                adapters=adapters,
-                finding_count=len(all_findings),
-                max_severity=max_sev,
-                # Category and threshold only — the matched metadata is the
-                # payload we are refusing and must not be echoed into the trail.
-                deny_reason=(
-                    f"tool metadata scan refused registration (block_at={block_at})"
-                    if should_block else None
-                ),
-                extra={"source": self.name},
-            ))
+        await self._emitter.emit(AuditEvent.build(
+            boundary=BoundaryName.MCP_METADATA_SCAN,
+            decision=(
+                Decision.BLOCKED if should_block
+                else Decision.WARN if reached
+                else Decision.ALLOW
+            ),
+            ctx=self._agent_ctx or AgentContext(agent_id="unknown"),
+            tenant_id=self._tenant_id or "default",
+            duration_ms=now_ms() - start,
+            tool_name=tool_name,
+            transport=str(Transport.MCP),
+            adapters=adapters,
+            finding_count=len(all_findings),
+            max_severity=max_sev,
+            # Category and threshold only — the matched metadata is the
+            # payload we are refusing and must not be echoed into the trail.
+            deny_reason=(
+                f"tool metadata scan refused registration (block_at={block_at})"
+                if should_block else None
+            ),
+            extra={"source": self.name},
+        ))
 
         return should_block, all_findings
 
@@ -607,21 +622,18 @@ class MCPSource:
         """Open the HTTP client, establish the SSE session, and initialise."""
         headers = self._build_headers()
 
-        transport: httpx.AsyncBaseTransport | None = None
-        if (self._connectivity is not None
-                and self._connectivity.enabled
-                and self._emitter is not None):
-            from harness.connectivity.transport import ShaiTransport
-            transport = ShaiTransport(
-                source_name=self.name,
-                allowed_urls=self._allowed_urls,
-                allowed_methods=self._allowed_methods,
-                agent_id=self._agent_ctx.agent_id if self._agent_ctx else "unknown",
-                sub_agent_id=self._agent_ctx.sub_agent_id if self._agent_ctx else None,
-                tenant_id=self._tenant_id or "default",
-                emitter=self._emitter,
-                connectivity=self._connectivity,
-            )
+        from harness.connectivity.transport import ShaiTransport
+        transport = ShaiTransport(
+            source_name=self.name,
+            allowed_urls=self._allowed_urls,
+            allowed_methods=self._allowed_methods,
+            agent_id=self._agent_ctx.agent_id if self._agent_ctx else "unknown",
+            sub_agent_id=self._agent_ctx.sub_agent_id if self._agent_ctx else None,
+            tenant_id=self._tenant_id or "default",
+            emitter=self._emitter,
+            connectivity=self._connectivity,
+            onboarding=self._onboarding,
+        )
 
         self._client = httpx.AsyncClient(
             base_url=self._url,
@@ -648,6 +660,16 @@ class MCPSource:
                 op="mcp_connect",
             ) from e
 
+    async def _connect_token(self, method: str, path: str) -> str | None:
+        """A connect token for one connect-phase request, None on the
+        onboarding connection. The minter re-checks the baseline approval and
+        raises NetworkPolicyError when it no longer holds."""
+        if self._mint_connect_token is None:
+            return None
+        return await self._mint_connect_token(
+            self._agent_ctx, method=method, destination=f"{self._url}{path}",
+        )
+
     async def _open_sse_session(self) -> str:
         """Open GET /sse and read the endpoint event to get the session_id.
 
@@ -655,7 +677,11 @@ class MCPSource:
         message endpoint URL, which includes the session_id as a query param.
         """
         try:
-            async with self._client.stream("GET", "/sse") as response:
+            token = await self._connect_token("GET", "/sse")
+            async with self._client.stream(
+                "GET", "/sse",
+                extensions={"shai_dispatch_token": token} if token else {},
+            ) as response:
                 if response.status_code != 200:
                     raise ConfigError(
                         f"MCP source '{self.name}': SSE endpoint returned "
@@ -705,7 +731,9 @@ class MCPSource:
                 },
             },
         }
-        response = await self._post(payload)
+        response = await self._post(
+            payload, dispatch_token=await self._connect_token("POST", "/message"),
+        )
         self._check_jsonrpc_error(response, "initialize")
 
         # Send initialized notification (no response expected)
@@ -736,7 +764,9 @@ class MCPSource:
             "method": "tools/list",
             "params": {},
         }
-        response = await self._post(payload)
+        response = await self._post(
+            payload, dispatch_token=await self._connect_token("POST", "/message"),
+        )
         self._check_jsonrpc_error(response, "tools/list")
 
         live_names = {
@@ -818,8 +848,14 @@ class MCPSource:
         """Send a JSON-RPC notification (no id, no response expected)."""
         payload = {"jsonrpc": "2.0", "method": method, "params": params}
         params_q = {"sessionId": self._session_id} if self._session_id else {}
+        # Minted outside the try: a refused mint is an approval failure and
+        # must fail the connect, not be swallowed as a lost notification.
+        token = await self._connect_token("POST", "/message")
         try:
-            await self._client.post("/message", json=payload, params=params_q)
+            await self._client.post(
+                "/message", json=payload, params=params_q,
+                extensions={"shai_dispatch_token": token} if token else {},
+            )
         except Exception as e:
             log.debug("mcp notification failed",
                       extra={"source": self.name, "method": method,

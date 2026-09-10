@@ -33,7 +33,7 @@ async def test_from_yaml_with_mcp_source_does_not_crash(tmp_path: Path):
 
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n"
         "  enabled: false\n"
         "scan_output:\n"

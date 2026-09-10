@@ -42,6 +42,8 @@ AGENT_YAML = FIXTURES / "agents" / "orchestrator_agent.yaml"
 # Every boundary live, so no test is silently exercising a disabled path.
 _ALL_ON = """\
 version: 1
+connectivity:
+  token_secret: test-connectivity-secret
 scan_input:
   enabled: true
   scanners:

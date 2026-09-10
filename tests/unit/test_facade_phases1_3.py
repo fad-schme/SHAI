@@ -14,7 +14,7 @@ from harness.core.harness import SHAI
 async def harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -117,7 +117,7 @@ async def test_async_context_manager_closes_the_harness(tmp_path: Path):
     """`async with` releases what close() releases — sources, sinks, session DB."""
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -141,7 +141,7 @@ async def test_close_is_still_public_and_idempotent(tmp_path: Path):
     """Applications that manage lifetime themselves keep calling close()."""
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
     )

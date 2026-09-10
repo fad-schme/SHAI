@@ -37,6 +37,7 @@ def _config(**overrides: Any) -> dict:
     base = {
         "scan_input":  {"enabled": False},
         "scan_output": {"enabled": False},
+        "connectivity": {"token_secret": "test-connectivity-secret"},
         "audit_sinks": [{"name": "stdout"}],
     }
     base.update(overrides)
@@ -103,7 +104,8 @@ def test_empty_sink_list_fails_validation():
 
 
 def test_omitted_sink_list_means_stdout():
-    cfg = load_dict({"scan_input": {"enabled": False}, "scan_output": {"enabled": False}})
+    cfg = load_dict({"scan_input": {"enabled": False}, "scan_output": {"enabled": False},
+                     "connectivity": {"token_secret": "test-connectivity-secret"}})
     assert [ref.name for ref in cfg.audit_sinks] == ["stdout"]
     assert [type(s).__name__ for s in _build_sinks(cfg.audit_sinks)] == ["StdoutSink"]
 
@@ -168,7 +170,7 @@ def test_secrets_block_validates_as_config():
 async def test_every_builtin_scanner_still_builds(name, tmp_path: Path):
     """Regression: removing discovery must not have cost a legitimate name."""
     cfg = _write(tmp_path, (
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: true\n  scanners:\n"
         f"    - name: {name}\n"
         "scan_output:\n  enabled: false\n"
@@ -185,7 +187,7 @@ async def test_every_builtin_scanner_still_builds(name, tmp_path: Path):
 async def test_builtin_sinks_still_build(block, tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = _write(tmp_path, (
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n" + block
     ))

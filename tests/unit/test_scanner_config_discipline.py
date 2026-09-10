@@ -21,13 +21,13 @@ from tests.conftest import RecordingSink
 CTX = AgentContext(agent_id="a1")
 
 _PII_ONLY = (
-    "version: 1\n"
+    "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n  enabled: true\n  scanners:\n    - name: regex_pii\n"
     "scan_output:\n  enabled: false\n"
     "audit_sinks:\n  - name: stdout\n"
 )
 _INJECTION_ONLY = (
-    "version: 1\n"
+    "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n  enabled: true\n  scanners:\n    - name: injection_scan\n"
     "scan_output:\n  enabled: false\n"
     "audit_sinks:\n  - name: stdout\n"
@@ -82,7 +82,7 @@ async def test_gate_arg_scanners_use_the_scanners_key(tmp_path):
     from harness.core.errors import ConfigError
 
     body = (
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: true\n  scanners:\n    - name: regex_pii\n"
         "scan_output:\n  enabled: false\n"
         "check_tool_call:\n  scanners:\n    - name: regex_pii\n"

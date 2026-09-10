@@ -33,7 +33,7 @@ def _recording_sink(h: SHAI) -> RecordingSink:
 async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -129,7 +129,7 @@ async def _scanning_harness(tmp_path: Path) -> SHAI:
     """Harness with scan_input live — the concurrency fixture above disables it."""
     cfg = tmp_path / "scan.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: true\n  action: alert\n"
         "  scanners:\n    - name: injection_scan\n"
         "scan_output:\n  enabled: false\n"

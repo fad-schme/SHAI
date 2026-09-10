@@ -228,7 +228,7 @@ async def test_boundaries_use_their_own_block_at(tmp_path):
 
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "session:\n  enabled: false\n"
         "scan_input:\n"
         "  enabled: true\n"

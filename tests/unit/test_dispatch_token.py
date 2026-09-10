@@ -28,11 +28,50 @@ def _token(**overrides) -> DispatchToken:
         source_name="slack_mcp",
         allowed_urls=["https://slack.com/api/*"],
         allowed_methods=["GET", "POST"],
+        purpose="tool_call",
         secret=SECRET,
         ttl_seconds=15,
     )
     defaults.update(overrides)
     return sign_token(**defaults)
+
+
+# ── purpose is a signed, closed claim ─────────────────────────────────────
+
+def test_purpose_is_covered_by_the_signature():
+    import base64
+    import json
+
+    data = json.loads(base64.urlsafe_b64decode(encode_token(_token()).encode() + b"=="))
+    data["purpose"] = "connect"
+    forged = base64.urlsafe_b64encode(
+        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    ).decode()
+
+    with pytest.raises(TokenError, match="signature"):
+        verify_token(forged, SECRET)
+
+
+def test_token_without_purpose_fails_verification():
+    from harness.connectivity.token import _SIGNED_FIELDS
+    from harness.core.signing import claims_of, encode, sign
+
+    claims = claims_of(_token(), tuple(f for f in _SIGNED_FIELDS if f != "purpose"))
+
+    with pytest.raises(TokenError, match="missing"):
+        verify_token(encode(claims, sign(claims, SECRET)), SECRET)
+
+
+def test_token_with_unknown_purpose_fails_verification():
+    import dataclasses
+
+    from harness.connectivity.token import _SIGNED_FIELDS
+    from harness.core.signing import claims_of, encode, sign
+
+    claims = claims_of(dataclasses.replace(_token(), purpose="admin"), _SIGNED_FIELDS)
+
+    with pytest.raises(TokenError, match="purpose"):
+        verify_token(encode(claims, sign(claims, SECRET)), SECRET)
 
 
 # ── sign + encode + verify roundtrip ─────────────────────────────────────
@@ -222,8 +261,8 @@ def test_matches_allowed_url_preserves_port_and_query():
 
 # ── Gate integration: token issued when connectivity enabled ─────────────
 
-async def test_gate_issues_token_when_connectivity_enabled(tmp_path):
-    """check_tool_call returns dispatch_token when connectivity.enabled."""
+async def test_gate_issues_token_on_allow(tmp_path):
+    """check_tool_call returns a verifiable dispatch_token on every allow."""
     import os
 
     from harness import SHAI, Tool
@@ -237,9 +276,7 @@ async def test_gate_issues_token_when_connectivity_enabled(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "connectivity:\n"
-        "  enabled: true\n"
-        "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
+        "connectivity:\n"        "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
         "  token_ttl_seconds: 15\n"
     )
     agent = tmp_path / "agent.yaml"
@@ -271,39 +308,6 @@ async def test_gate_issues_token_when_connectivity_enabled(tmp_path):
     del os.environ["SHAI_TEST_TOKEN_SECRET"]
 
 
-async def test_gate_no_token_when_connectivity_disabled(tmp_path):
-    """check_tool_call returns no dispatch_token when connectivity.enabled=false."""
-    from harness import SHAI, Tool
-    from harness.core.context import AgentContext
-    from harness.core.types import Transport
-
-    cfg = tmp_path / "h.yaml"
-    cfg.write_text(
-        "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
-        # no connectivity block — defaults to disabled
-    )
-    agent = tmp_path / "agent.yaml"
-    agent.write_text(
-        "id: agent_b\n"
-        "allowed_tool_names:\n  - search_docs\n"
-        "allowed_tags:\n  - read\n"
-    )
-    harness = await SHAI.from_yaml(cfg)
-    await harness.register_tools([
-        Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
-    ])
-    await harness.load_agent(agent)
-    ctx  = AgentContext(agent_id="agent_b")
-    gate = await harness.check_tool_call("search_docs", {"query": "test"}, ctx)
-
-    assert gate.allowed
-    assert gate.dispatch_token is None
-
-    await harness.close()
-
-
 async def test_gate_denied_carries_no_token(tmp_path):
     """Denied gate decisions must never carry a dispatch token."""
     import os
@@ -319,9 +323,7 @@ async def test_gate_denied_carries_no_token(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "connectivity:\n"
-        "  enabled: true\n"
-        "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET2'\n"
+        "connectivity:\n"        "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET2'\n"
     )
     # The deny now comes from the agent's own rules — global policy no longer
     # arbitrates tool calls. What is under test is unchanged: a denied gate
@@ -353,14 +355,28 @@ policy_rules:
     del os.environ["SHAI_TEST_TOKEN_SECRET2"]
 
 
-async def test_connectivity_config_requires_secret_when_enabled(tmp_path):
-    """ConnectivityConfig raises on enabled=True with empty token_secret."""
+def test_connectivity_config_requires_token_secret():
+    """Connectivity is always on, so its signing key is never optional."""
     from pydantic import ValidationError
 
     from harness.connectivity.config import ConnectivityConfig
 
-    with pytest.raises((ValidationError, ValueError)):
-        ConnectivityConfig(enabled=True, token_secret="")
+    with pytest.raises(ValidationError):
+        ConnectivityConfig()
+    with pytest.raises(ValidationError):
+        ConnectivityConfig(token_secret="")
+
+
+def test_harness_config_requires_connectivity_block():
+    from pydantic import ValidationError
+
+    from harness.config.schema import BoundaryConfig, HarnessConfig
+
+    with pytest.raises(ValidationError, match="connectivity"):
+        HarnessConfig(
+            scan_input=BoundaryConfig(enabled=False),
+            scan_output=BoundaryConfig(enabled=False),
+        )
 
 
 # ── token_id joins the gate event to the network event (SHAI-007) ─────────
@@ -388,9 +404,7 @@ async def test_gate_event_carries_the_token_id_it_issued(tmp_path):
             "version: 1\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
-            "connectivity:\n"
-            "  enabled: true\n"
-            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
+            "connectivity:\n"            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
             "  token_ttl_seconds: 15\n"
         )
         agent = tmp_path / "agent.yaml"
@@ -425,41 +439,6 @@ async def test_gate_event_carries_the_token_id_it_issued(tmp_path):
         del os.environ["SHAI_TEST_TOKEN_SECRET"]
 
 
-async def test_no_token_id_when_connectivity_disabled(tmp_path):
-    """Connectivity off issues no token, so the field stays null."""
-    from harness import SHAI, Tool
-    from harness.audit.emitter import AuditEmitter
-    from harness.core.context import AgentContext
-    from harness.core.types import Transport
-    from tests.conftest import RecordingSink
-
-    cfg = tmp_path / "h.yaml"
-    cfg.write_text(
-        "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
-    )
-    agent = tmp_path / "agent.yaml"
-    agent.write_text(
-        "id: agent_a\n"
-        "allowed_tool_names:\n  - search_docs\n"
-        "allowed_tags:\n  - read\n"
-    )
-    harness = await SHAI.from_yaml(cfg)
-    sink = RecordingSink()
-    harness._emitter = AuditEmitter([sink])
-    await harness.register_tools([
-        Tool(name="search_docs", tags=["read"], transport=Transport.LOCAL)
-    ])
-    await harness.load_agent(agent)
-
-    gate = await harness.check_tool_call("search_docs", {}, AgentContext(agent_id="agent_a"))
-    assert gate.allowed
-    assert gate.dispatch_token is None
-    assert sink.events[0].token_id is None
-    await harness.close()
-
-
 async def test_denied_call_mints_no_token(tmp_path):
     """issue_token runs on the allow path only — a refusal signs nothing."""
     import os
@@ -475,9 +454,7 @@ async def test_denied_call_mints_no_token(tmp_path):
             "version: 1\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
-            "connectivity:\n"
-            "  enabled: true\n"
-            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
+            "connectivity:\n"            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
         )
         agent = tmp_path / "agent.yaml"
         agent.write_text(
@@ -547,7 +524,7 @@ async def _declared_mcp_harness(tmp_path, monkeypatch, manifest_extra: str,
         "sources:\n  - name: remote_mcp\n    transport: mcp\n"
         f"mcp_manifests_dir: {mcp_dir}\n"
         f"mcp_baseline:\n  path: {baseline_db}\n  secret: test-secret\n"
-        "connectivity:\n  enabled: true\n"
+        "connectivity:\n"
         f"  token_secret: {CONNECTIVITY_SECRET.decode()}\n"
     )
     agent = tmp_path / "agent.yaml"
@@ -579,6 +556,7 @@ async def test_token_for_declared_mcp_source_carries_manifest_allow_lists(tmp_pa
     assert gate.allowed
     tok = verify_token(gate.dispatch_token, CONNECTIVITY_SECRET)
     assert tok.source_name == "remote_mcp"
+    assert tok.purpose == "tool_call"
     assert tok.allowed_urls == ["https://mcp.example.com/api/*"]
     assert tok.allowed_methods == ["POST"]
     gate_events = [e for e in sink.events if e.boundary == "tool_call_gate"]
@@ -652,6 +630,140 @@ async def test_gate_token_reaches_shai_transport_and_joins_the_network_event(tmp
     await harness.close()
 
 
+# ── Connect tokens, minted from the baseline approval ─────────────────────
+
+async def _live_mcp_harness(tmp_path, monkeypatch, seen, *, connectivity_extra: str = ""):
+    """Connectivity on, one declared and approved MCP source, and a real
+    MCPSource connect. Only the network under ShaiTransport is mocked; audit
+    events are captured at the sink the facade builds."""
+    import json
+
+    import httpx
+
+    from harness.core import wiring
+    from harness.core.harness import SHAI
+    from harness.mcp.baseline import record_baseline
+    from harness.mcp.manifest import manifest_file_hash
+    from tests.conftest import RecordingSink
+
+    def network(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"},
+                content=b"event: endpoint\ndata: /message?sessionId=abc\n\n",
+            )
+        body = json.loads(request.content)
+        result = ({"tools": [{"name": "remote_read", "description": "reads"}]}
+                  if body.get("method") == "tools/list" else {})
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body.get("id"), "result": result})
+
+    monkeypatch.setattr(httpx, "AsyncHTTPTransport", lambda *a, **k: httpx.MockTransport(network))
+    sink = RecordingSink()
+    monkeypatch.setattr(wiring, "_build_sinks", lambda cfg: [sink])
+
+    mcp_dir = tmp_path / "mcp"
+    mcp_dir.mkdir()
+    baseline_db = tmp_path / "baseline.db"
+    manifest_path = mcp_dir / "remote_mcp.yaml"
+    manifest_path.write_text(
+        "id: remote_mcp\ndisplay_name: \"remote\"\n"
+        "url: \"https://mcp.example.com\"\n"
+        'allowed_urls: ["https://mcp.example.com/*"]\n'
+        "tools:\n  - name: remote_read\n    description: \"reads\"\n    tags: [read]\n"
+    )
+    record_baseline(baseline_db, "remote_mcp", manifest_file_hash(manifest_path), b"test-secret")
+
+    cfg = tmp_path / "h.yaml"
+    cfg.write_text(
+        "version: 1\n"
+        "scan_input:\n  enabled: false\n"
+        "scan_output:\n  enabled: false\n"
+        "sources:\n  - name: remote_mcp\n    transport: mcp\n"
+        f"mcp_manifests_dir: {mcp_dir}\n"
+        f"mcp_baseline:\n  path: {baseline_db}\n  secret: test-secret\n"
+        "connectivity:\n"
+        f"  token_secret: {CONNECTIVITY_SECRET.decode()}\n" + connectivity_extra
+    )
+    agent = tmp_path / "agent.yaml"
+    agent.write_text(
+        "id: agent_c\n"
+        "sources:\n  - remote_mcp\n"
+        "allowed_tool_names:\n  - remote_read\n"
+        "allowed_tags:\n  - read\n"
+    )
+    harness = await SHAI.from_yaml(cfg)
+    return harness, agent, sink, manifest_path
+
+
+async def test_load_sends_every_connect_request_with_a_connect_token(tmp_path, monkeypatch):
+    from harness.core.events import NetworkAuditEvent
+
+    seen: list = []
+    harness, agent, sink, _ = await _live_mcp_harness(tmp_path, monkeypatch, seen)
+
+    await harness.load_agent(agent)
+
+    # GET /sse, initialize, notifications/initialized, tools/list
+    assert len(seen) == 4
+    for request in seen:
+        tok = verify_token(request.headers["X-Shai-Token"], CONNECTIVITY_SECRET)
+        assert tok.purpose == "connect"
+        assert tok.tool_name is None
+        assert tok.source_name == "remote_mcp"
+        assert tok.agent_id == "agent_c"
+        assert tok.allowed_urls == ["https://mcp.example.com/*"]
+    net = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
+    assert [e.status for e in net] == ["allowed"] * 4
+    assert len({e.token_id for e in net}) == 4
+    await harness.close()
+
+
+async def test_load_refuses_to_connect_when_the_manifest_changed_after_startup(tmp_path, monkeypatch):
+    """No approval, no token, no connect: the baseline is re-checked when the
+    source connects, not only at startup."""
+    from harness.core.errors import ConfigError
+    from harness.core.events import NetworkAuditEvent
+
+    seen: list = []
+    harness, agent, sink, manifest_path = await _live_mcp_harness(tmp_path, monkeypatch, seen)
+    manifest_path.write_text(manifest_path.read_text() + "tags: [edited]\n")
+
+    with pytest.raises(ConfigError):
+        await harness.load_agent(agent)
+
+    assert seen == []
+    net = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
+    assert len(net) == 1
+    assert net[0].status == "denied"
+    assert net[0].token_id is None
+    assert net[0].source_name == "remote_mcp"
+    assert "re-onboarding" in net[0].deny_reason
+    await harness.close()
+
+
+async def test_runtime_source_cannot_send_an_untokened_request(tmp_path, monkeypatch):
+    """A source built at runtime always runs through ShaiTransport and is
+    never in onboarding mode: under strict, a request without a token is
+    refused. There is no configuration that turns this off."""
+    from harness.core.errors import ConfigError, NetworkPolicyError
+
+    seen: list = []
+    harness, agent, _, _ = await _live_mcp_harness(
+        tmp_path, monkeypatch, seen, connectivity_extra="  no_token_policy: strict\n",
+    )
+    await harness.load_agent(agent)
+    source = await harness.get_source("remote_mcp")
+    connect_requests = len(seen)
+
+    with pytest.raises(ConfigError) as exc:
+        await source.call("remote_read", {})
+
+    assert isinstance(exc.value.__cause__, NetworkPolicyError)
+    assert len(seen) == connect_requests
+    await harness.close()
+
+
 async def test_local_tool_named_after_mcp_source_gets_no_destinations(tmp_path, monkeypatch):
     """Whether a token binds a manifest is decided by the tool's transport,
     the same test the pre-gate check uses, not by its source_name. A local
@@ -691,7 +803,7 @@ async def test_local_tool_token_carries_no_destinations(tmp_path):
         "version: 1\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
-        "connectivity:\n  enabled: true\n"
+        "connectivity:\n"
         f"  token_secret: {CONNECTIVITY_SECRET.decode()}\n"
     )
     agent = tmp_path / "agent.yaml"

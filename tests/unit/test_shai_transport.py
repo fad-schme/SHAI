@@ -6,6 +6,7 @@ so emission is asserted against a real emitter and a real sink.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from unittest.mock import AsyncMock
@@ -34,7 +35,6 @@ METHODS = ["GET", "POST"]
 
 def _config(**overrides) -> ConnectivityConfig:
     defaults = dict(
-        enabled=True,
         token_secret="test-secret-transport-phase2",
         token_ttl_seconds=15,
         no_token_policy="permissive",
@@ -70,8 +70,13 @@ def _request(
     url: str = "https://mcp.slack.com/message",
     method: str = "POST",
     token: str | None = None,
+    rpc_method: str | None = "tools/call",
 ) -> httpx.Request:
-    r = httpx.Request(method, url)
+    # A POST carries a JSON-RPC body, as MCPSource sends it: a token's purpose
+    # is bound to the JSON-RPC method it may carry.
+    body = ({"jsonrpc": "2.0", "id": "1", "method": rpc_method, "params": {}}
+            if method == "POST" and rpc_method else None)
+    r = httpx.Request(method, url, json=body)
     if token:
         r.extensions["shai_dispatch_token"] = token
     return r
@@ -86,11 +91,20 @@ def _token(**overrides) -> str:
         source_name=SOURCE,
         allowed_urls=ALLOWED,
         allowed_methods=METHODS,
+        purpose="tool_call",
         secret=SECRET,
         ttl_seconds=15,
     )
     defaults.update(overrides)
     return encode_token(sign_token(**defaults))
+
+
+def _connect_token(**overrides) -> str:
+    return _token(purpose="connect", tool_name=None, **overrides)
+
+
+def _network(response: httpx.Response | None = None) -> httpx.MockTransport:
+    return httpx.MockTransport(lambda request: response or httpx.Response(200, json={}))
 
 
 def _response(status=200, content=b'{"result": "ok"}') -> httpx.Response:
@@ -110,9 +124,15 @@ def _wired_source(seen: list[httpx.Request], sink: RecordingSink):
         seen.append(request)
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {}})
 
-    src = MCPSource(MCPSourceParams(
-        SOURCE, "https://mcp.slack.com", allowed_urls=ALLOWED, allowed_methods=METHODS,
-    ))
+    async def no_connect(*_, **__) -> str:
+        raise AssertionError("the client is wired directly; nothing connects")
+
+    src = MCPSource(
+        MCPSourceParams(
+            SOURCE, "https://mcp.slack.com", allowed_urls=ALLOWED, allowed_methods=METHODS,
+        ),
+        connectivity=_config(), emitter=AuditEmitter([sink]), mint_connect_token=no_connect,
+    )
     src._client = httpx.AsyncClient(
         base_url="https://mcp.slack.com",
         transport=_transport(emitter=AuditEmitter([sink]),
@@ -181,6 +201,87 @@ async def test_mcp_source_call_without_token_sends_no_token_header():
 
     assert "X-Shai-Token" not in seen[0].headers
     await src.close()
+
+
+def test_runtime_mcp_source_requires_a_connect_minter():
+    """Outside onboarding, a source with no connect minter could only send
+    untokened connect requests. It is refused at construction instead."""
+    from harness.core.errors import ConfigError
+    from harness.tools.source import MCPSource, MCPSourceParams
+
+    with pytest.raises(ConfigError, match="connect"):
+        MCPSource(
+            MCPSourceParams(SOURCE, "https://mcp.slack.com", allowed_urls=ALLOWED),
+            connectivity=_config(), emitter=AuditEmitter([RecordingSink()]),
+        )
+
+
+# ── Token purpose: connect vs tool_call ────────────────────────────────────
+
+@pytest.mark.parametrize("url,method,rpc_method", [
+    ("https://mcp.slack.com/sse",     "GET",  None),
+    ("https://mcp.slack.com/message", "POST", "initialize"),
+    ("https://mcp.slack.com/message", "POST", "notifications/initialized"),
+    ("https://mcp.slack.com/message", "POST", "tools/list"),
+])
+async def test_connect_token_accepted_for_connect_phase_requests(url, method, rpc_method):
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
+
+    await t.handle_async_request(
+        _request(url=url, method=method, rpc_method=rpc_method, token=_connect_token())
+    )
+
+    assert [e.status for e in sink.events] == ["allowed"]
+
+
+async def test_connect_token_refused_on_tool_call():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
+
+    with pytest.raises(NetworkPolicyError, match="purpose"):
+        await t.handle_async_request(_request(token=_connect_token()))
+    assert [e.status for e in sink.events] == ["denied"]
+
+
+@pytest.mark.parametrize("url,method,rpc_method", [
+    ("https://mcp.slack.com/message", "POST", "initialize"),
+    ("https://mcp.slack.com/sse",     "GET",  None),
+])
+async def test_tool_call_token_refused_on_connect_requests(url, method, rpc_method):
+    t = _transport(inner=_network())
+
+    with pytest.raises(NetworkPolicyError, match="purpose"):
+        await t.handle_async_request(
+            _request(url=url, method=method, rpc_method=rpc_method, token=_token())
+        )
+
+
+class _EndlessSSE(httpx.AsyncByteStream):
+    """An SSE stream as a real MCP server serves it: it never ends."""
+
+    async def __aiter__(self):
+        yield b"event: endpoint\ndata: /message?sessionId=abc\n\n"
+        await asyncio.Event().wait()
+
+
+async def test_tokened_sse_get_returns_without_reading_the_stream():
+    """The transport buffers a tokened response to count bytes_recv. An SSE
+    stream never ends, so buffering it would hang the connect forever."""
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]),
+                   inner=_network(httpx.Response(200, stream=_EndlessSSE())))
+
+    response = await asyncio.wait_for(
+        t.handle_async_request(_request(
+            url="https://mcp.slack.com/sse", method="GET", rpc_method=None,
+            token=_connect_token(),
+        )),
+        timeout=2,
+    )
+
+    assert response.status_code == 200
+    assert [e.status for e in sink.events] == ["allowed"]
 
 
 # ── URL enforcement ────────────────────────────────────────────────────────
@@ -365,6 +466,7 @@ async def test_token_id_matches_issued_token():
         tenant_id=TENANT,
         tool_name="search_docs",
         source_name=SOURCE,
+        purpose="tool_call",
         allowed_urls=ALLOWED,
         allowed_methods=METHODS,
         secret=SECRET,

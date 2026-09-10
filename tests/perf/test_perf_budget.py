@@ -125,7 +125,7 @@ async def _make_harness(
     tmp_path.mkdir(parents=True, exist_ok=True)
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        f"version: 1\n"
+        f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         f"{session_block}"
         f"scan_input:\n  enabled: {enabled_str}\n{scanner_block}"
         f"scan_output:\n  enabled: {enabled_str}\n{scanner_block}"

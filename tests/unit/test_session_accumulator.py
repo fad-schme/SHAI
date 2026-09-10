@@ -38,7 +38,7 @@ async def _make_harness(tmp_path: Path, *, on_escalation: str = "block", scan_en
     db_path = str(tmp_path / "sessions.db")
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        f"version: 1\n"
+        f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         f"session:\n"
         f"  enabled: true\n"
         f"  backend: sqlite\n"

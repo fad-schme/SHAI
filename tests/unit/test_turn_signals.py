@@ -488,7 +488,7 @@ class TestOptionARiskBlock:
 
         cfg = tmp_path / "h.yaml"
         cfg.write_text(
-            "version: 1\n"
+            "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
             "audit_sinks:\n  - name: stdout\n"
@@ -542,7 +542,7 @@ class TestOptionARiskBlock:
 
         cfg = tmp_path / "h.yaml"
         cfg.write_text(
-            "version: 1\n"
+            "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
             "scan_input:\n  enabled: false\n"
             "scan_output:\n  enabled: false\n"
             "audit_sinks:\n  - name: stdout\n"

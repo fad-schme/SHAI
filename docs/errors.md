@@ -70,7 +70,7 @@ The LLM proposed a tool name that isn't in the tool registry. Either you forgot 
 
 ### `NetworkPolicyError` from `ShaiTransport`
 
-Only relevant when `connectivity.enabled: true`. Raised when the transport refuses to send a request — the URL isn't in the token's `allowed_urls`, the method isn't allowed, the source binding is wrong, the nonce was already spent, or the token has expired.
+Raised when the transport refuses to send a request — the URL isn't in the token's `allowed_urls`, the method isn't allowed, the source binding is wrong, the nonce was already spent, or the token has expired.
 
 The exception carries the reason:
 

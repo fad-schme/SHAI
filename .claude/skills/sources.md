@@ -326,7 +326,7 @@ if gate.allowed:
     result = await source.call(
         tool_name,
         gate.redacted_args or args,
-        dispatch_token=gate.dispatch_token,   # when connectivity.enabled
+        dispatch_token=gate.dispatch_token,
     )
     tverdict = await harness.scan_tool_result(result, ctx)
     safe_result = tverdict.redacted_text or result

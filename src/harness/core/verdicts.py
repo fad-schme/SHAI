@@ -66,10 +66,9 @@ class GateDecision(BaseModel, frozen=True):
     """Result of check_tool_call.
 
     dispatch_token:
-        Set when allowed=True and connectivity.enabled=True in harness.yaml.
-        Base64url-encoded signed DispatchToken. Pass to MCPSource.call() so
-        ShaiTransport can attach it as X-Shai-Token on outbound requests.
-        None when connectivity is disabled or the gate denied.
+        Set on every allowed decision. Base64url-encoded signed
+        DispatchToken. Pass to MCPSource.call() so ShaiTransport can attach
+        it as X-Shai-Token on outbound requests. None when the gate denied.
     """
     allowed:        bool
     deny_reason:    str | None = None

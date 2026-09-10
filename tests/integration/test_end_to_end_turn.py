@@ -24,7 +24,7 @@ async def _make_harness(tmp_path: Path, *, scan_enabled: bool = False) -> SHAI:
     )
     enabled_str = "true" if scan_enabled else "false"
     cfg.write_text(
-        f"version: 1\n"
+        f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         f"scan_input:\n  enabled: {enabled_str}\n{scanners_block if scan_enabled else ''}"
         f"scan_output:\n  enabled: {enabled_str}\n{scanners_block if scan_enabled else ''}"
         f"audit_sinks:\n  - name: stdout\n"

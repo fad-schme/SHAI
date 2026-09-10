@@ -90,7 +90,7 @@ full turn cycle, or when the operator called `check_tool_call` directly with
 **Rate limiter** fires in the pre-gate. Sliding-window token bucket per agent.
 Two counters: global call budget + per-tool budget. Both must pass.
 
-**Dispatch token** is issued when `connectivity.enabled: true`:
+**Dispatch token** is issued on every allowed decision:
 ```python
 gate.dispatch_token  # str | None — pass to source.call()
 ```

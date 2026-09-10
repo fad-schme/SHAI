@@ -17,7 +17,7 @@ from harness.mcp.baseline import record_baseline
 from harness.mcp.manifest import manifest_file_hash
 
 _BASE = (
-    "version: 1\n"
+    "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n"
     "  enabled: false\n"
     "scan_output:\n"

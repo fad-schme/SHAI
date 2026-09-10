@@ -74,7 +74,7 @@ class GateDecision:
     allowed:        bool
     deny_reason:    str | None    # set when allowed=False
     redacted_args:  dict | None   # set when L7 arg scanning redacted args
-    dispatch_token: str | None    # set when connectivity.enabled and allowed=True
+    dispatch_token: str | None    # set when allowed=True
 ```
 
 **Pattern:**
@@ -189,7 +189,7 @@ Consumers should treat unknown `extra` keys as informational and forward-compati
 
 ## NetworkAuditEvent
 
-Emitted by `ShaiTransport` for outbound MCP requests when `connectivity.enabled`.
+Emitted by `ShaiTransport` for outbound MCP requests.
 Written to the same sinks. Distinguished by `event_type="network_egress"`.
 
 Lives in `harness.core.events` alongside `AuditEvent`, and is re-exported from

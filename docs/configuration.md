@@ -248,7 +248,7 @@ Four behaviours worth knowing before you need them:
 
 Calling `revoke_agent()` with no `revocation.path` configured raises `ConfigError` rather than doing nothing quietly.
 
-If `connectivity.enabled` is on, revocation also stops the agent's outbound MCP traffic within `token_ttl_seconds` — no new tokens are minted for a denied call. See [connectors.md](connectors.md).
+Revocation also stops the agent's outbound MCP traffic within `token_ttl_seconds` — no new tokens are minted for a denied call. See [connectors.md](connectors.md).
 
 ### Audit sinks
 

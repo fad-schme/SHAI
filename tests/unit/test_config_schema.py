@@ -14,6 +14,7 @@ def _minimal() -> dict:
     return {
         "scan_input":  {"enabled": False},
         "scan_output": {"enabled": False},
+        "connectivity": {"token_secret": "test-connectivity-secret"},
         "policy":      {},
         "audit_sinks": [{"name": "stdout"}],
     }

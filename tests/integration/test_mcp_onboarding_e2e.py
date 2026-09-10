@@ -25,6 +25,7 @@ def _write_manifest(path: Path, description: str = "Search internal documentatio
         "id: svc\n"
         "display_name: \"Service\"\n"
         "url: \"https://mcp.example.test/sse\"\n"
+        "allowed_urls: [\"https://mcp.example.test/*\"]\n"
         "tools:\n"
         "  - name: search\n"
         "    tags: [read]\n"
@@ -35,7 +36,7 @@ def _write_manifest(path: Path, description: str = "Search internal documentatio
 def _harness_config(tmp_path: Path) -> Path:
     cfg_path = tmp_path / "harness.yaml"
     cfg_path.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -82,7 +83,7 @@ async def test_onboard_then_allowed_then_reonboard_after_edit(tmp_path: Path, mo
     monkeypatch.setattr(MCPSource, "_connect", fake_connect)
     monkeypatch.setattr(MCPSource, "_fetch_tools", fake_fetch_tools)
 
-    async def fake_fetch_live_tools(manifest, *, provider):
+    async def fake_fetch_live_tools(manifest, *, provider, **_):
         return [{"name": t.name, "description": t.description} for t in manifest.tools]
 
     from harness.mcp import onboard as onboard_module
@@ -149,6 +150,7 @@ async def test_manifest_action_block_denies_through_the_real_harness(
         "id: svc\n"
         'display_name: "Service"\n'
         'url: "https://mcp.example.test/sse"\n'
+        'allowed_urls: ["https://mcp.example.test/*"]\n'
         "tools:\n"
         "  - name: search\n"
         "    tags: [read]\n"
@@ -181,7 +183,7 @@ async def test_manifest_action_block_denies_through_the_real_harness(
     monkeypatch.setattr(MCPSource, "_connect", fake_connect)
     monkeypatch.setattr(MCPSource, "_fetch_tools", fake_fetch_tools)
 
-    async def fake_fetch_live_tools(manifest, *, provider):
+    async def fake_fetch_live_tools(manifest, *, provider, **_):
         return [{"name": t.name, "description": t.description} for t in manifest.tools]
 
     from harness.mcp import onboard as onboard_module

@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from harness.adapters.secrets.env import SecretsProvider
     from harness.audit.emitter import AuditEmitter
     from harness.config.schema import HarnessConfig
+    from harness.connectivity.config import ConnectivityConfig
 
 ONBOARD_AGENT_ID_PREFIX = "mcp_onboard"
 
@@ -65,12 +66,23 @@ class OnboardResult(BaseModel, frozen=True):
     baseline_recorded:    bool = False
 
 
-async def _fetch_live_tools(manifest: MCPManifest, *, provider: SecretsProvider | None) -> list[dict]:
+async def _fetch_live_tools(
+    manifest: MCPManifest,
+    *,
+    provider: SecretsProvider | None,
+    connectivity: ConnectivityConfig,
+    emitter: AuditEmitter,
+) -> list[dict]:
     """Connect to the manifest's url and return the raw tools/list response.
 
     Reuses MCPSource's own connect/JSON-RPC machinery rather than
     reimplementing the protocol — this is a real connection, made and torn
     down once, never registered with a SourceRegistry.
+
+    It is the one untokened MCP connection: it produces the approval that
+    connect tokens are minted from, so it has none to present. It still runs
+    through ShaiTransport in onboarding mode, which checks the manifest's
+    URLs and methods and audits every request under this onboarding agent id.
     """
     credentials = resolve_manifest_credentials(manifest, provider=provider)
     params = MCPSourceParams(
@@ -79,7 +91,8 @@ async def _fetch_live_tools(manifest: MCPManifest, *, provider: SecretsProvider 
         allowed_urls=manifest.allowed_urls,
         allowed_methods=manifest.allowed_methods,
     )
-    source = MCPSource(params)
+    source = MCPSource(params, connectivity=connectivity, emitter=emitter, onboarding=True)
+    source._agent_ctx = AgentContext(agent_id=f"{ONBOARD_AGENT_ID_PREFIX}:{manifest.id}")
     try:
         await source._connect()
         response = await source._post({
@@ -138,7 +151,9 @@ async def run_onboarding(
     manifest = load_manifest_file(manifest_path)
     file_hash = manifest_file_hash(manifest_path)
 
-    live_tools = await _fetch_live_tools(manifest, provider=provider)
+    live_tools = await _fetch_live_tools(
+        manifest, provider=provider, connectivity=config.connectivity, emitter=emitter,
+    )
 
     findings = await _scan_declared_tools(manifest)
     reconciliation = reconcile(manifest, live_tools)

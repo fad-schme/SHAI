@@ -19,7 +19,7 @@ its inputs, tools, and outputs. It runs in the same process as the agent
 
 - **Not a runtime sandbox.** SHAI gates dispatch. A compromised tool
   implementation is still dangerous after the gate allows.
-- **Not a general network egress control.** The optional connectivity layer
+- **Not a general network egress control.** The connectivity layer
   (`ShaiTransport`) denies MCP requests whose URL, method, or dispatch token
   fall outside what the gate allowed, and audits every request it sees. It
   governs only traffic routed through it; everything else needs egress policy
@@ -244,8 +244,7 @@ context without passing a boundary is not scanned.
 smuggle capabilities from one agent to another.
 
 **SHAI control:** subagent handoff can only narrow capabilities (see ASI03),
-and `TurnSignals` is not propagated to subagents. With connectivity enabled
-(*opt-in*), every allowed MCP call carries an HMAC-signed, short-TTL,
+and `TurnSignals` is not propagated to subagents. Every allowed MCP call carries an HMAC-signed, short-TTL,
 single-use dispatch token bound to
 `(agent_id, tool_name, source_name, allowed_urls, allowed_methods)`, and
 `ShaiTransport` denies requests that do not match it.

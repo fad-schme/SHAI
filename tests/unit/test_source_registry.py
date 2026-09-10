@@ -7,7 +7,9 @@ import pytest
 
 import harness.tools.source as source_module
 from harness.agents.agent_config import RuleConfig, RuleMatchConfig
+from harness.audit.emitter import AuditEmitter
 from harness.config.schema import SourceConfig
+from harness.connectivity.config import ConnectivityConfig
 from harness.core.context import AgentContext
 from harness.core.errors import ConfigError
 from harness.core.types import Transport
@@ -23,6 +25,23 @@ def _local(name: str = "docs", **kw) -> SourceConfig:
 
 def _mcp(name: str = "slack", url: str = "https://mcp.slack.com/sse", **kw) -> MCPSourceParams:
     return MCPSourceParams(name, url, **kw)
+
+
+async def _fake_connect_token(*_, **__) -> str:
+    return "connect-token"
+
+
+def _runtime_source(params: MCPSourceParams) -> MCPSource:
+    """An MCPSource as discovery builds one: connectivity, an emitter and a
+    connect minter are always present."""
+    from tests.conftest import RecordingSink
+
+    return MCPSource(
+        params,
+        connectivity=ConnectivityConfig(token_secret="test-connectivity-secret"),
+        emitter=AuditEmitter([RecordingSink()]),
+        mint_connect_token=_fake_connect_token,
+    )
 
 CTX = AgentContext(agent_id="test_agent")
 
@@ -260,7 +279,7 @@ async def test_local_source_close_noop():
 # ── MCPSource construction and config ─────────────────────────────────────
 
 def test_mcp_source_constructed():
-    src = MCPSource(_mcp(credentials={"token": "tok_abc"}, tags=["messaging"]))
+    src = _runtime_source(_mcp(credentials={"token": "tok_abc"}, tags=["messaging"]))
     assert src.name == "slack"
     assert src.transport == Transport.MCP
     assert "messaging" in src.tags
@@ -271,18 +290,18 @@ def test_mcp_source_requires_url():
     """An empty url must raise, not produce a source with no endpoint."""
     unresolved = MCPSourceParams("slack", "")
     with pytest.raises(ConfigError, match="url is required"):
-        MCPSource(unresolved)
+        _runtime_source(unresolved)
 
 
 async def test_mcp_source_call_raises_when_not_connected():
-    src = MCPSource(_mcp())
+    src = _runtime_source(_mcp())
     from harness.core.errors import ConfigError
     with pytest.raises(ConfigError, match="not connected"):
         await src.call("search", {})
 
 
 async def test_mcp_source_close_when_not_connected():
-    src = MCPSource(_mcp())
+    src = _runtime_source(_mcp())
     await src.close()  # must not raise
     assert not src._connected
 
@@ -295,7 +314,7 @@ async def test_mcp_fetch_tools_stamps_own_source_name(monkeypatch):
     builds — the one place remote tool identity is established. Nothing
     downstream should have to guess it back.
     """
-    src = MCPSource(_mcp("weather_api", tool_specs={
+    src = _runtime_source(_mcp("weather_api", tool_specs={
         "get_forecast": {"description": "d", "tags": [], "action": "allow"}
     }))
 
@@ -341,12 +360,13 @@ async def test_two_unrestricted_mcp_sources_resolve_independently(tmp_path: Path
         manifest_path.write_text(
             f"id: {source_id}\ndisplay_name: \"{source_id}\"\n"
             f"url: \"http://{host}/sse\"\n"
+            f"allowed_urls: [\"http://{host}/*\"]\n"
         )
         record_baseline(baseline_db, source_id, manifest_file_hash(manifest_path), secret)
 
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "sources:\n"
@@ -381,20 +401,20 @@ async def test_two_unrestricted_mcp_sources_resolve_independently(tmp_path: Path
 # ── MCPSource header building ─────────────────────────────────────────────
 
 def test_mcp_token_credential_becomes_bearer():
-    src = MCPSource(_mcp("s", "http://x", credentials={"token": "mytoken"}))
+    src = _runtime_source(_mcp("s", "http://x", credentials={"token": "mytoken"}))
     headers = src._build_headers()
     assert headers.get("Authorization") == "Bearer mytoken"
 
 
 def test_mcp_authorization_credential_used_asis():
-    src = MCPSource(_mcp("s", "http://x",
+    src = _runtime_source(_mcp("s", "http://x",
                            credentials={"Authorization": "Basic abc"}))
     headers = src._build_headers()
     assert headers["Authorization"] == "Basic abc"
 
 
 def test_mcp_custom_header_passed_through():
-    src = MCPSource(_mcp("s", "http://x",
+    src = _runtime_source(_mcp("s", "http://x",
                            credentials={"X-Custom-Header": "value"}))
     headers = src._build_headers()
     assert headers["X-Custom-Header"] == "value"
@@ -420,12 +440,12 @@ class _FakeStreamCtx:
 
 
 class _FakeClient:
-    def stream(self, method, path):
+    def stream(self, method, path, *, extensions=None):
         return _FakeStreamCtx()
 
 
 def _mcp_source_with_fake_transport(monkeypatch, endpoint_data: str):
-    src = MCPSource(_mcp())
+    src = _runtime_source(_mcp())
     src._client = _FakeClient()
 
     async def fake_parse_sse(response):
@@ -478,6 +498,7 @@ def _minimal_config_kwargs() -> dict:
     return dict(
         scan_input={"enabled": False},
         scan_output={"enabled": False},
+        connectivity={"token_secret": "test-connectivity-secret"},
     )
 
 
@@ -519,7 +540,7 @@ async def test_shai_from_yaml_with_sources_section(tmp_path: Path):
     """from_yaml builds source_registry from config.sources."""
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "sources:\n"
@@ -542,7 +563,7 @@ async def test_shai_source_tools_available_at_load_agent(tmp_path: Path):
 
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "sources:\n"
@@ -587,7 +608,7 @@ async def test_source_tags_visible_in_agent_tool_set(tmp_path):
 
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "sources:\n"
@@ -632,7 +653,7 @@ async def test_other_agents_not_affected_by_source_override(tmp_path):
 
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "sources:\n"
@@ -759,7 +780,7 @@ async def test_reload_agent_honours_required_false(tmp_path: Path):
 
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "sources:\n"
@@ -796,7 +817,7 @@ async def _tools_for_harness(tmp_path: Path):
 
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
     )

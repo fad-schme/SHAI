@@ -189,7 +189,7 @@ jq 'select(.boundary == "input_scan" and .max_severity == "high")' audit.jsonl
 
 ## NetworkAuditEvent
 
-Emitted by `ShaiTransport` for every outbound MCP request when `connectivity.enabled: true`. Written to the same `AuditEmitter` sinks as `AuditEvent`, distinguished by `event_type: "network_egress"`.
+Emitted by `ShaiTransport` for every outbound MCP request. Written to the same `AuditEmitter` sinks as `AuditEvent`, distinguished by `event_type: "network_egress"`.
 
 | Field | Type | Description |
 |---|---|---|

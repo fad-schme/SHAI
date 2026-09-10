@@ -21,6 +21,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the gate. A local tool's token binds no URL and no method, whatever
   `source_name` it carries.
 
+- **MCP tool calls carry their dispatch token.** `MCPSource.call()` accepted
+  the gate's token and dropped it, so no tool call reached `ShaiTransport`
+  with one: signature, binding and replay checks never ran, and no
+  `NetworkAuditEvent` joined a tool call to its gate event.
+
+### Changed
+- **Connectivity is always on.** `connectivity.enabled` is gone: the
+  `connectivity:` block and its `token_secret` are required, every allowed
+  call is minted a dispatch token, and every MCP source runs through
+  `ShaiTransport`, so a manifest's `allowed_urls`/`allowed_methods` are always
+  enforced. `shai mcp onboard` is the one untokened connection; it still gets
+  the URL and method checks and an audited `NetworkAuditEvent` per request.
+
+### Added
+- **MCP connect requests carry a connect token.** With connectivity enabled,
+  the SSE open, `initialize`, `notifications/initialized` and `tools/list`
+  each carry a token minted from the source's onboarding approval, re-checked
+  at connect time, so a manifest edited since approval cannot connect and the
+  refusal is recorded as a denied `NetworkAuditEvent`. Dispatch tokens gain a
+  signed `purpose` (`connect` | `tool_call`): `ShaiTransport` accepts a
+  connect token only on those requests and a tool-call token only on
+  `tools/call`.
+
 ### Removed
 - **`harness.connectivity.default_allowed_urls`.** Its only caller derived a
   token's allow-list from the source host when none was declared; tokens are

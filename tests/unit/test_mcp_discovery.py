@@ -135,15 +135,23 @@ def test_invalid_manifest_raises(tmp_path: Path):
 
 
 def _kwargs():
+    from harness.audit.emitter import AuditEmitter
+    from harness.connectivity.config import ConnectivityConfig
+    from tests.conftest import RecordingSink
+
+    async def mint(*_, **__) -> str:
+        return "connect-token"
+
     return dict(
         secrets_provider=None,
-        connectivity=None,
-        emitter=None,
+        connectivity=ConnectivityConfig(token_secret="test-connectivity-secret"),
+        emitter=AuditEmitter([RecordingSink()]),
         tenant_id="test",
         metadata_scanners=[],
         metadata_enabled=False,
         metadata_block_at=None,
         metadata_action=None,
+        mint_connect_token=mint,
     )
 
 

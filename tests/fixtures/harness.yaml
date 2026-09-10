@@ -1,6 +1,10 @@
 # tests/fixtures/harness.yaml — test-only config.
 version: 1
 
+# Dispatch-token signing key. Required: connectivity is always on.
+connectivity:
+  token_secret: test-connectivity-secret
+
 scan_input:
   enabled: false
 

@@ -21,7 +21,7 @@ from harness.core.types import Severity
 CTX = AgentContext(agent_id="a1")
 
 _BASE = (
-    "version: 1\n"
+    "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n  enabled: false\n"
     "scan_output:\n  enabled: false\n"
     "audit_sinks:\n  - name: stdout\n"
@@ -611,7 +611,7 @@ async def test_structural_and_content_are_distinct_families(tmp_path):
 # extracted from that path, which reached the chain only in its surface form.
 
 _EQUIV_BASE = (
-    "version: 1\n"
+    "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n"
     "  enabled: true\n"
     "  block_at: high\n"

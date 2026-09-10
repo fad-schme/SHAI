@@ -435,14 +435,13 @@ in-process API sees its own write immediately.
 ## Connectivity
 
 ```yaml
-connectivity:
-  enabled: false              # default off
+connectivity:                 # required
   token_secret: "secret://SHAI_TOKEN_SECRET"
   token_ttl_seconds: 15
   no_token_policy: permissive # permissive | strict
 ```
 
-When `enabled: true`, `check_tool_call` issues a signed `DispatchToken`
+Connectivity is always on: `check_tool_call` issues a signed `DispatchToken`
 on every allowed gate decision. `ShaiTransport` validates it on every
 outbound MCP request.
 → See `10-connectivity.md`.

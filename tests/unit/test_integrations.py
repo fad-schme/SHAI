@@ -23,7 +23,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -112,7 +112,7 @@ async def test_run_turn_input_blocked(tmp_path: Path):
     # Enable scanning with a very low block threshold for this test
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: true\n  block_at: info\n"
         "  scanners:\n    - name: regex_pii\n"
         "scan_output:\n  enabled: false\n"
@@ -278,7 +278,7 @@ async def _poisoned_harness(tmp_path: Path) -> tuple[SHAI, AgentContext]:
     """
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
         "scan_output:\n  enabled: false\n"
         "scan_tool_result:\n"
@@ -472,11 +472,9 @@ class _FakeMCPSource:
 async def _mcp_harness(tmp_path: Path) -> tuple[SHAI, AgentContext, _FakeMCPSource]:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
-        "connectivity:\n  enabled: true\n  token_secret: test-secret-value\n"
-        "audit_sinks:\n  - name: stdout\n"
+        "scan_output:\n  enabled: false\n"        "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")

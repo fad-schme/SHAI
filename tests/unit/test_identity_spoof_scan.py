@@ -178,7 +178,7 @@ async def test_benign_text_does_not_trigger(text: str):
 async def _make_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "session:\n"
         "  enabled: false\n"
         "scan_input:\n"

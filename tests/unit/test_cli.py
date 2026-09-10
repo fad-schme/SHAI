@@ -408,7 +408,7 @@ async def test_audit_verify_accepts_a_real_emitted_log(
     out = tmp_path / "real.jsonl"
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
-        "version: 1\n"
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  enabled: true\n  scanners:\n    - name: injection_scan\n"
         "scan_output:\n  enabled: false\n"
         "audit_signing:\n  enabled: true\n  secret: real-key-value\n"

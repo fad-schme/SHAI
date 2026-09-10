@@ -1,5 +1,9 @@
 # config/harness.yaml — operator config for the examples.
 version: 1
+
+# Dispatch-token signing key. Required: connectivity is always on.
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"
 tenant_id: "shai-demo"
 
 scan_input:

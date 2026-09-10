@@ -10,6 +10,8 @@ from harness_cli.main import main
 
 _CONFIG = """\
 version: 1
+connectivity:
+  token_secret: test-connectivity-secret
 tenant_id: demo
 scan_input:
   enabled: false

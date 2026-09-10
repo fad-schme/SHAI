@@ -6,6 +6,8 @@ Agent tools are resolved once at load_agent() time — no per-turn overhead.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,8 +28,8 @@ from harness.core import wiring
 from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
-from harness.core.errors import ConfigError
-from harness.core.events import AuditEvent, now_ms
+from harness.core.errors import ConfigError, NetworkPolicyError
+from harness.core.events import AuditEvent, NetworkAuditEvent, now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.types import BoundaryName, Decision, ScanStatus, Transport
 from harness.core.verdicts import GateDecision, ScanVerdict
@@ -46,6 +48,67 @@ if TYPE_CHECKING:
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
+
+
+async def _mint_connect_token(
+    ctx: AgentContext,
+    *,
+    method: str,
+    destination: str,
+    manifest: MCPManifest,
+    baseline_gate: McpBaselineGate,
+    emitter: AuditEmitter,
+    secret: bytes,
+    ttl_seconds: int,
+    tenant_id: str,
+) -> str:
+    """Mint the connect token for one connect-phase request of an MCP source.
+
+    The authority is the source's onboarding approval, the same way a tool
+    call's authority is the gate's allow decision. The baseline is re-checked
+    here, when the source connects, not only at startup: a manifest edited
+    since approval gets no token and the source cannot connect. No request is
+    sent, so ShaiTransport never sees one to record; the refusal is recorded
+    here as a denied NetworkAuditEvent before NetworkPolicyError is raised.
+    """
+    from harness.connectivity.token import encode_token, sign_token
+
+    approved, deny_reason = baseline_gate.check(manifest.id)
+    if not approved:
+        await emitter.emit(NetworkAuditEvent(
+            timestamp=datetime.now(UTC),
+            event_type="network_egress",
+            token_id=None,
+            source_name=manifest.id,
+            agent_id=ctx.agent_id,
+            sub_agent_id=ctx.sub_agent_id,
+            tenant_id=tenant_id,
+            tool_name=None,
+            destination=destination,
+            method=method,
+            status="denied",
+            deny_reason=deny_reason,
+            bytes_sent=0,
+            bytes_recv=0,
+            duration_ms=0,
+        ))
+        log.warning("mcp connect refused — baseline approval no longer holds",
+                    extra={"source": manifest.id, "agent_id": ctx.agent_id,
+                           "tenant_id": tenant_id})
+        raise NetworkPolicyError(deny_reason or "baseline approval no longer holds")
+
+    return encode_token(sign_token(
+        agent_id=ctx.agent_id,
+        sub_agent_id=ctx.sub_agent_id,
+        tenant_id=tenant_id,
+        tool_name=None,
+        source_name=manifest.id,
+        purpose="connect",
+        allowed_urls=list(manifest.allowed_urls),
+        allowed_methods=list(manifest.allowed_methods),
+        secret=secret,
+        ttl_seconds=ttl_seconds,
+    ))
 
 
 class SHAI:
@@ -102,7 +165,7 @@ class SHAI:
         policy: PolicyEngine,
         rate_limiter: RateLimiter | None,
         source_registry: SourceRegistry,
-        connectivity_secret: bytes | None = None,
+        connectivity_secret: bytes,
         mcp_required_flags: dict[str, bool] | None = None,
         mcp_baseline_gate: McpBaselineGate | None = None,
         mcp_policy_rules: dict[str, list[RuleConfig]] | None = None,
@@ -270,11 +333,7 @@ class SHAI:
 
         sinks   = wiring._build_sinks(config.audit_sinks)
 
-        # Connectivity: resolve token secret if configured
-        connectivity_secret: bytes | None = None
-        if config.connectivity.enabled:
-            connectivity_secret = config.connectivity.token_secret.encode()
-            log.info("connectivity layer enabled — dispatch tokens will be issued")
+        connectivity_secret = config.connectivity.token_secret.encode()
 
         # R3: resolve signing key if configured
         signing_secret: bytes | None = None
@@ -307,9 +366,10 @@ class SHAI:
         # Build SourceRegistry: local sources straight from config.sources
         # (transport: local | skill), MCP sources resolved from the
         # `transport: mcp` entries in config.sources — see
-        # harness.mcp.discovery. Sources always build and connect regardless
-        # of onboarding approval — approval is checked per tool call instead
-        # (see harness.mcp.gate.McpBaselineGate, built below).
+        # harness.mcp.discovery. Only a manifest with a matching approved
+        # baseline is built. The baseline is re-checked when a source connects,
+        # since its connect tokens are minted from it, and on every tool call
+        # (harness.mcp.gate.McpBaselineGate).
         # resolved_sources holds every declared SourceConfig — the startup
         # attestation records what the harness declares, MCP included, even
         # for a name whose manifest has no approved baseline.
@@ -325,25 +385,40 @@ class SHAI:
         mcp_manifest_paths: dict[str, Path] = {}
         mcp_policy_rules: dict[str, list[RuleConfig]] = {}
         mcp_manifests: dict[str, MCPManifest] = {}
+        mcp_baseline_gate: McpBaselineGate | None = None
         if any(s.transport == Transport.MCP for s in config.sources):
             from harness.mcp.discovery import (
                 build_mcp_source,
                 compile_manifest_rules,
                 resolve_mcp_sources,
             )
+            from harness.mcp.gate import McpBaselineGate
 
-            for resolved in resolve_mcp_sources(
+            resolved_manifests = resolve_mcp_sources(
                 config.sources,
                 mcp_manifests_dir=config.mcp_manifests_dir,
                 baseline_path=config.mcp_baseline.path,
                 baseline_secret=config.mcp_baseline.secret.encode(),
-            ):
+            )
+            for resolved in resolved_manifests:
                 mcp_required_flags[resolved.manifest.id] = resolved.manifest.required
                 mcp_manifest_paths[resolved.manifest.id] = resolved.path
                 mcp_manifests[resolved.manifest.id] = resolved.manifest
                 rules = compile_manifest_rules(resolved.manifest)
                 if rules:
                     mcp_policy_rules[resolved.manifest.id] = rules
+
+            if mcp_manifest_paths:
+                mcp_baseline_gate = McpBaselineGate(
+                    mcp_manifest_paths,
+                    baseline_path=config.mcp_baseline.path,
+                    secret=config.mcp_baseline.secret.encode(),
+                    cache_ttl_seconds=config.mcp_baseline.cache_ttl_seconds,
+                )
+
+            # Built after the baseline gate: a source's connect tokens are
+            # minted from its approval, which that gate re-checks on connect.
+            for resolved in resolved_manifests:
                 source = build_mcp_source(
                     resolved,
                     secrets_provider=provider,
@@ -354,18 +429,17 @@ class SHAI:
                     metadata_enabled=config.scan_mcp_metadata.enabled,
                     metadata_block_at=config.scan_mcp_metadata.block_at,
                     metadata_action=config.scan_mcp_metadata.action,
+                    mint_connect_token=partial(
+                        _mint_connect_token,
+                        manifest=resolved.manifest,
+                        baseline_gate=mcp_baseline_gate,
+                        emitter=emitter,
+                        secret=connectivity_secret,
+                        ttl_seconds=config.connectivity.token_ttl_seconds,
+                        tenant_id=config.tenant_id,
+                    ),
                 )
                 source_registry.register(source)
-
-        mcp_baseline_gate = None
-        if mcp_manifest_paths:
-            from harness.mcp.gate import McpBaselineGate
-            mcp_baseline_gate = McpBaselineGate(
-                mcp_manifest_paths,
-                baseline_path=config.mcp_baseline.path,
-                secret=config.mcp_baseline.secret.encode(),
-                cache_ttl_seconds=config.mcp_baseline.cache_ttl_seconds,
-            )
 
         rl_cfg = config.check_tool_call.rate_limit
         rate_limiter = (
@@ -772,8 +846,7 @@ class SHAI:
         # manifest declares. With none declared there is nothing to bind it to,
         # and an unbound token would pass ShaiTransport's URL check unchecked,
         # so the call is refused rather than minted for.
-        if (self._connectivity.enabled and is_mcp_tool
-                and (manifest is None or not manifest.allowed_urls)):
+        if is_mcp_tool and (manifest is None or not manifest.allowed_urls):
             return await self._deny_pre_gate(
                 f"MCP source '{source_name}' declares no allowed_urls — "
                 "a dispatch token cannot be bound to a destination",
@@ -793,11 +866,7 @@ class SHAI:
             source_name=source_name,
             # The gate calls this only when it allows, and before it emits, so
             # token_id lands on the event that authorised the dispatch.
-            issue_token=(
-                (lambda: self._mint_dispatch_token(name, source_name, manifest, ctx))
-                if self._connectivity.enabled and self._connectivity_secret
-                else None
-            ),
+            issue_token=lambda: self._mint_dispatch_token(name, source_name, manifest, ctx),
             approvals=self._approvals,
             normalization=self._config.normalization,
             scan_state=self._scan_state,
@@ -1037,6 +1106,7 @@ class SHAI:
             tenant_id=self._tenant_id,
             tool_name=tool_name,
             source_name=source_name,
+            purpose="tool_call",
             allowed_urls=list(manifest.allowed_urls) if manifest else [],
             allowed_methods=list(manifest.allowed_methods) if manifest else [],
             secret=self._connectivity_secret,

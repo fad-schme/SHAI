@@ -15,12 +15,13 @@ and one-time use.
 
 ---
 
-## Enable
+## Configure
+
+The `connectivity:` block is required — connectivity is always on.
 
 ```yaml
 # harness.yaml
 connectivity:
-  enabled: true
   token_secret: "secret://SHAI_TOKEN_SECRET"   # HMAC signing key
   token_ttl_seconds: 15                         # tokens expire in 15s
   no_token_policy: permissive                   # permissive | strict
@@ -34,7 +35,7 @@ connectivity:
 
 ## DispatchToken
 
-Issued by `check_tool_call` on every allowed decision when `enabled: true`.
+Issued by `check_tool_call` on every allowed decision.
 
 ```python
 gate = await harness.check_tool_call(tool_name, args, ctx)
@@ -55,8 +56,7 @@ single-use, and expire in `token_ttl_seconds`. Stopping issuance for an agent �
 outbound MCP traffic within one TTL, without the agent loop's cooperation
 (enforcement is in `ShaiTransport`) and without affecting other agents (tokens
 carry `agent_id`). `token_ttl_seconds` is therefore the containment latency.
-Applies only when `connectivity.enabled` is true — it defaults to false — and
-only to calls that dispatch through `ShaiTransport`.
+Applies only to calls that dispatch through `ShaiTransport`.
 
 **Passing the token to MCP dispatch:**
 ```python

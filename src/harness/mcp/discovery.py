@@ -38,6 +38,8 @@ from harness.mcp.manifest import (
 from harness.tools.source import MCPSource, MCPSourceParams
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from harness.adapters.secrets.env import SecretsProvider
     from harness.audit.emitter import AuditEmitter
     from harness.config.schema import SourceConfig
@@ -125,15 +127,20 @@ def build_mcp_source(
     resolved: ResolvedManifest,
     *,
     secrets_provider: SecretsProvider | None,
-    connectivity: ConnectivityConfig | None,
-    emitter: AuditEmitter | None,
+    connectivity: ConnectivityConfig,
+    emitter: AuditEmitter,
     tenant_id: str,
     metadata_scanners: list[Any],
     metadata_enabled: bool,
     metadata_block_at: Severity | None,
     metadata_action: ScanAction | None,
+    mint_connect_token: Callable[..., Awaitable[str]],
 ) -> MCPSource:
-    """One resolved, approved manifest → a live MCPSource."""
+    """One resolved, approved manifest → a live MCPSource.
+
+    mint_connect_token is the facade's minter for this source's connect
+    tokens: every connect-phase request carries one.
+    """
     manifest = resolved.manifest
     credentials = resolve_manifest_credentials(manifest, provider=secrets_provider)
     # `action` is deliberately absent here — it is compiled into policy rules
@@ -160,6 +167,7 @@ def build_mcp_source(
         metadata_enabled=metadata_enabled,
         metadata_block_at=metadata_block_at,
         metadata_action=metadata_action,
+        mint_connect_token=mint_connect_token,
     )
 
 

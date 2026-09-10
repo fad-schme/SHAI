@@ -10,11 +10,16 @@ from __future__ import annotations
 from harness.adapters.scanners.base import ScanResult
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.audit.emitter import AuditEmitter
+from harness.connectivity.config import ConnectivityConfig
 from harness.core.context import AgentContext
 from harness.core.types import BoundaryName, Decision, Severity, Transport
 from harness.core.verdicts import Finding
 from harness.tools.source import MCPSource, MCPSourceParams
 from tests.conftest import RecordingSink
+
+
+async def _never_connects(*_, **__) -> str:
+    raise AssertionError("metadata-scan sources are never connected")
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -56,7 +61,9 @@ def _source(
     """
     return MCPSource(
         MCPSourceParams("test_mcp", "https://mcp.example.test/sse"),
+        connectivity=ConnectivityConfig(token_secret="test-connectivity-secret"),
         emitter=AuditEmitter([sink or RecordingSink()]),
+        mint_connect_token=_never_connects,
         tenant_id="test-tenant",
         metadata_scanners=scanners if scanners is not None else [MCPMetadataScanner()],
         metadata_block_at=block_at,
@@ -423,20 +430,6 @@ async def test_event_never_carries_the_matched_metadata():
     assert "Ignore all previous instructions" not in blob
 
 
-async def test_emission_is_skipped_without_an_emitter():
-    """MCPSource tolerates emitter=None — the scan still returns its verdict."""
-    source = MCPSource(
-        MCPSourceParams("no_emitter", "https://mcp.example.test/sse"),
-        metadata_scanners=[MCPMetadataScanner()],
-        metadata_block_at=Severity.MEDIUM,
-    )
-    blocked, findings = await source._scan_mcp_metadata(
-        _tool(description=_INJECTION_DESC), "search_docs"
-    )
-    assert blocked
-    assert findings
-
-
 def test_boundary_name_is_a_cli_filter_choice():
     """Regression (SHAI-004): --boundary mcp_metadata_scan must be reachable.
 
@@ -548,6 +541,7 @@ def test_harness_config_has_scan_mcp_metadata():
     # Build a minimal valid HarnessConfig and check scan_mcp_metadata
     cfg = HarnessConfig.model_validate({
         "version": 1,
+        "connectivity": {"token_secret": "test-connectivity-secret"},
         "tenant_id": "test",
         "scan_input": {
             "enabled": True,

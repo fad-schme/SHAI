@@ -1,4 +1,8 @@
 version: 1
+
+# Dispatch-token signing key. Required: connectivity is always on.
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"
 tenant_id: "benchmark"
 
 # De-obfuscation: catches base64, hex, rot13, homoglyph, and fragmentation

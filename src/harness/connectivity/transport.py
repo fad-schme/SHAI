@@ -17,14 +17,15 @@ Design decisions:
   - No sidecar, no Docker, no external process required
   - Works on laptop, Lambda, container — any Python deployment
   - Covers all MCPSource HTTP traffic: SSE connection, initialize, tools/call
-  - Non-tool-call requests (SSE, init) carry no token → no NetworkAuditEvent
-    emitted for them by default (no_token_policy=permissive for these)
+  - Connect-phase requests (SSE, initialize, tools/list) carry a connect
+    token; only the onboarding connection runs untokened, and it is audited
   - URL and method enforcement applies to ALL requests including SSE
   - requires: httpx (now a core shai dependency)
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -46,6 +47,30 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# The JSON-RPC methods of the MCP session handshake: all a connect token may
+# carry besides the SSE GET.
+_CONNECT_RPC_METHODS = frozenset({"initialize", "notifications/initialized", "tools/list"})
+
+
+def _jsonrpc_method(request: httpx.Request) -> str | None:
+    """The JSON-RPC method a POST body names, None for anything else."""
+    if request.method != "POST":
+        return None
+    try:
+        body = json.loads(request.content)
+    except (ValueError, httpx.RequestNotRead):
+        return None
+    method = body.get("method") if isinstance(body, dict) else None
+    return method if isinstance(method, str) else None
+
+
+def _purpose_permits(purpose: str, http_method: str, rpc_method: str | None) -> bool:
+    """A connect token opens the session; a tool-call token carries one
+    tools/call. Neither passes as the other."""
+    if purpose == "connect":
+        return http_method == "GET" or rpc_method in _CONNECT_RPC_METHODS
+    return http_method == "POST" and rpc_method == "tools/call"
+
 
 # ── ShaiTransport ──────────────────────────────────────────────────────────
 
@@ -53,7 +78,12 @@ class ShaiTransport(httpx.AsyncBaseTransport):
     """In-process httpx transport that enforces SHAI connectivity policy.
 
     Wraps the default httpx transport. Installed on the AsyncClient inside
-    MCPSource._connect() when connectivity.enabled=True.
+    MCPSource._connect() for every MCP source.
+
+    onboarding=True marks the `shai mcp onboard` connection. It produces the
+    approval tokens are minted from, so it has none: it is exempt from the
+    token check only. The URL and method checks still apply, and every one of
+    its requests is audited.
 
     Thread/task safety: the nonce store uses asyncio.Lock — safe for
     concurrent MCP calls within the same event loop.
@@ -70,6 +100,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         tenant_id:       str,
         emitter:         AuditEmitter,
         connectivity:    ConnectivityConfig,
+        onboarding:      bool = False,
         inner:           httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._source_name     = source_name
@@ -80,6 +111,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         self._tenant_id       = tenant_id
         self._emitter         = emitter
         self._connectivity    = connectivity
+        self._onboarding      = onboarding
         self._inner           = inner or httpx.AsyncHTTPTransport()
         # Nonce store: token_id → expires_at. Prevents replay within TTL window.
         # Bounded by TTL — expired entries pruned on each access.
@@ -161,6 +193,22 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 )
                 raise NetworkPolicyError(deny_reason)
 
+            # ── Purpose binding — checked before the nonce is consumed, so a
+            #    token presented on the wrong request is refused, not burned ─
+            if not _purpose_permits(token.purpose, method, _jsonrpc_method(request)):
+                deny_reason = (
+                    f"token purpose '{token.purpose}' does not permit this "
+                    f"{method} request for source '{self._source_name}'"
+                )
+                await self._emit(
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="denied", deny_reason=deny_reason,
+                    bytes_sent=0, bytes_recv=0,
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+                raise NetworkPolicyError(deny_reason)
+
             # ── 3b. URL binding — request must match token's allowed_urls ─
             if token.allowed_urls and not matches_allowed_url(url_str, token.allowed_urls):
                 deny_reason = (
@@ -212,6 +260,11 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                              "token_id": token_id,
                              "destination": url_str})
 
+        elif self._onboarding:
+            # The onboarding connection has no approval to mint a token from.
+            # It is exempt from the token check only; step 5 audits it.
+            pass
+
         # B105 fires on the "strict" literal; it is a policy name, not a password.
         elif self._connectivity.no_token_policy == "strict":  # nosec B105
             # strict mode: reject requests with no token
@@ -236,9 +289,14 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         response    = await self._inner.handle_async_request(request)
         duration_ms = int(time.monotonic() * 1000) - start_ms
 
-        # ── 5. Emit NetworkAuditEvent (only for tool calls with a token) ──
-        if token_id is not None:
-            content = await response.aread()
+        # ── 5. Emit NetworkAuditEvent — every tokened request, and every
+        #    request of the onboarding connection ──────────────────────────
+        if token_id is not None or self._onboarding:
+            # The SSE GET is a stream that never ends: it passes through
+            # unread, bytes_recv=0. Buffering it to count bytes would hang the
+            # connect forever. Every other response is buffered and re-attached.
+            streamed = method == "GET"
+            content = b"" if streamed else await response.aread()
             await self._emit(
                 token_id=token_id, tool_name=tool_name,
                 destination=url_str, method=method,
@@ -247,13 +305,13 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 bytes_recv=len(content),
                 duration_ms=duration_ms,
             )
-            # Re-attach body so the caller can read it
-            response = httpx.Response(
-                status_code=response.status_code,
-                headers=response.headers,
-                content=content,
-                request=request,
-            )
+            if not streamed:
+                response = httpx.Response(
+                    status_code=response.status_code,
+                    headers=response.headers,
+                    content=content,
+                    request=request,
+                )
 
         return response
 

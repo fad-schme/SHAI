@@ -612,7 +612,7 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     sources:         list[SourceConfig]  = Field(default_factory=list)
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
     patterns_db:     PatternsDBConfig    = Field(default_factory=PatternsDBConfig)
-    connectivity:    ConnectivityConfig   = Field(default_factory=ConnectivityConfig)
+    connectivity:    ConnectivityConfig   # required: connectivity is always on
     revocation:      RevocationConfig     = Field(default_factory=RevocationConfig)
     mcp_manifests_dir: str | None = None
     # Base directory a declared `transport: mcp` source name resolves against:

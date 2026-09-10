@@ -214,12 +214,14 @@ Once the gate says "yes," what actually goes on the wire? By default, SHAI doesn
 
 Dispatch tokens close that gap for MCP sources.
 
-### Enable
+### Configure
+
+The `connectivity:` block is required: connectivity is always on, and its
+`token_secret` signs every token.
 
 ```yaml
 # harness.yaml
 connectivity:
-  enabled: true
   token_secret: "secret://SHAI_TOKEN_SECRET"    # HMAC-SHA256 signing key
   token_ttl_seconds: 15                          # tokens expire fast
   no_token_policy: permissive                    # permissive | strict
@@ -284,14 +286,11 @@ Two properties make this worth relying on:
 - **It is per-agent.** Tokens carry `agent_id`; containing one agent leaves
   every other agent in the process running.
 
-Two limits, equally worth knowing:
+The limit worth knowing:
 
 - **Only tools that dispatch through `ShaiTransport` are covered** — the same
   boundary as everything else on this page. A code-execution tool shelling out
   to `curl` is outside it.
-- **`connectivity.enabled` defaults to `false`.** With it off, no tokens are
-  issued, `ShaiTransport` is not installed, and none of this applies. It is
-  opt-in, and this is the reason to opt in.
 
 The TTL is the containment latency. Raising `token_ttl_seconds` to reduce
 re-issuance overhead raises the window during which an already-issued token

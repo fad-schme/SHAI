@@ -1,7 +1,7 @@
 """Dispatch token — signed assertion that SHAI authorised a tool call.
 
-Issued by check_tool_call() on every GateDecision(allowed=True) when
-connectivity.enabled=True. Carried on outbound requests as the
+Issued by check_tool_call() on every GateDecision(allowed=True), and for
+every MCP connect-phase request. Carried on outbound requests as the
 X-Shai-Token header. Validated by ShaiTransport before forwarding.
 
 Format: base64url-encoded JSON — no external library dependency.
@@ -43,8 +43,9 @@ class DispatchToken:
     agent_id:        str
     sub_agent_id:    str | None
     tenant_id:       str
-    tool_name:       str
+    tool_name:       str | None       # None on a connect token — it opens a session, not a tool call
     source_name:     str              # which MCPSource owns this tool
+    purpose:         str              # "connect" | "tool_call" — see TOKEN_PURPOSES
     allowed_urls:    list[str]        # URL prefix patterns — e.g. ["https://slack.com/api/*"]
     allowed_methods: list[str]        # HTTP methods — e.g. ["GET", "POST"]
     issued_at:       datetime
@@ -128,9 +129,15 @@ def matches_allowed_url(url: str, patterns: list[str]) -> bool:
 # was introduced to end for audit events.
 _SIGNED_FIELDS: tuple[str, ...] = (
     "version", "token_id", "agent_id", "sub_agent_id", "tenant_id",
-    "tool_name", "source_name", "allowed_urls", "allowed_methods",
+    "tool_name", "source_name", "purpose", "allowed_urls", "allowed_methods",
     "issued_at", "expires_at",
 )
+
+# What a token authorises. A connect token is minted from a source's onboarding
+# approval and opens its MCP session; a tool-call token is minted from the
+# gate's allow decision and carries one tools/call. ShaiTransport never
+# accepts one as the other.
+TOKEN_PURPOSES: frozenset[str] = frozenset({"connect", "tool_call"})
 
 
 def sign_token(
@@ -138,8 +145,9 @@ def sign_token(
     agent_id:        str,
     sub_agent_id:    str | None,
     tenant_id:       str,
-    tool_name:       str,
+    tool_name:       str | None,
     source_name:     str,
+    purpose:         str,
     allowed_urls:    list[str],
     allowed_methods: list[str],
     secret:          bytes,
@@ -153,6 +161,8 @@ def sign_token(
 
     Returns a frozen DispatchToken with signature set.
     """
+    if purpose not in TOKEN_PURPOSES:
+        raise ValueError(f"unknown token purpose {purpose!r}")
     now        = datetime.now(UTC)
     token_id   = str(uuid.uuid4())
 
@@ -164,6 +174,7 @@ def sign_token(
         tenant_id=tenant_id,
         tool_name=tool_name,
         source_name=source_name,
+        purpose=purpose,
         allowed_urls=list(allowed_urls),
         allowed_methods=list(allowed_methods),
         issued_at=now,
@@ -207,6 +218,10 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
         # token is correlated back to the gate event that issued it.
         id_field="token_id",
     )
+    # Signed, so not forgeable — but a claim this code does not define
+    # authorises nothing, and its value is not echoed into the deny reason.
+    if data["purpose"] not in TOKEN_PURPOSES:
+        raise TokenError("token purpose is not recognised")
     return DispatchToken(
         version=data["version"],
         token_id=data["token_id"],
@@ -215,6 +230,7 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
         tenant_id=data["tenant_id"],
         tool_name=data["tool_name"],
         source_name=data["source_name"],
+        purpose=data["purpose"],
         allowed_urls=data["allowed_urls"],
         allowed_methods=data["allowed_methods"],
         issued_at=data["issued_at"],
