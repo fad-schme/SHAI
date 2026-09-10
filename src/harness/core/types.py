@@ -1,5 +1,22 @@
-"""Shared enums. Bottom of the import graph — no harness.* imports."""
+"""Shared enums and the built-in adapter names. Bottom of the import graph —
+no harness.* imports."""
 from enum import StrEnum
+
+# The adapter names harness.yaml may reference. The schema validates every
+# scanner list and `audit_sinks` against these; core.wiring's factory tables
+# build from them, and a test holds each table's keys equal to its set. They
+# live here rather than beside the tables because the schema cannot import
+# core.wiring — wiring imports the schema.
+SCANNER_NAMES: frozenset[str] = frozenset({
+    "regex_pii",
+    "injection_scan",
+    "heuristic_scan",
+    "mcp_metadata_scan",
+    "jailbreak_scan",
+    "identity_spoof_scan",
+    "command_injection_scan",
+})
+SINK_NAMES: frozenset[str] = frozenset({"stdout", "file"})
 
 
 class BoundaryName(StrEnum):

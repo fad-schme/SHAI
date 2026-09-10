@@ -13,7 +13,8 @@ ToolException, Command, plain string). The security sequence lives here once;
 only the rendering differs per framework.
 
 Defines ShaiTool: the single object that is simultaneously:
-  - A SHAI Tool descriptor (name, tags, transport, description)
+  - A SHAI Tool descriptor (name, tags, transport, description, and the
+    gate-enforced argument_rules / irreversibility)
   - A callable implementation (sync or async)
   - A LangChain-compatible BaseTool (for bind_tools, wrap_tool, HarnessToolNode)
   - A CrewAI / OpenAI Agents / PydanticAI compatible callable
@@ -54,8 +55,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from harness.core.types import Transport
-from harness.tools.tool import Tool
+from harness.core.types import Irreversibility, Transport
+from harness.tools.tool import ArgumentRule, Tool
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -80,19 +81,23 @@ class ShaiTool:
         self,
         fn: Callable,
         *,
-        tags:        list[str],
-        transport:   Transport = Transport.LOCAL,
-        name:        str | None = None,
-        description: str | None = None,
+        tags:            list[str],
+        transport:       Transport = Transport.LOCAL,
+        name:            str | None = None,
+        description:     str | None = None,
+        argument_rules:  list[ArgumentRule] | None = None,
+        irreversibility: Irreversibility = Irreversibility.REVERSIBLE,
     ) -> None:
         self._fn          = fn
         self._is_async    = asyncio.iscoroutinefunction(fn)
 
         # SHAI metadata
-        self.tags        = list(tags)
-        self.transport   = transport
-        self.name        = name or fn.__name__
-        self.description = description or (inspect.getdoc(fn) or "")
+        self.tags            = list(tags)
+        self.transport       = transport
+        self.name            = name or fn.__name__
+        self.description     = description or (inspect.getdoc(fn) or "")
+        self.argument_rules  = list(argument_rules or [])
+        self.irreversibility = irreversibility
 
         # Preserve introspection attributes for framework schema generation
         functools.update_wrapper(self, fn)
@@ -103,12 +108,23 @@ class ShaiTool:
     # ── SHAI protocol ─────────────────────────────────────────────────────
 
     def to_shai_tool(self) -> Tool:
-        """Return the SHAI Tool descriptor for this tool."""
+        """Return the SHAI Tool descriptor for this tool.
+
+        The one funnel from decorator to descriptor — every framework wrapper
+        reaches `Tool` through here (see `extract_shai_tools`), so a field
+        omitted here is unreachable from every integration at once. That is
+        what happened to `argument_rules` and `irreversibility`: both are
+        enforced by the gate, neither could be declared, and the defaults that
+        resulted — no rules, and the tier layer 3 waves through — read as a
+        deliberate choice rather than as an absent one.
+        """
         return Tool(
             name=self.name,
             tags=self.tags,
             transport=self.transport,
             description=self.description,
+            argument_rules=self.argument_rules,
+            irreversibility=self.irreversibility,
         )
 
     # ── Callable protocol ─────────────────────────────────────────────────
@@ -165,10 +181,12 @@ class ShaiTool:
 
 def shai_tool(
     *,
-    tags:        list[str],
-    transport:   Transport = Transport.LOCAL,
-    name:        str | None = None,
-    description: str | None = None,
+    tags:            list[str],
+    transport:       Transport = Transport.LOCAL,
+    name:            str | None = None,
+    description:     str | None = None,
+    argument_rules:  list[ArgumentRule] | None = None,
+    irreversibility: Irreversibility = Irreversibility.REVERSIBLE,
 ) -> Callable[[Callable], ShaiTool]:
     """Decorator that creates a ShaiTool from a plain function.
 
@@ -180,6 +198,22 @@ def shai_tool(
                      Transport.MCP for tools dispatched via MCPSource.
         name:        Override the tool name. Defaults to the function name.
         description: Override the description. Defaults to the docstring.
+        argument_rules:
+                     Deterministic per-argument constraints, enforced at gate
+                     layer 2. Declare `user_origin=True` on an argument that
+                     names where data goes or who receives it and the user is
+                     the only party who legitimately supplies it — layer 6 then
+                     denies the call when that value entered the turn through a
+                     tool result rather than the prompt. Declare it on an
+                     argument the agent legitimately resolves from something it
+                     read (a body, an address from a contact list) and ordinary
+                     work starts denying: the control is precise or it is
+                     useless.
+        irreversibility:
+                     Blast-radius tier, enforced at gate layer 3. SENSITIVE and
+                     IRREVERSIBLE deny until a quorum of signed ApprovalGrants
+                     is present on the context; REVERSIBLE (the default) is
+                     waved through.
 
     Returns a ShaiTool that can be passed to:
         - HarnessToolNode.create(tools, harness, ctx)
@@ -207,6 +241,8 @@ def shai_tool(
             transport=transport,
             name=name,
             description=description,
+            argument_rules=argument_rules,
+            irreversibility=irreversibility,
         )
     return decorator
 

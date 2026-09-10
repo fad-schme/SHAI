@@ -5,9 +5,10 @@ Every field maps to a consumer in the codebase.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     Field,
     ValidationError,
@@ -16,7 +17,14 @@ from pydantic import (
 )
 
 from harness.connectivity.config import ConnectivityConfig
-from harness.core.types import OnError, ScanAction, Severity, Transport
+from harness.core.types import (
+    SCANNER_NAMES,
+    SINK_NAMES,
+    OnError,
+    ScanAction,
+    Severity,
+    Transport,
+)
 
 
 class AdapterRef(BaseModel, frozen=True, extra="forbid"):
@@ -41,6 +49,51 @@ class AdapterRef(BaseModel, frozen=True, extra="forbid"):
         if not v.strip():
             raise ValueError("adapter name must be non-empty")
         return v
+
+
+def _reject_unknown(refs: list[AdapterRef], valid: frozenset[str], kind: str) -> None:
+    unknown = [r.name for r in refs if r.name not in valid]
+    if unknown:
+        raise ValueError(
+            f"unknown {kind} {', '.join(map(repr, unknown))}. "
+            f"Valid {kind}s: {sorted(valid)}"
+        )
+
+
+def _known_scanners(refs: list[AdapterRef]) -> list[AdapterRef]:
+    """Every name must be a built-in scanner.
+
+    Checked here rather than when the scanners are built, because this is the
+    step both SHAI.from_yaml and `shai validate` run. An unknown name used to
+    be skipped at build time: the boundary started with one inspection fewer
+    than declared, announced only in a warning log, and `shai validate`
+    passed the config.
+    """
+    _reject_unknown(refs, SCANNER_NAMES, "scanner")
+    return refs
+
+
+def _known_sinks(refs: list[AdapterRef]) -> list[AdapterRef]:
+    """At least one sink, and every name a built-in.
+
+    Omitting `audit_sinks:` gets the stdout default declared on HarnessConfig.
+    An explicitly empty list is rejected: every audit event has to go
+    somewhere (Invariant 1), and a sink invented at build time is what let a
+    misspelled one move the audit trail to stdout unnoticed.
+    """
+    if not refs:
+        raise ValueError(
+            "audit_sinks may not be empty — every audit event must go "
+            "somewhere. Omit the key for the stdout default."
+        )
+    _reject_unknown(refs, SINK_NAMES, "audit sink")
+    return refs
+
+
+# Every scanner list in harness.yaml — the four boundary configs below, which
+# include the gate's layer-7 argument scanners — is this type, so one check
+# covers them all.
+ScannerRefs = Annotated[list[AdapterRef], AfterValidator(_known_scanners)]
 
 
 
@@ -112,7 +165,7 @@ class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
     block_at: Severity   = Severity.HIGH
     action:   ScanAction = ScanAction.BLOCK
     on_error: OnError    = OnError.FAIL_CLOSED
-    scanners: list[AdapterRef] = Field(default_factory=list)
+    scanners: ScannerRefs = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _enabled_needs_scanners(self) -> BoundaryConfig:
@@ -144,7 +197,7 @@ class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
     block_at:            Severity     = Severity.HIGH
     action:              ScanAction   = ScanAction.BLOCK
     on_error:            OnError      = OnError.FAIL_CLOSED
-    scanners:            list[AdapterRef] = Field(default_factory=list)
+    scanners:            ScannerRefs  = Field(default_factory=list)
     max_size_mb:         float        = 100.0
 
     @model_validator(mode="after")
@@ -281,7 +334,7 @@ class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     # Named `scanners` like every scan_* boundary. These run over the tool's
     # arguments at gate layer 7, not over free text, but the key an operator
     # writes is the same one everywhere.
-    scanners:           list[AdapterRef]      = Field(default_factory=list)
+    scanners:           ScannerRefs           = Field(default_factory=list)
     scan_args_for_tags: list[str]             = Field(default_factory=lambda: ["sensitive"])
     rate_limit:         RateLimitConfig       = Field(default_factory=RateLimitConfig)
     execution_budget:   ExecutionBudgetConfig = Field(default_factory=ExecutionBudgetConfig)
@@ -486,7 +539,7 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
     enabled:  bool       = True
     block_at: Severity   = Severity.MEDIUM
     action:   ScanAction = ScanAction.BLOCK
-    scanners: list[AdapterRef] = Field(
+    scanners: ScannerRefs = Field(
         default_factory=lambda: [AdapterRef(name="mcp_metadata_scan")]
     )
 
@@ -550,7 +603,12 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     # validation (config/loader.build_secrets_provider) — it is what resolves
     # the secret:// URIs the rest of this config holds.
     secrets:         AdapterRef = Field(default_factory=lambda: AdapterRef(name="env"))
-    audit_sinks:     list[AdapterRef] = Field(default_factory=list)
+    # Omitted means stdout, declared here rather than supplied when the sinks
+    # are built — so an omitted key and an explicitly empty list stay different
+    # facts: the first is this default, the second is rejected by _known_sinks.
+    audit_sinks:     Annotated[list[AdapterRef], AfterValidator(_known_sinks)] = Field(
+        default_factory=lambda: [AdapterRef(name="stdout")]
+    )
     sources:         list[SourceConfig]  = Field(default_factory=list)
     audit_signing:   AuditSigningConfig  = Field(default_factory=AuditSigningConfig)
     patterns_db:     PatternsDBConfig    = Field(default_factory=PatternsDBConfig)

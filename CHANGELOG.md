@@ -13,6 +13,15 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`@shai_tool` accepts `argument_rules` and `irreversibility`** — the two
+  security fields the gate enforces but the decorator had no way to express, so
+  a decorated tool silently carried no argument rules and the `REVERSIBLE` tier.
+  Declaring them now reaches layer 2's deterministic constraints, layer 6's
+  `user_origin` provenance check, and layer 3's approval quorum; a tool
+  declaring neither is unchanged. Tools discovered from an MCP source still
+  carry neither — the manifest has no field to declare them in.
+
+### Added
 - **`sources:` declares an MCP source by name** — `transport: mcp`, no url
   or credentials there. Its manifest resolves by convention at
   `<mcp_manifests_dir>/<name>.yaml`; a name with no matching manifest is a

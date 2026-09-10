@@ -7,7 +7,6 @@ wiring decisions live.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,7 +23,6 @@ if TYPE_CHECKING:
     from harness.config.schema import NormalizationConfig, PolicyConfig
     from harness.policy.engine import PolicyEngine
 
-log = logging.getLogger(__name__)
 
 
 # ── Module-level adapter builders ─────────────────────────────────────────
@@ -70,7 +68,9 @@ _DB_CATALOG_FOR_SCANNER: dict[str, str] = {
 }
 
 
-# Named registry — explicit, no magic strings
+# Named registry — explicit, no magic strings. The keys are the valid names
+# (core.types.SCANNER_NAMES, which the schema validates against); a test
+# holds the two equal.
 _SCANNER_FACTORIES: dict[str, Any] = {
     "regex_pii":           lambda cfg: RegexPIIScanner(**cfg),
     "injection_scan":      lambda cfg: InjectionScanner(**cfg),
@@ -88,6 +88,15 @@ _SCANNER_FACTORIES: dict[str, Any] = {
     ).CommandInjectionScanner(**cfg),
 }
 
+# Same contract for audit sinks: keys == core.types.SINK_NAMES. stdout takes no
+# config; FileSink is imported on first use, as it was before this was a table.
+_SINK_FACTORIES: dict[str, Any] = {
+    "stdout": lambda cfg: StdoutSink(),
+    "file":   lambda cfg: __import__(
+        "harness.adapters.audit_sinks.file", fromlist=["FileSink"]
+    ).FileSink(**cfg),
+}
+
 
 def _build_text_scanners(
     adapter_refs: list,
@@ -98,7 +107,8 @@ def _build_text_scanners(
     """Build text scanners from AdapterRef declarations in harness.yaml.
 
     Scanners are resolved via the named factory table above, which is the
-    whole set.
+    whole set. Every ref resolves: the schema has already rejected any name
+    outside it (core.types.SCANNER_NAMES).
 
     Each scanner is paired with the action / redact_with of the ref that
     produced it, so overrides cannot shift from one scanner onto another.
@@ -114,27 +124,16 @@ def _build_text_scanners(
     """
     scanners: list[ConfiguredScanner] = []
     for ref in adapter_refs:
-        factory = _SCANNER_FACTORIES.get(ref.name)
-        if factory:
-            cfg = ref.config
-            if extra_rules and ref.name in extra_rules:
-                # Copy: ref.config is shared across every boundary's build call.
-                cfg = {**cfg, "extra_rules": extra_rules[ref.name]}
-            scanner = (
-                _make_file_injection_scanner(cfg)
-                if include_document_patterns and ref.name == "injection_scan"
-                else factory(cfg)
-            )
-        else:
-            # _SCANNER_FACTORIES is the whole set — SHAI Core has no scanner
-            # extension surface, so an unknown name can never resolve to
-            # anything. NOTE: skipping it leaves the boundary running one
-            # fewer inspection than the operator declared, announced only in a
-            # warning log. That fail-open is tracked separately; this branch
-            # preserves the prior behaviour rather than changing it here.
-            log.warning("unknown scanner — skipped",
-                        extra={"adapter_name": ref.name})
-            continue
+        factory = _SCANNER_FACTORIES[ref.name]
+        cfg = ref.config
+        if extra_rules and ref.name in extra_rules:
+            # Copy: ref.config is shared across every boundary's build call.
+            cfg = {**cfg, "extra_rules": extra_rules[ref.name]}
+        scanner = (
+            _make_file_injection_scanner(cfg)
+            if include_document_patterns and ref.name == "injection_scan"
+            else factory(cfg)
+        )
         scanners.append(ConfiguredScanner(scanner, ref.action, ref.redact_with))
     if not any(getattr(c.scanner, "name", "") == HeuristicScanner.name for c in scanners):
         scanners.append(ConfiguredScanner(HeuristicScanner()))
@@ -164,13 +163,12 @@ def _build_file_scanners(
         FileScanner,
     )
 
-    refs = [r for r in adapter_refs if r.name != "file_scanner"]
     # The content chain runs inside FileContentScanner, which calls the
     # scanners directly — FileScanConfig rejects per-scanner overrides, so
     # only the instances travel down.
     text_scanners = [
         c.scanner
-        for c in _build_text_scanners(refs, include_document_patterns=True)
+        for c in _build_text_scanners(adapter_refs, include_document_patterns=True)
     ]
     return [
         ConfiguredScanner(FileScanner(max_size_mb=max_size_mb)),
@@ -204,21 +202,10 @@ def _build_policy(cfg: PolicyConfig) -> PolicyEngine:
 
 
 def _build_sinks(adapter_refs: list) -> list:
-    sinks = []
-    for ref in adapter_refs:
-        if ref.name == "stdout":
-            sinks.append(StdoutSink())
-        elif ref.name == "file":
-            from harness.adapters.audit_sinks.file import FileSink
-            sinks.append(FileSink(**ref.config))
-        else:
-            # stdout and file are the whole set. NOTE: as with scanners, an
-            # unknown name is skipped, and an emptied list then falls back to
-            # stdout below — a typo silently moves the audit trail. Tracked
-            # separately; not changed by the discovery removal.
-            log.warning("unknown audit sink — skipped",
-                        extra={"adapter_name": ref.name})
-    if not sinks:
-        log.warning("no audit sinks configured — falling back to stdout")
-        sinks = [StdoutSink()]
-    return sinks
+    """Build the audit sinks from `audit_sinks`.
+
+    The schema guarantees at least one ref and that every name is in
+    _SINK_FACTORIES. There is deliberately no fallback here: substituting a
+    sink is what let a misspelled one move the audit trail to stdout.
+    """
+    return [_SINK_FACTORIES[ref.name](ref.config) for ref in adapter_refs]

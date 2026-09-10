@@ -20,6 +20,28 @@ async def send_email(to: str, subject: str, body: str) -> str:
 
 `@shai_tool` produces a `ShaiTool` that satisfies both SHAI's `Tool` interface and the target framework's tool interface. Sync and async both work. Define the function once, use it across every integration below.
 
+### Declaring argument rules and approval tiers
+
+`@shai_tool` also takes the two security fields the gate enforces per tool:
+
+```python
+from harness import ArgumentRule, Irreversibility
+
+@shai_tool(
+    tags=["financial", "external"],
+    argument_rules=[ArgumentRule(arg="recipient", user_origin=True)],
+    irreversibility=Irreversibility.SENSITIVE,
+)
+async def transfer_funds(recipient: str, amount: int) -> str:
+    """Transfer funds to a recipient account."""
+    return await _transfer(recipient, amount)
+```
+
+- **`argument_rules`** — per-argument constraints enforced at gate layer 2 (`max_value`, `min_value`, `allowlist`, `pattern`, `scope_policy`, `required`). `user_origin=True` is enforced at layer 6: the call is denied when that argument's value entered the turn through a tool result rather than the user's prompt. Declare it only where the user is the one who names the value — a recipient, a grantee. On an argument the agent legitimately resolves from something it read, it denies ordinary work.
+- **`irreversibility`** — `SENSITIVE` or `IRREVERSIBLE` makes layer 3 deny until the configured quorum of signed approval grants is present. The default, `REVERSIBLE`, needs none.
+
+Tools discovered from an MCP source can't declare either — the manifest has no field for them.
+
 ## Which integration to use
 
 | Your framework | Use |

@@ -312,7 +312,7 @@ async def test_run_scan_propagates_cancellation_after_emitting():
 
     sink = RecordingSink()
     emitter = AuditEmitter([sink])
-    config = BoundaryConfig(enabled=True, scanners=[AdapterRef(name="canceller")])
+    config = BoundaryConfig(enabled=True, scanners=[AdapterRef(name="heuristic_scan")])
 
     with pytest.raises(_asyncio.CancelledError):
         await run_scan(

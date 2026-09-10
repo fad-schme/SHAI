@@ -205,6 +205,32 @@ policy:
     assert "tool-scoped" in captured.err
 
 
+def test_validate_rejects_a_misspelled_scanner_name(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A one-character typo used to pass validate, then start the harness
+    without that scanner. It must fail here, before anything runs."""
+    config = tmp_path / "harness.yaml"
+    config.write_text(
+        """
+scan_input:
+  enabled: true
+  scanners:
+    - name: injection_scann
+scan_output:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    result = main(["validate", "--config", str(config)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "injection_scann" in captured.err
+
+
 def test_read_tail_returns_only_requested_lines(tmp_path: Path) -> None:
     audit_log = tmp_path / "audit.jsonl"
     audit_log.write_text("".join(f"{index}\n" for index in range(1_000)), encoding="utf-8")

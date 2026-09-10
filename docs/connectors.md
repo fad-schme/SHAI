@@ -157,13 +157,26 @@ and IP-literal-encoding differences folded to what the network stack would
 actually dial — see `THREAT_MODEL.md`'s T8 residual-risk note) and denies
 the call unless the resulting host is in scope.
 
-```yaml
-# agent.yaml or manifest override
-argument_rules:
-  - arg: webhook_url
-    scope_policy:
-      allowed_domains: [hooks.example.com]
-      allow_subdomains: true
+Argument rules are declared in code, on the tool. Neither agent YAML nor an
+MCP manifest has a field for them.
+
+```python
+from harness import ArgumentRule
+from harness.integrations.base import shai_tool
+from harness.tools.tool import ScopeRulePolicy
+
+@shai_tool(
+    tags=["external_write"],
+    argument_rules=[ArgumentRule(
+        arg="webhook_url",
+        scope_policy=ScopeRulePolicy(
+            allowed_domains=["hooks.example.com"],
+            allow_subdomains=True,
+        ),
+    )],
+)
+async def post_alert(webhook_url: str, body: str) -> str:
+    ...
 ```
 
 This accepts `https://alerts.hooks.example.com/x` and
@@ -175,11 +188,13 @@ literal can only be admitted via `allowed_cidrs`, never `allowed_hosts` or
 address is denied through `allowed_cidrs` too, with no override at this
 layer:
 
-```yaml
-argument_rules:
-  - arg: callback_url
-    scope_policy:
-      allowed_cidrs: ["93.184.216.0/24"]   # your callback provider's published range
+```python
+ArgumentRule(
+    arg="callback_url",
+    scope_policy=ScopeRulePolicy(
+        allowed_cidrs=["93.184.216.0/24"],   # your callback provider's published range
+    ),
+)
 ```
 
 (Watch this if you're tempted to test with a documentation range like

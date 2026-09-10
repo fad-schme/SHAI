@@ -26,6 +26,29 @@ tools = [search_docs, send_email]
 `@shai_tool` creates a `ShaiTool` — satisfies SHAI's Tool interface and
 the target framework's tool interface. Sync and async functions both work.
 
+### Argument rules and approval tiers
+
+```python
+from harness import ArgumentRule, Irreversibility
+
+@shai_tool(
+    tags=["financial", "external"],
+    argument_rules=[ArgumentRule(arg="recipient", user_origin=True)],
+    irreversibility=Irreversibility.SENSITIVE,
+)
+async def transfer_funds(recipient: str, amount: int) -> str: ...
+```
+
+- `argument_rules` — layer 2 constraints (`max_value`, `min_value`,
+  `allowlist`, `pattern`, `scope_policy`, `required`). `user_origin=True` is
+  layer 6: deny when the value entered the turn through a tool result, not the
+  prompt. Declare it only where the user names the value (recipient, grantee);
+  on an argument the agent resolves from a read, it denies ordinary work.
+- `irreversibility` — `SENSITIVE` / `IRREVERSIBLE` make layer 3 deny until the
+  approval quorum is met. Default `REVERSIBLE` needs none.
+
+MCP-discovered tools can't declare either — the manifest has no field for them.
+
 ---
 
 ## LangGraph — HarnessToolNode

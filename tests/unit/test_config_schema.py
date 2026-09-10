@@ -25,12 +25,13 @@ def test_minimal_valid_config():
     assert len(cfg.audit_sinks) == 1
 
 
-def test_empty_audit_sinks_allowed():
-    """audit_sinks defaults to [] — empty list is valid, harness falls back to stdout."""
+def test_omitted_audit_sinks_defaults_to_stdout():
+    """Omitted means stdout, declared by the schema. An explicitly empty list
+    is a different fact and is rejected — see test_adapter_selection."""
     data = _minimal()
     data.pop("audit_sinks", None)  # omit entirely
     cfg = HarnessConfig.model_validate(data)
-    assert cfg.audit_sinks == []
+    assert [ref.name for ref in cfg.audit_sinks] == ["stdout"]
 
 
 def test_enabled_boundary_without_scanners_rejected():

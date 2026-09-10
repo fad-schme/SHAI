@@ -74,8 +74,9 @@ def boundary_config(*, cls: type = BoundaryConfig, **overrides) -> BoundaryConfi
     call run_scan()/run_tool_result_scan() directly. Defaults match what most
     such tests want: enabled, block, HIGH, fail-closed. run_scan reads
     scanners as its own separate argument, not from config.scanners — the
-    dummy AdapterRef here exists only to satisfy the config's own "enabled
-    needs scanners" validator.
+    ref here exists only to satisfy the config's own "enabled needs
+    scanners" validator. It names heuristic_scan, the backstop every
+    boundary runs, because the schema rejects a name it cannot build.
     """
     defaults: dict = dict(
         enabled=True,
@@ -85,7 +86,7 @@ def boundary_config(*, cls: type = BoundaryConfig, **overrides) -> BoundaryConfi
     )
     defaults.update(overrides)
     if defaults["enabled"] and "scanners" not in defaults:
-        defaults["scanners"] = [AdapterRef(name="dummy")]
+        defaults["scanners"] = [AdapterRef(name="heuristic_scan")]
     return cls(**defaults)
 
 

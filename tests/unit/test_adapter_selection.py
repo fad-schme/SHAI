@@ -1,9 +1,9 @@
 """Adapter selection is limited to the built-ins.
 
 Scanners, audit sinks, the policy engine and the secrets provider are built
-from fixed in-tree tables. For the policy engine and the secrets provider an
-unknown name is a ConfigError; scanners and sinks warn-and-skip, which is
-tracked separately, so nothing here asserts it either way.
+from fixed in-tree tables. An unknown scanner or sink name is rejected when the
+config is validated; an unknown policy engine or secrets provider when it is
+built. Either way nothing starts with less than the operator declared.
 """
 from __future__ import annotations
 
@@ -17,7 +17,13 @@ from harness.config.loader import build_secrets_provider, load_dict
 from harness.config.schema import AdapterRef, PolicyConfig
 from harness.core.errors import ConfigError
 from harness.core.harness import SHAI
-from harness.core.wiring import _build_policy
+from harness.core.types import SCANNER_NAMES, SINK_NAMES
+from harness.core.wiring import (
+    _SCANNER_FACTORIES,
+    _SINK_FACTORIES,
+    _build_policy,
+    _build_sinks,
+)
 from harness.policy.engine import PolicyDecision, SourceDecision
 from harness.policy.rules import RuleBasedPolicy
 
@@ -41,6 +47,76 @@ def _write(path: Path, body: str) -> Path:
     cfg = path / "harness.yaml"
     cfg.write_text(body, encoding="utf-8")
     return cfg
+
+
+# ── scanner and sink names — checked when the config is validated ─────────
+#
+# Asserted through load_dict, not from_yaml: that pins *where* the check lives.
+# `shai validate` stops at validation, so a check any later lets it pass a
+# config that then refuses to start — or, as before, starts degraded.
+
+_TYPO = "injection_scann"   # one character off injection_scan
+
+_SCANNER_LISTS: dict[str, dict[str, Any]] = {
+    "scan_input":        {"scan_input":  {"enabled": True, "scanners": [{"name": _TYPO}]}},
+    "scan_output":       {"scan_output": {"enabled": True, "scanners": [{"name": _TYPO}]}},
+    "scan_tool_result":  {"scan_tool_result":  {"scanners": [{"name": _TYPO}]}},
+    "scan_file":         {"scan_file": {"enabled": True, "scanners": [{"name": _TYPO}]}},
+    "scan_mcp_metadata": {"scan_mcp_metadata": {"scanners": [{"name": _TYPO}]}},
+    "check_tool_call":   {"check_tool_call":   {"scanners": [{"name": _TYPO}]}},
+}
+
+
+@pytest.mark.parametrize("boundary", list(_SCANNER_LISTS))
+def test_unknown_scanner_name_fails_validation(boundary: str):
+    with pytest.raises(ConfigError, match=_TYPO):
+        load_dict(_config(**_SCANNER_LISTS[boundary]))
+
+
+def test_unknown_scanner_error_names_the_valid_set():
+    # regex_pii, not injection_scan — the typo contains the latter as a substring.
+    with pytest.raises(ConfigError, match="regex_pii"):
+        load_dict(_config(**_SCANNER_LISTS["scan_input"]))
+
+
+def test_file_scanner_is_not_a_declarable_name():
+    """The structural file scanner always runs and is not YAML-driven. Naming
+    it under scan_file.scanners used to be filtered out silently at build time;
+    it is now an unknown name like any other."""
+    with pytest.raises(ConfigError, match="file_scanner"):
+        load_dict(_config(
+            scan_file={"enabled": True, "scanners": [{"name": "file_scanner"}]},
+        ))
+
+
+def test_unknown_sink_name_fails_validation():
+    with pytest.raises(ConfigError, match="fille"):
+        load_dict(_config(
+            audit_sinks=[{"name": "fille", "config": {"path": "audit.jsonl"}}],
+        ))
+
+
+def test_empty_sink_list_fails_validation():
+    """Explicitly empty is not the same fact as omitted — see the next test."""
+    with pytest.raises(ConfigError, match="audit_sinks"):
+        load_dict(_config(audit_sinks=[]))
+
+
+def test_omitted_sink_list_means_stdout():
+    cfg = load_dict({"scan_input": {"enabled": False}, "scan_output": {"enabled": False}})
+    assert [ref.name for ref in cfg.audit_sinks] == ["stdout"]
+    assert [type(s).__name__ for s in _build_sinks(cfg.audit_sinks)] == ["StdoutSink"]
+
+
+def test_scanner_names_match_the_factory_table():
+    """Adding a scanner to one without the other must fail here, not in a
+    deployment: the schema would reject a buildable name, or accept one the
+    builder cannot build."""
+    assert set(_SCANNER_FACTORIES) == SCANNER_NAMES
+
+
+def test_sink_names_match_the_factory_table():
+    assert set(_SINK_FACTORIES) == SINK_NAMES
 
 
 # ── policy.engine ─────────────────────────────────────────────────────────

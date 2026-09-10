@@ -55,17 +55,13 @@ class TestAlwaysOnBackstop:
         with pytest.raises(TypeError):
             _build_text_scanners([AdapterRef(name="heuristic_scan", config={"bogus": 1})])
 
-    def test_unresolvable_scanner_is_skipped_but_backstop_survives(self):
-        scanners = _build_text_scanners([AdapterRef(name="does_not_exist")])
-        assert _names(scanners) == ["heuristic_scan"]
-
 
 class TestOverridePairing:
     """Each scanner carries the overrides of the ref that produced it.
 
     Pairing happens inside _build_text_scanners while the AdapterRef is still
-    in hand, so neither the appended backstop nor a ref that fails to resolve
-    can hand a scanner its neighbour's action.
+    in hand, so the appended backstop cannot hand a scanner its neighbour's
+    action.
     """
 
     def test_declared_scanners_keep_their_own_action(self):
@@ -89,16 +85,6 @@ class TestOverridePairing:
         backstop = next(c for c in scanners if c.scanner.name == "heuristic_scan")
         assert backstop.action is None
         assert backstop.redact_with is None
-
-    def test_unresolvable_ref_drops_its_own_override(self):
-        """A skipped ref takes its action with it — the survivor keeps its own."""
-        scanners = _build_text_scanners([
-            AdapterRef(name="does_not_exist", action=ScanAction.ALERT),
-            AdapterRef(name="regex_pii", action=ScanAction.REDACT, redact_with="***"),
-        ])
-        pii = next(c for c in scanners if c.scanner.name == "regex_pii")
-        assert pii.action == ScanAction.REDACT
-        assert pii.redact_with == "***"
 
 
 class TestCandidateGateIsReachable:

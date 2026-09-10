@@ -13,7 +13,7 @@ normalization:
   enabled: true
   decode: true            # base64 / hex / url / rot13 substring decoding
   max_depth: 2            # recursion depth for nested encodings
-  max_bytes: 262144       # inputs larger than this are folded but not decoded
+  max_expansion_bytes: 8388608  # cap on de-obfuscated material per scan
 
 # ── Cross-turn threat accumulator ─────────────────────────────────────────
 # Detects crescendo attacks: escalation distributed across turns where each
@@ -43,12 +43,12 @@ scan_input:
   action: block       # block | alert
   scanners:
     - name: injection_scan       # data-boundary attacks: tool coercion, exfiltration, context spoofing
-        action: block            # always hard-block injection attempts
+      action: block            # always hard-block injection attempts
     - name: jailbreak_scan       # guardrail-integrity attacks: persona override, instruction override, etc.
     - name: identity_spoof_scan  # agentic identity spoofing: claimed orchestrator/system authority
     - name: regex_pii
-        action: redact          # redact PII instead of blocking
-        redact_with: "***"      # placeholder (use {category} for category name)
+      action: redact          # redact PII instead of blocking
+      redact_with: "***"      # placeholder (use {category} for category name)
 
 # ── File upload scanning ──────────────────────────────────────────────────
 # FileScanner handles MIME, size, PDF JS, EXIF, ZIP, and Office macros.
@@ -105,17 +105,17 @@ scan_output:
     - name: regex_pii
 
 # ── Policy ────────────────────────────────────────────────────────────────
+# Decides which sources activate — nothing else. Tool-call rules live in each
+# agent's own `policy_rules:`; an MCP source's tools are governed by its manifest.
 policy:
-  rules:
-    - id: allow_local_tools
+  source_rules:
+    - id: suppress_untrusted
       match:
-        transport: [local, skill]
-      action: allow
-    - id: deny_mcp_by_default
-      match:
-        transport: [mcp]
-      action: deny
-      reason: "MCP tools require explicit agent-level allow rule"
+        source_tags: [untrusted]
+      action: suppress
+      reason: "untrusted sources are not activated"
+  # forbidden_tag_combinations:     # tag sets no single agent may hold
+  #   - [sensitive, external_write]
 
 # ── Audit sinks ───────────────────────────────────────────────────────────
 # Optional — defaults to stdout when not specified.
