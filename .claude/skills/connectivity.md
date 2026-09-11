@@ -24,12 +24,12 @@ The `connectivity:` block is required — connectivity is always on.
 connectivity:
   token_secret: "secret://SHAI_TOKEN_SECRET"   # HMAC signing key
   token_ttl_seconds: 15                         # tokens expire in 15s
-  no_token_policy: permissive                   # permissive | strict
+  token_policy: strict                          # strict | audit
 ```
 
-`no_token_policy`:
-- `permissive` — allows requests without a token (SSE, init, non-MCP calls)
-- `strict` — rejects any request without a valid token
+`token_policy` (what happens to a request with no token):
+- `strict` (default) — refuses it, with a `denied` `NetworkAuditEvent`
+- `audit` — forwards it and records an `allowed` event with no `token_id`
 
 ---
 
@@ -73,8 +73,8 @@ Hand-rolled dispatch is the only place you thread the token yourself. The
 framework integrations route MCP tools to their source and attach the token
 for you — `HarnessToolNode` for any tool without a local callable,
 `gated_dispatch` when called without a `dispatch` argument. A call dispatched
-without the token is refused under `no_token_policy: strict` and produces no
-`NetworkAuditEvent` to correlate under `permissive`.
+without the token is refused under `token_policy: strict` (the default), and
+forwarded but recorded with no `token_id` under `audit`.
 
 ---
 

@@ -224,13 +224,13 @@ The `connectivity:` block is required: connectivity is always on, and its
 connectivity:
   token_secret: "secret://SHAI_TOKEN_SECRET"    # HMAC-SHA256 signing key
   token_ttl_seconds: 15                          # tokens expire fast
-  no_token_policy: permissive                    # permissive | strict
+  token_policy: strict                           # strict | audit
 ```
 
-`no_token_policy` decides what happens when a request without a token reaches `ShaiTransport`:
+`token_policy` decides what happens when a request without a token reaches `ShaiTransport`. Every legitimate request carries one (tool calls carry the gate's token, connect requests a connect token), so an untokened request is one SHAI did not authorise:
 
-- `permissive` — allows untokenised requests through. Useful during rollout, or for connections that legitimately don't carry tokens (SSE handshakes, session init).
-- `strict` — rejects anything without a valid token. Correct for production once every path has been verified to issue tokens.
+- `strict` (default) — refuses it, with a `denied` `NetworkAuditEvent`.
+- `audit` — forwards it and records an `allowed` `NetworkAuditEvent` with no `token_id`. For rollout: every untokened request is visible in the trail.
 
 ### How it works
 
@@ -299,7 +299,6 @@ still works.
 ### What it does not protect
 
 - Non-MCP outbound calls that don't go through `ShaiTransport`. `subprocess.run("curl ...")` in a code-execution tool is invisible. Network egress control at the infrastructure layer is the right place for that.
-- SSE handshakes and MCP session initialisation, in `permissive` mode. Move to `strict` once you've confirmed tokens are issued on every path you care about.
 
 ## What next
 

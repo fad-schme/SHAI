@@ -69,11 +69,16 @@ class GateDecision(BaseModel, frozen=True):
         Set on every allowed decision. Base64url-encoded signed
         DispatchToken. Pass to MCPSource.call() so ShaiTransport can attach
         it as X-Shai-Token on outbound requests. None when the gate denied.
+
+    token_id:
+        The dispatch token's id, the same one on the gate's AuditEvent. Pass
+        it to scan_tool_result so the result event joins the gate decision.
     """
     allowed:        bool
     deny_reason:    str | None = None
     redacted_args:  dict[str, Any] | None = None
     dispatch_token: str | None = None
+    token_id:       str | None = None
     source_name:    str | None = None
     # Resolved source name — 'local' for LOCAL/SKILL tools, MCP source name
     # for remote tools. Set by check_tool_call from the agent's resolved tool set.

@@ -37,7 +37,7 @@ def _config(**overrides) -> ConnectivityConfig:
     defaults = dict(
         token_secret="test-secret-transport-phase2",
         token_ttl_seconds=15,
-        no_token_policy="permissive",
+        token_policy="strict",
     )
     defaults.update(overrides)
     return ConnectivityConfig(**defaults)
@@ -117,12 +117,17 @@ def _response(status=200, content=b'{"result": "ok"}') -> httpx.Response:
 # inner transport, the network, is mocked. _post is exercised as written:
 # patching it away is how a dropped token went unnoticed.
 
-def _wired_source(seen: list[httpx.Request], sink: RecordingSink):
+def _wired_source(
+    seen: list[httpx.Request], sink: RecordingSink, *,
+    config: ConnectivityConfig | None = None,
+    allowed_urls: list[str] | None = None,
+    status: int = 200,
+):
     from harness.tools.source import MCPSource, MCPSourceParams
 
     def network(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {}})
+        return httpx.Response(status, json={"jsonrpc": "2.0", "id": "1", "result": {}})
 
     async def no_connect(*_, **__) -> str:
         raise AssertionError("the client is wired directly; nothing connects")
@@ -131,11 +136,13 @@ def _wired_source(seen: list[httpx.Request], sink: RecordingSink):
         MCPSourceParams(
             SOURCE, "https://mcp.slack.com", allowed_urls=ALLOWED, allowed_methods=METHODS,
         ),
-        connectivity=_config(), emitter=AuditEmitter([sink]), mint_connect_token=no_connect,
+        connectivity=config or _config(), emitter=AuditEmitter([sink]),
+        mint_connect_token=no_connect,
     )
     src._client = httpx.AsyncClient(
         base_url="https://mcp.slack.com",
-        transport=_transport(emitter=AuditEmitter([sink]),
+        transport=_transport(emitter=AuditEmitter([sink]), config=config or _config(),
+                             allowed_urls=allowed_urls,
                              inner=httpx.MockTransport(network)),
     )
     src._session_id = "sess"
@@ -164,43 +171,103 @@ async def test_mcp_source_call_carries_dispatch_token_to_the_wire():
 
 
 async def test_mcp_source_call_refuses_replayed_token():
-    from harness.core.errors import ConfigError
-
     seen: list[httpx.Request] = []
     src = _wired_source(seen, RecordingSink())
     token = _token()
     await src.call("search_docs", {}, dispatch_token=token)
 
-    # _post reports every request failure as ConfigError; the policy refusal
-    # is its cause.
-    with pytest.raises(ConfigError) as exc:
+    # A policy refusal reaches the caller as itself, not wrapped in ConfigError.
+    with pytest.raises(NetworkPolicyError):
         await src.call("search_docs", {}, dispatch_token=token)
-    assert isinstance(exc.value.__cause__, NetworkPolicyError)
     assert len(seen) == 1
     await src.close()
 
 
 async def test_mcp_source_call_refuses_token_for_another_source():
-    from harness.core.errors import ConfigError
-
     seen: list[httpx.Request] = []
     src = _wired_source(seen, RecordingSink())
 
-    with pytest.raises(ConfigError) as exc:
+    with pytest.raises(NetworkPolicyError):
         await src.call("search_docs", {}, dispatch_token=_token(source_name="other_mcp"))
-    assert isinstance(exc.value.__cause__, NetworkPolicyError)
     assert seen == []
+    await src.close()
+
+
+async def test_mcp_source_call_to_a_destination_outside_allowed_urls_raises_policy_error():
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, RecordingSink(), allowed_urls=["https://other.example.test/*"])
+
+    with pytest.raises(NetworkPolicyError, match="allowed_urls"):
+        await src.call("search_docs", {}, dispatch_token=_token())
+    assert seen == []
+    await src.close()
+
+
+async def test_mcp_source_call_server_error_is_still_a_config_error():
+    """Only the policy refusal is unwrapped: a broken server keeps being
+    reported as it always was."""
+    from harness.core.errors import ConfigError
+
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, RecordingSink(), status=500)
+
+    with pytest.raises(ConfigError, match="POST /message failed"):
+        await src.call("search_docs", {}, dispatch_token=_token())
+    assert len(seen) == 1
     await src.close()
 
 
 async def test_mcp_source_call_without_token_sends_no_token_header():
     seen: list[httpx.Request] = []
-    src = _wired_source(seen, RecordingSink())
+    # Under the strict default an untokened call is refused; audit lets it
+    # reach the wire so the absent header can be checked.
+    src = _wired_source(seen, RecordingSink(), config=_config(token_policy="audit"))
 
     await src.call("search_docs", {})
 
     assert "X-Shai-Token" not in seen[0].headers
     await src.close()
+
+
+# ── token_policy: strict | audit ───────────────────────────────────────────
+
+def test_token_policy_defaults_to_strict():
+    assert ConnectivityConfig(token_secret="t").token_policy == "strict"
+
+
+async def test_audit_forwards_an_untokened_request_and_records_it():
+    """Forwarding an untokened request without a record is what the removed
+    policies did. audit forwards and records it: every untokened request is
+    in the trail, marked by the missing token_id."""
+    sink = RecordingSink()
+    t = _transport(config=_config(token_policy="audit"),
+                   emitter=AuditEmitter([sink]), inner=_network())
+
+    response = await t.handle_async_request(_request())
+
+    assert response.status_code == 200
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "allowed"
+    assert sink.events[0].token_id is None
+
+
+@pytest.mark.parametrize("policy", ["strict", "audit"])
+async def test_a_valid_token_is_handled_the_same_under_either_policy(policy):
+    sink = RecordingSink()
+    t = _transport(config=_config(token_policy=policy),
+                   emitter=AuditEmitter([sink]), inner=_network())
+
+    await t.handle_async_request(_request(token=_token()))
+
+    assert [e.status for e in sink.events] == ["allowed"]
+    assert sink.events[0].token_id is not None
+
+
+async def test_audit_does_not_relax_the_url_check():
+    t = _transport(config=_config(token_policy="audit"), inner=_network())
+
+    with pytest.raises(NetworkPolicyError, match="allowed_urls"):
+        await t.handle_async_request(_request("https://evil.com/steal"))
 
 
 def test_runtime_mcp_source_requires_a_connect_minter():
@@ -289,7 +356,8 @@ async def test_tokened_sse_get_returns_without_reading_the_stream():
 async def test_allowed_url_passes():
     inner = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(inner=inner)
+    # audit lets the untokened request through, so only the URL check is tested.
+    t = _transport(inner=inner, config=_config(token_policy="audit"))
     req = _request("https://mcp.slack.com/message")
     await t.handle_async_request(req)   # must not raise
 
@@ -317,7 +385,7 @@ async def test_empty_allowed_urls_permits_any():
     """Empty allowed_urls = no URL restriction (local tools, test scenarios)."""
     inner = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(allowed_urls=[])
+    t = _transport(allowed_urls=[], config=_config(token_policy="audit"), inner=inner)
     req = _request("https://anywhere.com/api")
     await t.handle_async_request(req)   # must not raise
 
@@ -327,7 +395,7 @@ async def test_empty_allowed_urls_permits_any():
 async def test_allowed_method_passes():
     inner = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(inner=inner)
+    t = _transport(inner=inner, config=_config(token_policy="audit"))
     req = _request(method="GET")
     await t.handle_async_request(req)
 
@@ -342,7 +410,8 @@ async def test_denied_method_raises():
 async def test_method_check_is_case_insensitive():
     inner = AsyncMock()
     inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(allowed_methods=["get", "post"], inner=inner)
+    t = _transport(allowed_methods=["get", "post"], inner=inner,
+                   config=_config(token_policy="audit"))
     req = _request(method="POST")
     await t.handle_async_request(req)   # must not raise
 
@@ -369,18 +438,10 @@ async def test_token_injected_as_header():
            "X-Shai-Token" in captured[0].headers
 
 
-async def test_no_token_permissive_passes():
-    inner = AsyncMock()
-    inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(config=_config(no_token_policy="permissive"), inner=inner)
-    req = _request()  # no token
-    await t.handle_async_request(req)   # must not raise
-
-
 async def test_no_token_strict_raises():
-    t = _transport(config=_config(no_token_policy="strict"))
+    t = _transport(config=_config(token_policy="strict"))
     req = _request()  # no token
-    with pytest.raises(NetworkPolicyError, match="no_token_policy=strict"):
+    with pytest.raises(NetworkPolicyError, match="token_policy=strict"):
         await t.handle_async_request(req)
 
 
@@ -416,17 +477,18 @@ async def test_network_audit_event_emitted_on_allowed_tool_call():
     assert event.deny_reason  is None
 
 
-async def test_no_audit_event_for_tokenless_requests():
-    """SSE and init requests carry no token — no NetworkAuditEvent emitted."""
-    sink  = RecordingSink()
-    inner = AsyncMock()
-    inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(emitter=AuditEmitter([sink]), inner=inner)
+async def test_strict_records_the_untokened_request_it_refuses():
+    """Every untokened request is in the trail under either policy: strict
+    refuses it with a denied event, audit forwards it with an allowed one."""
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
 
-    req = _request()  # no token — simulates SSE or init call
-    await t.handle_async_request(req)
+    with pytest.raises(NetworkPolicyError):
+        await t.handle_async_request(_request())
 
-    assert sink.events == []
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "denied"
+    assert sink.events[0].token_id is None
 
 
 async def test_network_event_reaches_sink_as_jsonl():

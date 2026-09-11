@@ -283,6 +283,7 @@ async def run_scan(
     audit_tags: dict[str, str] | None = None,
     forced_block_reason: str | None = None,
     forced_block_extra: dict[str, Any] | None = None,
+    token_id: str | None = None,
 ) -> ScanVerdict:
     """Run scanners concurrently, apply action logic, emit one AuditEvent.
 
@@ -299,6 +300,9 @@ async def run_scan(
     turn-risk check) fold a block into *this* call's single event instead of
     emitting a second one after the fact. Applied only when the scanners
     themselves did not already block — it raises the floor, never lowers it.
+
+    token_id: the dispatch token of the tool call whose result this is, stamped
+    on the event on every path so it joins the gate decision in the trail.
     """
     start = now_ms()
     on_error = config.on_error
@@ -320,6 +324,7 @@ async def run_scan(
                 tenant_id=tenant_id,
                 duration_ms=0,
                 deny_reason=forced_block_reason,
+                token_id=token_id,
                 audit_tags=audit_tags or {},
                 extra=forced_block_extra,
             )
@@ -332,6 +337,7 @@ async def run_scan(
             tenant_id=tenant_id,
             duration_ms=0,
             disabled=True,
+            token_id=token_id,
             audit_tags=audit_tags or {},
         )
         await emitter.emit(event)
@@ -355,6 +361,7 @@ async def run_scan(
                 "boundary is enabled but no scanner is configured to run — "
                 "declare one under scanners:, or disable the boundary"
             ),
+            token_id=token_id,
             audit_tags=audit_tags or {},
         )
         await emitter.emit(event)
@@ -496,6 +503,7 @@ async def run_scan(
                 duration_ms=now_ms() - start,
                 adapters=adapter_names,
                 deny_reason=f"scan cancelled during scanner '{scanner.name}'",
+                token_id=token_id,
                 audit_tags=audit_tags or {},
             )
             await emitter.emit(event)
@@ -540,6 +548,7 @@ async def run_scan(
                     duration_ms=now_ms() - start,
                     adapters=adapter_names,
                     deny_reason=f"scanner '{scanner.name}' failed (on_error=fail_closed)",
+                    token_id=token_id,
                     audit_tags=audit_tags or {},
                     extra={"on_error": "fail_closed", "failed_scanner": scanner.name},
                 )
@@ -668,6 +677,7 @@ async def run_scan(
         finding_count=len(all_findings),
         max_severity=max_sev,
         deny_reason=forced_block_reason if forced else None,
+        token_id=token_id,
         audit_tags=audit_tags or {},
         extra=extra or None,
     )
@@ -800,6 +810,7 @@ async def run_tool_result_scan(
     state: ScanState,
     normalization: NormalizationConfig | None = None,
     audit_tags: dict[str, str] | None = None,
+    token_id: str | None = None,
 ) -> ScanVerdict:
     """Scan a tool return value. Delegates to run_scan with TOOL_RESULT_SCAN.
 
@@ -828,6 +839,7 @@ async def run_tool_result_scan(
         state=state,
         normalization=normalization,
         audit_tags=audit_tags,
+        token_id=token_id,
     )
 
 

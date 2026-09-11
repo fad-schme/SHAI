@@ -746,20 +746,19 @@ async def test_runtime_source_cannot_send_an_untokened_request(tmp_path, monkeyp
     """A source built at runtime always runs through ShaiTransport and is
     never in onboarding mode: under strict, a request without a token is
     refused. There is no configuration that turns this off."""
-    from harness.core.errors import ConfigError, NetworkPolicyError
+    from harness.core.errors import NetworkPolicyError
 
     seen: list = []
     harness, agent, _, _ = await _live_mcp_harness(
-        tmp_path, monkeypatch, seen, connectivity_extra="  no_token_policy: strict\n",
+        tmp_path, monkeypatch, seen, connectivity_extra="  token_policy: strict\n",
     )
     await harness.load_agent(agent)
     source = await harness.get_source("remote_mcp")
     connect_requests = len(seen)
 
-    with pytest.raises(ConfigError) as exc:
+    with pytest.raises(NetworkPolicyError):
         await source.call("remote_read", {})
 
-    assert isinstance(exc.value.__cause__, NetworkPolicyError)
     assert len(seen) == connect_requests
     await harness.close()
 

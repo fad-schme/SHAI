@@ -107,7 +107,7 @@ async def test_onboarding_connects_untokened_under_strict_and_is_audited(tmp_pat
 
     tools = await _REAL_FETCH_LIVE_TOOLS(
         manifest, provider=None, emitter=emitter,
-        connectivity=ConnectivityConfig(token_secret="t", no_token_policy="strict"),
+        connectivity=ConnectivityConfig(token_secret="t", token_policy="strict"),
     )
 
     assert [t["name"] for t in tools] == ["search"]
@@ -132,7 +132,7 @@ async def test_onboarding_still_refuses_a_destination_outside_allowed_urls(tmp_p
     with pytest.raises(ConfigError):
         await _REAL_FETCH_LIVE_TOOLS(
             manifest, provider=None, emitter=emitter,
-            connectivity=ConnectivityConfig(token_secret="t", no_token_policy="strict"),
+            connectivity=ConnectivityConfig(token_secret="t", token_policy="strict"),
         )
 
     assert seen == []

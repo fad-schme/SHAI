@@ -9,7 +9,7 @@ Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output
 | Field | Type | Always present | Description |
 |---|---|---|---|
 | `timestamp` | ISO 8601 datetime (UTC) | Yes | Wall-clock time of the event |
-| `boundary` | string enum | Yes | `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan` |
+| `boundary` | string enum | Yes | `input_scan`, `tool_call_gate`, `tool_dispatch_check`, `tool_result_scan`, `output_scan`, `file_scan` |
 | `decision` | string enum | Yes | `allow`, `deny`, `blocked`, `redact` |
 | `disabled` | bool | Yes | `true` when the boundary is configured `enabled: false` |
 | `duration_ms` | int | Yes | Wall-clock duration of the boundary call in milliseconds |

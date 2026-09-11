@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import httpx
 
 from harness.core.context import AgentContext
-from harness.core.errors import ConfigError, MCPInvocationError
+from harness.core.errors import ConfigError, MCPInvocationError, NetworkPolicyError
 from harness.core.events import AuditEvent, now_ms
 from harness.core.types import BoundaryName, Decision, ScanAction, Severity, Transport
 from harness.tools.registry import ToolRegistry
@@ -477,8 +477,9 @@ class MCPSource:
         dispatch_token:
             Pass gate.dispatch_token here. ShaiTransport validates it,
             attaches it as X-Shai-Token on the outbound request and emits a
-            NetworkAuditEvent. A call without one is governed by
-            no_token_policy.
+            NetworkAuditEvent. A call without one is refused under
+            token_policy=strict (the default) and recorded with no token_id
+            under audit.
 
         Raises MCPInvocationError on server-side errors.
         Raises ConfigError if the source is not connected.
@@ -838,6 +839,11 @@ class MCPSource:
             )
             response.raise_for_status()
             return response.json()
+        except NetworkPolicyError:
+            # ShaiTransport refused the request and has already emitted its
+            # denied NetworkAuditEvent. The caller must be able to tell a
+            # blocked call from a broken connection, so it is not wrapped.
+            raise
         except Exception as e:
             raise ConfigError(
                 f"MCP source '{self.name}': POST /message failed: {e}",

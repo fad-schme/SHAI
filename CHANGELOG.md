@@ -13,6 +13,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **A request refused by `ShaiTransport` raises `NetworkPolicyError`.**
+  `MCPSource.call()` wrapped the transport's policy refusal in `ConfigError`,
+  so a caller could not tell a blocked call from a broken connection without
+  reading `__cause__`. Other request failures are still reported as
+  `ConfigError`.
 - **Dispatch tokens for MCP tools are bound to the source's manifest.** With
   connectivity enabled, minting read allow-lists from the `sources:` entry,
   which carries none, so every allowed call to a declared MCP source raised out
@@ -27,6 +32,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NetworkAuditEvent` joined a tool call to its gate event.
 
 ### Changed
+- **`connectivity.token_policy: strict | audit` replaces `no_token_policy`,
+  default `strict`.** Every legitimate request carries a token, so an
+  untokened one is refused under `strict` with a denied `NetworkAuditEvent`,
+  and forwarded under `audit` with an event carrying no `token_id`.
+  `permissive`, which let such requests through unrecorded, is gone, and
+  `audit_only`, which recorded nothing, becomes `audit`.
 - **Connectivity is always on.** `connectivity.enabled` is gone: the
   `connectivity:` block and its `token_secret` are required, every allowed
   call is minted a dispatch token, and every MCP source runs through
@@ -43,6 +54,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signed `purpose` (`connect` | `tool_call`): `ShaiTransport` accepts a
   connect token only on those requests and a tool-call token only on
   `tools/call`.
+- **Local tools can verify their dispatch token.** A local tool calls
+  `SHAI.verify_tool_dispatch(tool_name, ctx)` before it runs, and is refused,
+  with one `tool_dispatch_check` audit event, unless `execute_gated_tool_call`
+  put an unexpired, unused token for that tool, agent and local source in
+  scope. `scan_tool_result` takes the call's `token_id`, so the gate, check and
+  result events join on one id.
 
 ### Removed
 - **`harness.connectivity.default_allowed_urls`.** Its only caller derived a

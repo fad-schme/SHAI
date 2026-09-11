@@ -14,13 +14,16 @@ destination directly. It is a signed, time-limited assertion that:
   - and may reach {allowed_urls} using {allowed_methods}
   - before {expires_at}
 
-token_id is a UUID that acts as both identifier and nonce. The ShaiTransport
-nonce store keys on token_id to prevent replay within the TTL window.
+token_id is a UUID that acts as both identifier and nonce. NonceStore keys on
+token_id to prevent replay within the TTL window; ShaiTransport and the local
+dispatch check (SHAI.verify_tool_dispatch) each hold one.
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -195,6 +198,40 @@ def encode_token(token: DispatchToken) -> str:
 
 class TokenError(Exception):
     """Raised by verify_token() on any validation failure."""
+
+
+# The gate's token for the local tool call in progress. execute_gated_tool_call
+# sets it for the duration of the tool's invocation, so a tool reads it through
+# SHAI.verify_tool_dispatch without its signature changing. A tool called any
+# other way finds None. asyncio.to_thread copies the context, so a sync tool
+# run on a worker thread sees it too.
+current_dispatch_token: ContextVar[str | None] = ContextVar(
+    "shai_dispatch_token", default=None,
+)
+
+
+class NonceStore:
+    """One-time use of token_id within the token's own lifetime.
+
+    Bounded by TTL: expired entries are pruned on every call, so the store
+    holds at most the tokens consumed within one TTL window. asyncio.Lock
+    makes it safe for concurrent calls on one event loop.
+    """
+
+    def __init__(self) -> None:
+        self._used: dict[str, datetime] = {}
+        self._lock = asyncio.Lock()
+
+    async def consume(self, token_id: str, expires_at: datetime) -> str | None:
+        """Mark token_id used. Returns a deny reason if it already was."""
+        now = datetime.now(UTC)
+        async with self._lock:
+            for k in [k for k, exp in self._used.items() if exp <= now]:
+                del self._used[k]
+            if token_id in self._used:
+                return f"token_id '{token_id}' has already been used (replay prevented)"
+            self._used[token_id] = expires_at
+            return None
 
 
 def verify_token(encoded: str, secret: bytes) -> DispatchToken:

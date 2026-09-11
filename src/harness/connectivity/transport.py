@@ -24,7 +24,6 @@ Design decisions:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -34,6 +33,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from harness.connectivity.token import (
+    NonceStore,
     TokenError,
     matches_allowed_url,
     verify_token,
@@ -85,8 +85,8 @@ class ShaiTransport(httpx.AsyncBaseTransport):
     token check only. The URL and method checks still apply, and every one of
     its requests is audited.
 
-    Thread/task safety: the nonce store uses asyncio.Lock — safe for
-    concurrent MCP calls within the same event loop.
+    Replay: one NonceStore per transport, so per source. A token is bound to
+    one source, so it can only ever be consumed here.
     """
 
     def __init__(
@@ -113,10 +113,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         self._connectivity    = connectivity
         self._onboarding      = onboarding
         self._inner           = inner or httpx.AsyncHTTPTransport()
-        # Nonce store: token_id → expires_at. Prevents replay within TTL window.
-        # Bounded by TTL — expired entries pruned on each access.
-        self._used_nonces: dict[str, datetime] = {}
-        self._nonce_lock  = asyncio.Lock()
+        self._nonces          = NonceStore()
 
     async def handle_async_request(
         self, request: httpx.Request
@@ -240,9 +237,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 raise NetworkPolicyError(deny_reason)
 
             # ── 3d. Nonce check — prevent replay within TTL window ────────
-            deny_reason = await self._check_and_consume_nonce(
-                token_id, token.expires_at
-            )
+            deny_reason = await self._nonces.consume(token_id, token.expires_at)
             if deny_reason:
                 await self._emit(
                     token_id=token_id, tool_name=tool_name,
@@ -266,12 +261,10 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             pass
 
         # B105 fires on the "strict" literal; it is a policy name, not a password.
-        elif self._connectivity.no_token_policy == "strict":  # nosec B105
-            # strict mode: reject requests with no token
-            # (not suitable for SSE/init — use permissive for those)
+        elif self._connectivity.token_policy == "strict":  # nosec B105
             deny_reason = (
                 f"no dispatch token on request to '{url_str}' "
-                f"(no_token_policy=strict)"
+                f"(token_policy=strict)"
             )
             await self._emit(
                 token_id=None, tool_name=None,
@@ -282,6 +275,13 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             )
             raise NetworkPolicyError(deny_reason)
 
+        else:
+            # token_policy=audit: forwarded, and recorded in step 5 with
+            # token_id=None so the untokened request stays visible.
+            log.warning("untokened request forwarded (token_policy=audit)",
+                        extra={"source": self._source_name, "method": method,
+                               "tenant_id": self._tenant_id})
+
         # ── 4. Forward to inner transport ─────────────────────────────────
         # Remove the extension so httpx doesn't try to serialise it
         request.extensions.pop("shai_dispatch_token", None)
@@ -289,9 +289,12 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         response    = await self._inner.handle_async_request(request)
         duration_ms = int(time.monotonic() * 1000) - start_ms
 
-        # ── 5. Emit NetworkAuditEvent — every tokened request, and every
-        #    request of the onboarding connection ──────────────────────────
-        if token_id is not None or self._onboarding:
+        # ── 5. Emit NetworkAuditEvent — every tokened request, every
+        #    untokened one forwarded under audit, and every request of the
+        #    onboarding connection ─────────────────────────────────────────
+        recorded = (token_id is not None or self._onboarding
+                    or self._connectivity.token_policy == "audit")
+        if recorded:
             # The SSE GET is a stream that never ends: it passes through
             # unread, bytes_recv=0. Buffering it to count bytes would hang the
             # connect forever. Every other response is buffered and re-attached.
@@ -314,29 +317,6 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 )
 
         return response
-
-    async def _check_and_consume_nonce(
-        self, token_id: str, expires_at: datetime
-    ) -> str | None:
-        """Consume token_id as a one-time nonce. Returns deny_reason or None.
-
-        Prunes expired nonces on every call — the store stays bounded
-        by the number of in-flight requests within the TTL window.
-        """
-        now = datetime.now(UTC)
-
-        async with self._nonce_lock:
-            # Prune expired entries
-            expired = [k for k, exp in self._used_nonces.items() if exp <= now]
-            for k in expired:
-                del self._used_nonces[k]
-
-            if token_id in self._used_nonces:
-                return (
-                    f"token_id '{token_id}' has already been used "                    f"(replay prevented)"                )
-            # Consume — mark as used until the token's own expiry
-            self._used_nonces[token_id] = expires_at
-            return None
 
     async def _emit(
         self, *, token_id: str | None, tool_name: str | None,

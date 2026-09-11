@@ -69,6 +69,7 @@ _BOUNDARIES = (
     "input_scan",
     "tool_call_gate",
     "tool_result_scan",
+    "tool_dispatch_check",
     "output_scan",
     "file_scan",
     "mcp_metadata_scan",

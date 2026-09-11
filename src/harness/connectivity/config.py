@@ -25,17 +25,19 @@ class ConnectivityConfig(BaseModel, frozen=True, extra="forbid"):
         Token lifetime. Short by design — one gate decision, one dispatch.
         Default 15 seconds.
 
-    no_token_policy:
-        What ShaiTransport does when a request carries no dispatch token.
+    token_policy:
+        What ShaiTransport does with a request that carries no dispatch
+        token. Every legitimate request carries one, so an untokened request
+        is one SHAI did not authorise.
 
-        strict:    reject requests with no token
-        permissive: allow requests with no token (default)
-        audit_only: allow and log — useful during rollout
+        strict: refuse it, with a denied NetworkAuditEvent (default)
+        audit:  forward it and record an allowed NetworkAuditEvent with no
+                token_id, so every untokened request stays visible
 
     gateway_url:
         Reserved for future sidecar gateway integration. Not used in Phase 1.
     """
     token_secret:       str     = Field(min_length=1)
     token_ttl_seconds:  int     = Field(default=15, ge=1, le=300)
-    no_token_policy:    Literal["strict", "permissive", "audit_only"] = "permissive"
+    token_policy:       Literal["strict", "audit"] = "strict"
     gateway_url:        str     = ""   # reserved

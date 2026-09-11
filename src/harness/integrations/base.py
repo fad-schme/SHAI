@@ -55,6 +55,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from harness.connectivity.token import current_dispatch_token
 from harness.core.types import Irreversibility, Transport
 from harness.tools.tool import ArgumentRule, Tool
 
@@ -324,8 +325,8 @@ async def dispatch_remote(
 
     The dispatch token is the whole point: ShaiTransport reads it off the
     outbound request and checks HMAC, expiry, source binding, URL and method.
-    A call dispatched without it is refused under no_token_policy=strict and
-    leaves no NetworkAuditEvent to correlate under permissive.
+    A call dispatched without it is refused under token_policy=strict (the
+    default), and forwarded but recorded with no token_id under audit.
     """
     source = await harness.get_source(gate.source_name)
     return await source.call(tool_name, args, dispatch_token=gate.dispatch_token)
@@ -366,7 +367,14 @@ async def execute_gated_tool_call(
 
     effective_args = gate.redacted_args if gate.redacted_args is not None else tool_args
     if invoke is not None:
-        result = await invoke(effective_args)
+        # The gate's token is in scope while the tool runs, so a local tool
+        # checks it through harness.verify_tool_dispatch with no change to its
+        # signature. Reset on every exit: the token belongs to this call only.
+        scope = current_dispatch_token.set(gate.dispatch_token)
+        try:
+            result = await invoke(effective_args)
+        finally:
+            current_dispatch_token.reset(scope)
     elif gate.source_name and gate.source_name != "local":
         result = await dispatch_remote(harness, tool_name, effective_args, gate)
     else:
@@ -379,7 +387,7 @@ async def execute_gated_tool_call(
     if not text:
         return GatedCall(status="allowed", text=text, result=result, gate=gate)
 
-    verdict = await harness.scan_tool_result(text, ctx)
+    verdict = await harness.scan_tool_result(text, ctx, token_id=gate.token_id)
     if verdict.blocked:
         log.warning("tool result blocked — indirect injection detected",
                     extra={"tool": tool_name, **ctx.to_log_fields()})

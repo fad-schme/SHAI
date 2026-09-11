@@ -438,7 +438,7 @@ in-process API sees its own write immediately.
 connectivity:                 # required
   token_secret: "secret://SHAI_TOKEN_SECRET"
   token_ttl_seconds: 15
-  no_token_policy: permissive # permissive | strict
+  token_policy: strict        # strict | audit
 ```
 
 Connectivity is always on: `check_tool_call` issues a signed `DispatchToken`

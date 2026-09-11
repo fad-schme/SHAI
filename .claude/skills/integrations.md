@@ -281,8 +281,8 @@ attached — which is what `ShaiTransport` validates on the outbound request.
 `HarnessToolNode` does this for any tool name not in its local list, and
 `gated_dispatch` does it when you omit `dispatch`. Dispatching an MCP tool
 yourself without threading `gate.dispatch_token` into `MCPSource.call()`
-leaves the request untokened: refused under `no_token_policy: strict`, and
-uncorrelatable in the audit trail under `permissive`.
+leaves the request untokened: refused under `token_policy: strict` (the
+default), and forwarded but recorded with no `token_id` under `audit`.
 
 
 ---
