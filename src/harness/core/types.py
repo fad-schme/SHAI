@@ -26,7 +26,8 @@ class BoundaryName(StrEnum):
     FILE_SCAN          = "file_scan"
     TOOL_RESULT_SCAN   = "tool_result_scan"
     # A local tool's own check of the gate's dispatch token, run by the tool
-    # before it executes (SHAI.verify_tool_dispatch). The MCP counterpart is
+    # before it executes (SHAI.verify_tool_dispatch), one event per check,
+    # emitted when SHAI.dispatch_scope closes. The MCP counterpart is
     # ShaiTransport's network_egress event.
     TOOL_DISPATCH_CHECK = "tool_dispatch_check"
     # Source-connection time, not per-turn: MCP tool metadata is scanned once

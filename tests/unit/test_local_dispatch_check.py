@@ -1,9 +1,10 @@
 """SHAI.verify_tool_dispatch — the dispatch-token check a local tool runs first.
 
 The gate mints a token for every allowed call. For an MCP tool ShaiTransport
-checks it; a local tool has no transport, so it asks SHAI directly. These tests
-drive the check through the public API only: execute_gated_tool_call puts the
-token in scope, and anything else finds none.
+checks it; a local tool has no transport, so it asks SHAI directly. The check
+is sync and raises DispatchRefused; dispatch_scope puts the token in scope and
+emits one event per check; execute_gated_tool_call renders a refusal as the
+standard denial.
 """
 from __future__ import annotations
 
@@ -14,17 +15,14 @@ from typing import Any
 
 import pytest
 
-from harness.connectivity.token import (
-    _SIGNED_FIELDS,
-    current_dispatch_token,
-    encode_token,
-    sign_token,
-)
+from harness.connectivity.token import _SIGNED_FIELDS, encode_token, sign_token
 from harness.core.context import AgentContext
+from harness.core.errors import DispatchRefused
 from harness.core.harness import SHAI
 from harness.core.signing import claims_of, sign
 from harness.core.types import BoundaryName, Decision, Transport
-from harness.integrations.base import execute_gated_tool_call
+from harness.core.verdicts import GateDecision
+from harness.integrations.base import execute_gated_tool_call, invoke_tool
 from harness.tools.tool import Tool
 from tests.conftest import RecordingSink
 
@@ -87,83 +85,6 @@ def _signed(h: SHAI, **overrides: Any) -> str:
     return encode_token(sign_token(**fields))
 
 
-async def _check_with(h: SHAI, token: str | None, ctx: AgentContext,
-                      tool: str = "search_docs"):
-    scope = current_dispatch_token.set(token)
-    try:
-        return await h.verify_tool_dispatch(tool, ctx)
-    finally:
-        current_dispatch_token.reset(scope)
-
-
-# ── Happy path through the integration wrapper ────────────────────────────
-
-async def test_wrapped_call_passes_and_joins_gate_check_and_result(tmp_path: Path):
-    h, sink = await _harness(tmp_path)
-    ctx = AgentContext(agent_id="orchestrator_agent")
-    seen: list[Any] = []
-
-    async def tool(args: dict) -> str:
-        seen.append(await h.verify_tool_dispatch("search_docs", ctx))
-        return "benign result"
-
-    call = await execute_gated_tool_call(
-        harness=h, ctx=ctx, tool_name="search_docs",
-        tool_args={"query": "q"}, invoke=tool,
-    )
-
-    assert call.status == "allowed"
-    assert seen[0].allowed
-    [gate]   = _events(sink, BoundaryName.TOOL_CALL_GATE)
-    [check]  = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
-    [result] = _events(sink, BoundaryName.TOOL_RESULT_SCAN)
-    assert check.decision == Decision.ALLOW
-    assert gate.token_id is not None
-    assert check.token_id == gate.token_id == result.token_id
-
-
-async def test_token_is_single_use(tmp_path: Path):
-    h, sink = await _harness(tmp_path)
-    ctx = AgentContext(agent_id="orchestrator_agent")
-    seen: list[Any] = []
-
-    async def tool(args: dict) -> str:
-        seen.append(await h.verify_tool_dispatch("search_docs", ctx))
-        seen.append(await h.verify_tool_dispatch("search_docs", ctx))
-        return "ok"
-
-    await execute_gated_tool_call(
-        harness=h, ctx=ctx, tool_name="search_docs",
-        tool_args={"query": "q"}, invoke=tool,
-    )
-
-    assert seen[0].allowed
-    assert not seen[1].allowed
-    assert "already been used" in seen[1].deny_reason
-    assert len(_events(sink, BoundaryName.TOOL_DISPATCH_CHECK)) == 2
-
-
-async def test_gate_deny_never_reaches_the_tool(tmp_path: Path):
-    h, sink = await _harness(tmp_path)
-    ctx = AgentContext(agent_id="orchestrator_agent")
-    ran: list[bool] = []
-
-    async def tool(args: dict) -> str:
-        ran.append(True)
-        return "ok"
-
-    call = await execute_gated_tool_call(
-        harness=h, ctx=ctx, tool_name="not_a_registered_tool",
-        tool_args={}, invoke=tool,
-    )
-
-    assert call.status == "denied"
-    assert not ran
-    assert _events(sink, BoundaryName.TOOL_DISPATCH_CHECK) == []
-
-
-# ── Refusals — each emits exactly one event with a reason ─────────────────
-
 def _expired(h: SHAI) -> str:
     tok = sign_token(
         agent_id="orchestrator_agent", sub_agent_id=None, tenant_id=h._tenant_id,
@@ -184,47 +105,161 @@ def _tampered(h: SHAI) -> str:
     return good[:-4] + ("AAAA" if not good.endswith("AAAA") else "BBBB")
 
 
-@pytest.mark.parametrize("case, make_token, ctx_agent, tool, reason", [
-    ("direct call, no token", lambda h: None, "orchestrator_agent",
-     "search_docs", "no dispatch token"),
-    ("malformed", lambda h: "not-a-token", "orchestrator_agent",
-     "search_docs", "invalid dispatch token"),
-    ("expired", _expired, "orchestrator_agent", "search_docs", "expired"),
-    ("tampered", _tampered, "orchestrator_agent", "search_docs",
-     "invalid dispatch token"),
-    ("other tool", lambda h: _signed(h, tool_name="list_inbox"),
-     "orchestrator_agent", "search_docs", "tool"),
-    ("other agent", lambda h: _signed(h, agent_id="someone_else"),
-     "orchestrator_agent", "search_docs", "agent"),
-    ("mcp source", lambda h: _signed(h, source_name="slack_mcp",
-                                     allowed_urls=["https://slack.com/*"]),
-     "orchestrator_agent", "search_docs", "source"),
-    ("connect token", lambda h: _signed(h, purpose="connect", tool_name=None),
-     "orchestrator_agent", "search_docs", "purpose"),
-])
-async def test_refused_with_one_event(tmp_path: Path, case, make_token,
-                                      ctx_agent, tool, reason):
-    h, sink = await _harness(tmp_path)
-    ctx = AgentContext(agent_id=ctx_agent)
-
-    decision = await _check_with(h, make_token(h), ctx, tool)
-
-    assert not decision.allowed, case
-    assert reason in decision.deny_reason, case
-    [event] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
-    assert event.decision == Decision.DENY
-    assert event.deny_reason == decision.deny_reason
-    assert len(sink.events) == 1
+async def _gated(h: SHAI, ctx: AgentContext, invoke: Any, tool: str = "search_docs"):
+    return await execute_gated_tool_call(
+        harness=h, ctx=ctx, tool_name=tool, tool_args={"query": "q"}, invoke=invoke,
+    )
 
 
-async def test_a_tool_outside_the_agents_set_is_refused(tmp_path: Path):
-    """A valid, correctly bound token still does not run a tool the agent was
-    never given — the check resolves the tool the way the gate does."""
+# ── Through the integration wrapper ───────────────────────────────────────
+
+async def test_wrapped_call_passes_and_joins_gate_check_and_result(tmp_path: Path):
     h, sink = await _harness(tmp_path)
     ctx = AgentContext(agent_id="orchestrator_agent")
 
-    decision = await _check_with(h, _signed(h, tool_name="unknown_tool"), ctx,
-                                 tool="unknown_tool")
+    async def tool(args: dict) -> str:
+        h.verify_tool_dispatch("search_docs")
+        return "benign result"
 
-    assert not decision.allowed
-    assert len(_events(sink, BoundaryName.TOOL_DISPATCH_CHECK)) == 1
+    call = await _gated(h, ctx, tool)
+
+    assert call.status == "allowed"
+    [gate]   = _events(sink, BoundaryName.TOOL_CALL_GATE)
+    [check]  = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
+    [result] = _events(sink, BoundaryName.TOOL_RESULT_SCAN)
+    assert check.decision == Decision.ALLOW
+    assert gate.token_id is not None
+    assert check.token_id == gate.token_id == result.token_id
+
+
+async def test_sync_tool_on_a_worker_thread_is_checked(tmp_path: Path):
+    """The check is sync: a plain-def tool run by invoke_tool on a worker
+    thread calls it directly, and the scope still records the check."""
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+
+    def search_docs(query: str) -> str:
+        h.verify_tool_dispatch("search_docs")
+        return "benign result"
+
+    call = await _gated(h, ctx, lambda args: invoke_tool(search_docs, args))
+
+    assert call.status == "allowed"
+    [check] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
+    assert check.decision == Decision.ALLOW
+
+
+async def test_refusal_is_rendered_as_the_standard_denial(tmp_path: Path):
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    ran: list[bool] = []
+
+    async def tool(args: dict) -> str:
+        h.verify_tool_dispatch("list_inbox")   # not the tool the gate allowed
+        ran.append(True)
+        return "should not run"
+
+    call = await _gated(h, ctx, tool)
+
+    assert call.status == "denied"
+    assert not ran
+    assert call.message.startswith("Tool call denied: token was issued for another tool")
+    [check] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
+    assert check.decision == Decision.DENY
+    assert check.deny_reason in call.message
+    assert _events(sink, BoundaryName.TOOL_RESULT_SCAN) == []
+
+
+async def test_token_is_single_use(tmp_path: Path):
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+
+    async def tool(args: dict) -> str:
+        h.verify_tool_dispatch("search_docs")
+        h.verify_tool_dispatch("search_docs")
+        return "ok"
+
+    call = await _gated(h, ctx, tool)
+
+    assert call.status == "denied"
+    assert "already been used" in call.message
+    decisions = [e.decision for e in _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)]
+    assert decisions == [Decision.ALLOW, Decision.DENY]
+
+
+async def test_gate_deny_never_reaches_the_tool(tmp_path: Path):
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    ran: list[bool] = []
+
+    async def tool(args: dict) -> str:
+        ran.append(True)
+        return "ok"
+
+    call = await _gated(h, ctx, tool, tool="not_a_registered_tool")
+
+    assert call.status == "denied"
+    assert not ran
+    assert _events(sink, BoundaryName.TOOL_DISPATCH_CHECK) == []
+
+
+# ── Refusals inside a scope — each raises and emits exactly one event ─────
+
+@pytest.mark.parametrize("case, make_token, tool, reason", [
+    ("gate allowed nothing", lambda h: None, "search_docs", "no dispatch token"),
+    ("malformed", lambda h: "not-a-token", "search_docs", "invalid dispatch token"),
+    ("expired", _expired, "search_docs", "expired"),
+    ("tampered", _tampered, "search_docs", "invalid dispatch token"),
+    ("other tool", lambda h: _signed(h, tool_name="list_inbox"), "search_docs",
+     "another tool"),
+    ("other agent", lambda h: _signed(h, agent_id="someone_else"), "search_docs",
+     "another agent"),
+    ("mcp source", lambda h: _signed(h, source_name="slack_mcp",
+                                     allowed_urls=["https://slack.com/*"]),
+     "search_docs", "source"),
+    ("connect token", lambda h: _signed(h, purpose="connect", tool_name=None),
+     "search_docs", "purpose"),
+    ("tool outside the agent's set", lambda h: _signed(h, tool_name="unknown_tool"),
+     "unknown_tool", "source"),
+])
+async def test_refused_with_one_event(tmp_path: Path, case, make_token, tool, reason):
+    h, sink = await _harness(tmp_path)
+    ctx  = AgentContext(agent_id="orchestrator_agent")
+    gate = GateDecision(allowed=True, dispatch_token=make_token(h))
+
+    with pytest.raises(DispatchRefused, match=reason):
+        async with h.dispatch_scope(ctx, gate):
+            h.verify_tool_dispatch(tool)
+
+    [event] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
+    assert event.decision == Decision.DENY, case
+    assert reason in event.deny_reason, case
+    assert len(sink.events) == 1
+
+
+async def test_a_defect_in_the_check_refuses(tmp_path: Path, monkeypatch):
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+
+    def broken(*_: Any) -> str | None:
+        raise RuntimeError("store exploded")
+
+    monkeypatch.setattr(h._dispatch_nonces, "consume", broken)
+
+    async def tool(args: dict) -> str:
+        h.verify_tool_dispatch("search_docs")
+        return "should not run"
+
+    call = await _gated(h, ctx, tool)
+
+    assert call.status == "denied"
+    assert "dispatch check failed: RuntimeError" in call.message
+    [event] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
+    assert event.decision == Decision.DENY
+
+
+def test_no_scope_raises(tmp_path: Path):
+    h = SHAI.__new__(SHAI)
+    h._tenant_id = "t"
+    with pytest.raises(DispatchRefused, match="no dispatch token in scope"):
+        h.verify_tool_dispatch("search_docs")

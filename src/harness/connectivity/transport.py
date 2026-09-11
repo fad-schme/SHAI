@@ -237,7 +237,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 raise NetworkPolicyError(deny_reason)
 
             # ── 3d. Nonce check — prevent replay within TTL window ────────
-            deny_reason = await self._nonces.consume(token_id, token.expires_at)
+            deny_reason = self._nonces.consume(token_id, token.expires_at)
             if deny_reason:
                 await self._emit(
                     token_id=token_id, tool_name=tool_name,

@@ -75,6 +75,13 @@ class NetworkPolicyError(HarnessError):
         super().__init__(message, op=op)
 
 
+class DispatchRefused(HarnessError):
+    """Raised by SHAI.verify_tool_dispatch when it refuses the running local
+    tool call. execute_gated_tool_call renders it as a denied GatedCall that
+    carries the refusal reason to the model.
+    """
+
+
 class MCPInvocationError(HarnessError):
     """MCP server returned a JSON-RPC error during tool invocation.
 

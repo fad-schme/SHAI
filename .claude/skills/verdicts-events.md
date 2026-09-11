@@ -75,6 +75,8 @@ class GateDecision:
     deny_reason:    str | None    # set when allowed=False
     redacted_args:  dict | None   # set when L7 arg scanning redacted args
     dispatch_token: str | None    # set when allowed=True
+    token_id:       str | None    # the token's id, same as on the gate AuditEvent
+    source_name:    str | None    # 'local' or the MCP source the tool resolves to
 ```
 
 **Pattern:**
@@ -142,6 +144,7 @@ class AuditEvent:
 |---|---|
 | `input_scan` | `scan_input()` |
 | `tool_call_gate` | `check_tool_call()` |
+| `tool_dispatch_check` | `verify_tool_dispatch()` — one event per check, emitted when `dispatch_scope()` closes |
 | `tool_result_scan` | `scan_tool_result()` |
 | `output_scan` | `scan_output()` |
 | `file_scan` | `scan_file()` |

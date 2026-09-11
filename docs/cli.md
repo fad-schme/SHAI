@@ -187,7 +187,7 @@ Filter flags:
 
 | Flag | Values |
 |---|---|
-| `--boundary` / `-b` | `input_scan`, `tool_call_gate`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `system` |
+| `--boundary` / `-b` | `input_scan`, `tool_call_gate`, `tool_dispatch_check`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `mcp_source_onboarding`, `system` |
 | `--decision` / `-d` | `allow`, `warn`, `blocked`, `deny`, `redact`, `degraded`, `startup` |
 | `--last` / `-n` | N lines (default 20) |
 | `--follow` / `-F` | Follow the file |

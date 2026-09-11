@@ -14,6 +14,7 @@ HarnessError
 ├── PolicyEvaluationError     — policy engine internal failure (not a normal deny)
 ├── AuditEmissionError        — all audit sinks failed simultaneously
 ├── NetworkPolicyError        — ShaiTransport blocked an outbound MCP request
+├── DispatchRefused           — a local tool's verify_tool_dispatch refused its call
 ├── SecretNotFound            — secret:// reference not in environment
 └── MCPInvocationError        — MCP server returned a JSON-RPC error
 ```

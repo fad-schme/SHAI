@@ -265,7 +265,7 @@ agent = Agent(name="assistant", tools=gated)
 | LangChain Agent Loop (`create_agent`, v0.3+) | `ShaiMiddleware` |
 | LangChain classic (`create_react_agent`) | `wrap_tools` |
 | Anthropic SDK raw loop | `gated_dispatch` |
-| Any framework with manual tool dispatch | `check_tool_call` + `scan_tool_result` directly |
+| Any framework with manual tool dispatch | `check_tool_call` + `dispatch_scope` + `scan_tool_result` directly |
 
 Every wrapper on this page runs the same contract: `check_tool_call` before
 dispatch, `scan_tool_result` on what comes back. You never call either
@@ -283,6 +283,24 @@ attached — which is what `ShaiTransport` validates on the outbound request.
 yourself without threading `gate.dispatch_token` into `MCPSource.call()`
 leaves the request untokened: refused under `token_policy: strict` (the
 default), and forwarded but recorded with no `token_id` under `audit`.
+
+**Local tools check their own token.** A local tool calls
+`harness.verify_tool_dispatch("<tool name>")` first. It is sync, passes once
+per token for an unexpired token issued for this tool, agent and local source,
+and otherwise raises `DispatchRefused` — which every integration renders as
+the standard denial. Each check emits one `tool_dispatch_check` event with the
+call's `token_id`. The integrations run tools inside
+`harness.dispatch_scope(ctx, gate)`, where the check finds the token; a manual
+loop opens it around its own call:
+
+```python
+try:
+    async with harness.dispatch_scope(ctx, gate):
+        raw = await dispatch(name, gate.redacted_args or args)
+except DispatchRefused as e:
+    ...  # report f"Denied: {e}" to the model
+tv = await harness.scan_tool_result(str(raw), ctx, token_id=gate.token_id)
+```
 
 
 ---

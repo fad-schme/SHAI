@@ -18,6 +18,7 @@ from harness.core.errors import (
     AgentNotRegisteredError,
     AuditEmissionError,
     ConfigError,
+    DispatchRefused,
     HarnessError,
     MCPInvocationError,
     NetworkPolicyError,
@@ -97,4 +98,5 @@ __all__ = [
     "AuditEmissionError",
     "MCPInvocationError",
     "NetworkPolicyError",
+    "DispatchRefused",
 ]

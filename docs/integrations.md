@@ -53,7 +53,7 @@ Tools discovered from an MCP source can't declare either — the manifest has no
 | CrewAI | `wrap_tools()` |
 | PydanticAI | `harness_tool` decorator + `add_harness_middleware()` |
 | OpenAI Agents SDK | `wrap_tools()` |
-| Anything with manual tool dispatch | Call `check_tool_call` + `scan_tool_result` directly |
+| Anything with manual tool dispatch | Call `check_tool_call`, `dispatch_scope` and `scan_tool_result` directly |
 
 Every wrapper on this page runs the same contract: `check_tool_call` before
 dispatch, `scan_tool_result` on what comes back. You never call either
@@ -72,6 +72,30 @@ yourself without threading `gate.dispatch_token` into `MCPSource.call()`
 leaves the request untokened: refused under `token_policy: strict` (the
 default), and forwarded but recorded with no `token_id` under `audit`.
 
+## Local tools: checking the dispatch token
+
+Every allowed call carries a dispatch token. For an MCP tool, `ShaiTransport`
+checks it. A local tool checks its own by calling `verify_tool_dispatch` before
+doing anything else — it needs a reference to the SHAI instance:
+
+```python
+@shai_tool(tags=["financial", "external"])
+def transfer_funds(recipient: str, amount: int) -> str:
+    harness.verify_tool_dispatch("transfer_funds")
+    return _transfer(recipient, amount)
+```
+
+The check is sync, so sync and async tools call it the same way. It passes
+only for an unexpired token the gate issued for this tool, this agent and its
+local source, and each token passes once. Otherwise it raises
+`DispatchRefused`, which every integration on this page turns into the same
+denial a gate deny produces, so the model receives the refusal reason.
+Each check emits one `tool_dispatch_check` audit event carrying the same
+`token_id` as the call's gate and `scan_tool_result` events.
+
+The integrations run each tool inside `harness.dispatch_scope(ctx, gate)`,
+which is where the check finds the token. In a manual loop you open the scope
+yourself — see [Manual dispatch](#manual-dispatch-any-framework).
 
 ## LangGraph
 
@@ -222,6 +246,8 @@ If your framework isn't listed, or you want full control:
 ```python
 from langchain_core.messages import ToolMessage
 
+from harness import DispatchRefused
+
 async def run_loop(llm, messages, harness, ctx):
     for _ in range(10):
         response = await llm.ainvoke(messages)
@@ -237,8 +263,16 @@ async def run_loop(llm, messages, harness, ctx):
                     content=f"Denied: {gate.deny_reason}", tool_call_id=tc["id"]))
                 continue
 
-            raw     = await dispatch(tc["name"], gate.redacted_args or tc["args"])
-            tv      = await harness.scan_tool_result(str(raw), ctx)
+            try:
+                # The tool's verify_tool_dispatch reads the token from here.
+                async with harness.dispatch_scope(ctx, gate):
+                    raw = await dispatch(tc["name"], gate.redacted_args or tc["args"])
+            except DispatchRefused as e:
+                messages.append(ToolMessage(
+                    content=f"Denied: {e}", tool_call_id=tc["id"]))
+                continue
+
+            tv      = await harness.scan_tool_result(str(raw), ctx, token_id=gate.token_id)
             content = tv.redacted_text or str(raw)
             if tv.blocked:
                 content = "Tool result blocked by security policy"

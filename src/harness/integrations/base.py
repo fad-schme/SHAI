@@ -55,14 +55,15 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from harness.connectivity.token import current_dispatch_token
+from harness.core.errors import DispatchRefused
 from harness.core.types import Irreversibility, Transport
+from harness.core.verdicts import GateDecision
 from harness.tools.tool import ArgumentRule, Tool
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
     from harness.core.harness import SHAI
-    from harness.core.verdicts import GateDecision, ScanVerdict
+    from harness.core.verdicts import ScanVerdict
 
 log = logging.getLogger(__name__)
 
@@ -263,7 +264,8 @@ class GatedCall:
         allowed  — the call ran and its result passed scan_tool_result.
                    `text` is what the model may see (redacted when the scan
                    redacted); `result` is the raw tool return.
-        denied   — the gate refused; the tool never ran. `gate` carries why.
+        denied   — the gate refused and the tool never ran, or the tool's
+                   dispatch check refused it. `gate` carries why.
         blocked  — the tool ran but its result was blocked as indirect
                    injection. `verdict` carries the findings.
 
@@ -367,14 +369,20 @@ async def execute_gated_tool_call(
 
     effective_args = gate.redacted_args if gate.redacted_args is not None else tool_args
     if invoke is not None:
-        # The gate's token is in scope while the tool runs, so a local tool
-        # checks it through harness.verify_tool_dispatch with no change to its
-        # signature. Reset on every exit: the token belongs to this call only.
-        scope = current_dispatch_token.set(gate.dispatch_token)
+        # dispatch_scope puts the gate's token where the tool's
+        # verify_tool_dispatch reads it, and records each check it runs. A
+        # refused check becomes the same denial a gate deny produces.
         try:
-            result = await invoke(effective_args)
-        finally:
-            current_dispatch_token.reset(scope)
+            async with harness.dispatch_scope(ctx, gate):
+                result = await invoke(effective_args)
+        except DispatchRefused as e:
+            log.info("tool call refused by its dispatch check",
+                     extra={"tool": tool_name, "reason": str(e),
+                            "token_id": gate.token_id, **ctx.to_log_fields()})
+            return GatedCall(status="denied", gate=GateDecision(
+                allowed=False, deny_reason=str(e),
+                token_id=gate.token_id, source_name=gate.source_name,
+            ))
     elif gate.source_name and gate.source_name != "local":
         result = await dispatch_remote(harness, tool_name, effective_args, gate)
     else:

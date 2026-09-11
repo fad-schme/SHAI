@@ -31,14 +31,14 @@ Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output
 
 ## Decision values by boundary
 
-| Decision | `input_scan` | `tool_call_gate` | `tool_result_scan` | `output_scan` | `file_scan` |
-|---|---|---|---|---|---|
-| `allow` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `deny` | — | ✓ | — | — | — |
-| `blocked` | ✓ | — | ✓ | ✓ | ✓ |
-| `redact` | — | ✓ | — | — | — |
+| Decision | `input_scan` | `tool_call_gate` | `tool_dispatch_check` | `tool_result_scan` | `output_scan` | `file_scan` |
+|---|---|---|---|---|---|---|
+| `allow` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `deny` | — | ✓ | ✓ | — | — | — |
+| `blocked` | ✓ | — | — | ✓ | ✓ | ✓ |
+| `redact` | — | ✓ | — | — | — | — |
 
-`deny` is only used by the tool call gate. `blocked` is only used by scan boundaries. `redact` occurs on the gate when a policy rule has `action: redact`.
+`deny` is used by the tool call gate and the local tool dispatch check. `blocked` is only used by scan boundaries. `redact` occurs on the gate when a policy rule has `action: redact`.
 
 ---
 

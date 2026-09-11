@@ -5,8 +5,11 @@ Agent tools are resolved once at load_agent() time — no per-turn overhead.
 """
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -25,17 +28,12 @@ from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import build_secrets_provider, load_dict, read_yaml
 from harness.config.schema import HarnessConfig, SourceConfig
-from harness.connectivity.token import (
-    NonceStore,
-    TokenError,
-    current_dispatch_token,
-    verify_token,
-)
+from harness.connectivity.token import NonceStore, TokenError, verify_token
 from harness.core import wiring
 from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
-from harness.core.errors import ConfigError, NetworkPolicyError
+from harness.core.errors import ConfigError, DispatchRefused, NetworkPolicyError
 from harness.core.events import AuditEvent, NetworkAuditEvent, now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.types import BoundaryName, Decision, ScanStatus, Transport
@@ -55,6 +53,23 @@ if TYPE_CHECKING:
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class _DispatchScope:
+    """One local tool call run under dispatch_scope: the gate's token, the
+    context the gate decided for, and each check the tool ran, as the
+    AuditEvent fields dispatch_scope emits when it closes. Mutable and shared
+    by reference, so a check run on a worker thread (asyncio.to_thread copies
+    the context, not the object) is still seen by the scope."""
+    token:  str | None
+    ctx:    AgentContext
+    checks: list[dict[str, Any]] = field(default_factory=list)
+
+
+_dispatch_scope: ContextVar[_DispatchScope | None] = ContextVar(
+    "shai_dispatch_scope", default=None,
+)
 
 
 async def _mint_connect_token(
@@ -962,35 +977,66 @@ class SHAI:
 
         return verdict
 
-    async def verify_tool_dispatch(self, tool_name: str, ctx: AgentContext) -> GateDecision:
-        """Check that the local tool call in progress was authorised by the gate.
+    @contextlib.asynccontextmanager
+    async def dispatch_scope(
+        self, ctx: AgentContext, gate: GateDecision,
+    ) -> AsyncIterator[None]:
+        """Run a local tool under the gate's dispatch token.
 
-        A local tool calls this before doing anything and runs only if the
-        decision is allowed. SHAI does not dispatch local tools, so this is
-        the one place their dispatch token is read. The token comes from
-        current_dispatch_token, which execute_gated_tool_call sets around the
-        tool's invocation; a tool called any other way finds none.
+        execute_gated_tool_call wraps every local tool invocation in this; a
+        hand-rolled loop wraps its own call the same way. Inside the block the
+        tool's verify_tool_dispatch reads the token. On exit — normal, refused
+        or raised — each check the tool ran emits exactly one AuditEvent
+        (boundary=tool_dispatch_check), before any exception leaves the block.
+        """
+        scope = _DispatchScope(token=gate.dispatch_token, ctx=ctx)
+        reset = _dispatch_scope.set(scope)
+        try:
+            yield
+        finally:
+            _dispatch_scope.reset(reset)
+            for check in scope.checks:
+                await self._emitter.emit(AuditEvent.build(
+                    boundary=BoundaryName.TOOL_DISPATCH_CHECK,
+                    decision=Decision.DENY if check["deny_reason"] else Decision.ALLOW,
+                    ctx=ctx,
+                    tenant_id=self._tenant_id,
+                    audit_tags=self._audit_tags_for(ctx),
+                    **check,
+                ))
 
-        Allowed only for an unexpired, correctly signed tool_call token issued
-        for this tool, agent and tenant, from the source the agent's tool
-        resolves to, where that tool is not an MCP tool. The token is consumed:
-        a second check on one allow is refused.
+    def verify_tool_dispatch(self, tool_name: str) -> None:
+        """Refuse the running local tool call unless the gate authorised it.
 
-        Emits exactly one AuditEvent and never raises (Invariants 1 and 2).
-        Binds only tools that call it — see THREAT_MODEL.md.
+        A local tool calls this first — it is sync, so sync and async tools
+        call it alike — and proceeds when it returns. It reads the token
+        dispatch_scope put in scope and accepts only an unexpired, correctly
+        signed tool_call token issued for this tool, the scope's agent and this
+        tenant, from the local source the agent's tool resolves to. The token
+        is consumed: a second check on one allow is refused.
+
+        Raises DispatchRefused on refusal, which execute_gated_tool_call
+        renders as the standard denial the model sees. Fail-closed: a defect in
+        the check refuses. The check's audit event is emitted by dispatch_scope.
         """
         start = now_ms()
+        scope = _dispatch_scope.get()
+        if scope is None:
+            log.warning("local tool dispatch refused — no dispatch scope",
+                        extra={"tool": tool_name, "tenant_id": self._tenant_id})
+            raise DispatchRefused(
+                "no dispatch token in scope — the tool was not run through "
+                "dispatch_scope", op="tool_dispatch_check",
+            )
+        ctx = scope.ctx
         entry = self._agent_tools.get(ctx.agent_id, {}).get(tool_name)
         token_id: str | None = None
         reason: str | None
-        cancelled: asyncio.CancelledError | None = None
-        raw = current_dispatch_token.get()
         try:
-            if not raw:
-                reason = ("no dispatch token in scope — the tool was not called "
-                          "through execute_gated_tool_call")
+            if not scope.token:
+                reason = "no dispatch token — the gate did not allow this call"
             else:
-                token = verify_token(raw, self._connectivity_secret)
+                token = verify_token(scope.token, self._connectivity_secret)
                 token_id = token.token_id
                 if token.purpose != "tool_call":
                     reason = f"token purpose '{token.purpose}' does not permit running a tool"
@@ -1004,38 +1050,29 @@ class SHAI:
                     reason = (f"token source '{token.source_name}' is not the "
                               f"local source of '{tool_name}'")
                 else:
-                    reason = await self._dispatch_nonces.consume(token_id, token.expires_at)
+                    reason = self._dispatch_nonces.consume(token_id, token.expires_at)
         except TokenError as e:
             reason = f"invalid dispatch token: {e}"
-        except asyncio.CancelledError as e:
-            # Invariant 2: the event is still owed, then cancellation leaves.
-            reason, cancelled = "dispatch check cancelled", e
         except Exception as e:
-            # Fail closed: a defect in the check must not let the tool run.
+            # Fail closed: a defect in the check refuses the call.
             reason = f"dispatch check failed: {type(e).__name__}"
 
-        await self._emitter.emit(AuditEvent.build(
-            boundary=BoundaryName.TOOL_DISPATCH_CHECK,
-            decision=Decision.DENY if reason else Decision.ALLOW,
-            ctx=ctx,
-            tenant_id=self._tenant_id,
-            duration_ms=now_ms() - start,
-            tool_name=tool_name,
-            transport=entry[1].transport if entry else None,
-            token_id=token_id,
-            deny_reason=reason,
-            audit_tags=self._audit_tags_for(ctx),
-        ))
-        if cancelled is not None:
-            raise cancelled
+        scope.checks.append({
+            "tool_name":   tool_name,
+            "transport":   entry[1].transport if entry else None,
+            "token_id":    token_id,
+            "deny_reason": reason,
+            "duration_ms": now_ms() - start,
+        })
         if reason:
             log.warning("local tool dispatch refused",
                         extra={"tool": tool_name, "token_id": token_id,
                                "reason": reason, "tenant_id": self._tenant_id,
                                **ctx.to_log_fields()})
-        return GateDecision(allowed=reason is None, deny_reason=reason,
-                            token_id=token_id,
-                            source_name=entry[0] if entry else None)
+            raise DispatchRefused(reason, op="tool_dispatch_check",
+                                  agent_id=ctx.agent_id,
+                                  sub_agent_id=ctx.sub_agent_id,
+                                  tenant_id=self._tenant_id, token_id=token_id)
 
     async def scan_output(self, text: str, ctx: AgentContext) -> ScanVerdict:
         session_id = ctx.conversation_id or ctx.agent_id

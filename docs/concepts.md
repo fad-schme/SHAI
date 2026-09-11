@@ -96,7 +96,7 @@ safe_text = verdict.redacted_text or user_text
 **Verdict shapes:**
 
 - `ScanVerdict` — from scan boundaries. Fields: `blocked`, `status` (ALLOW / WARN / BLOCK), `redacted_text`, `findings`.
-- `GateDecision` — from `check_tool_call`. Fields: `allowed`, `deny_reason`, `redacted_args`, `source_name`, `dispatch_token`.
+- `GateDecision` — from `check_tool_call`. Fields: `allowed`, `deny_reason`, `redacted_args`, `source_name`, `dispatch_token`, `token_id`.
 
 **AuditEvent** carries only metadata:
 

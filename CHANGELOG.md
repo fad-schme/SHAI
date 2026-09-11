@@ -54,12 +54,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signed `purpose` (`connect` | `tool_call`): `ShaiTransport` accepts a
   connect token only on those requests and a tool-call token only on
   `tools/call`.
-- **Local tools can verify their dispatch token.** A local tool calls
-  `SHAI.verify_tool_dispatch(tool_name, ctx)` before it runs, and is refused,
-  with one `tool_dispatch_check` audit event, unless `execute_gated_tool_call`
-  put an unexpired, unused token for that tool, agent and local source in
-  scope. `scan_tool_result` takes the call's `token_id`, so the gate, check and
-  result events join on one id.
+- **Local tools can verify their dispatch token.** A local tool calls the sync
+  `SHAI.verify_tool_dispatch(tool_name)` first; it passes when `dispatch_scope`
+  holds an unexpired, unused token for that tool, agent and local source, and
+  otherwise raises `DispatchRefused`, which `execute_gated_tool_call` renders
+  as the standard denial. Each check emits one `tool_dispatch_check` audit event, and
+  `scan_tool_result` takes the call's `token_id`, so the gate, check and result
+  events join on one id.
 
 ### Removed
 - **`harness.connectivity.default_allowed_urls`.** Its only caller derived a
