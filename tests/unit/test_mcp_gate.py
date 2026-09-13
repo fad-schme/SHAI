@@ -9,7 +9,10 @@ from harness.mcp.gate import McpBaselineGate
 from harness.mcp.manifest import manifest_file_hash
 
 _SECRET = b"test-secret"
-_MANIFEST = 'id: svc\ndisplay_name: "Service"\nurl: "https://mcp.example.test/sse"\n'
+_MANIFEST = (
+    'id: svc\ndisplay_name: "Service"\nurl: "https://mcp.example.test/sse"\n'
+    'allowed_urls: ["https://mcp.example.test/*"]\n'
+)
 
 
 def _write_manifest(tmp_path: Path, body: str = _MANIFEST) -> Path:

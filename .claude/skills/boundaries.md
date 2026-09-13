@@ -249,7 +249,7 @@ boundary list both adapters, `file_scanner` and `file_content_scan`.
 
 - **One event per call, always** — even on pre-gate failure or exception.
 - **No raw text** — no user input, LLM output, args, or matched substrings.
-- `decision=deny` only on `tool_call_gate`.
+- `decision=deny` on `tool_call_gate` and `tool_dispatch_check`.
 - `decision=blocked` / `decision=warn` only on scan boundaries.
 - `disabled=True` → `decision=allow`, scanners not run.
 - `tenant_id` comes from config, never from the caller.
@@ -300,7 +300,7 @@ existing catalog category.
 - `mcp_metadata_patterns.yaml` — most sensitive (default `block_at: medium`).
 
 Additional rules can be signed into the extended pattern DB — see
-`02-harness-yaml.md` for the pattern-database CLI workflow.
+`harness-yaml.md` for the pattern-database CLI workflow.
 
 ## TurnSignals — cross-boundary signal bus
 
@@ -364,4 +364,4 @@ for ev in events:
 Multiple concurrent `collect_events()` blocks are safe — each gets its
 own independent list.
 
-→ See `05-verdicts-events.md` for `AuditEvent` field reference.
+→ See `verdicts-events.md` for `AuditEvent` field reference.

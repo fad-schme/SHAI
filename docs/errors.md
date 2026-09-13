@@ -1,6 +1,6 @@
 # Errors
 
-The exceptions you'll see when SHAI refuses to load a config, refuses a tool call, or a scanner or audit sink misbehaves. Every SHAI exception inherits from `HarnessError` — if you want a single top-level catch, use that.
+The exceptions you'll see when SHAI refuses to load a config, refuses a tool call, or a scanner or audit sink misbehaves. SHAI's own exceptions inherit from `HarnessError`, the single top-level catch. Secrets providers raise `SecretsProviderError` while `from_yaml()` resolves `secret://` references.
 
 ## The hierarchy
 
@@ -12,12 +12,18 @@ HarnessError
 ├── SubAgentNotDeclaredError  — sub_agent_id not in parent's sub_agents
 ├── ToolNotRegisteredError    — tool name not in ToolRegistry
 ├── PolicyEvaluationError     — policy engine internal failure (not a normal deny)
+├── ArgumentViolationError    — an ArgumentRule failed; check_tool_call returns it as a deny
+├── IrreversibleActionError   — approval quorum unmet; check_tool_call returns it as a deny
 ├── AuditEmissionError        — all audit sinks failed simultaneously
 ├── NetworkPolicyError        — ShaiTransport blocked an outbound MCP request
 ├── DispatchRefused           — a local tool's verify_tool_dispatch refused its call
-├── SecretNotFound            — secret:// reference not in environment
 └── MCPInvocationError        — MCP server returned a JSON-RPC error
+
+SecretsProviderError          — a secrets provider failed to resolve a secret:// reference
+└── SecretNotFound            — secret:// reference not in environment
 ```
+
+Every class imports from `harness.core.errors`; `from harness import ...` also exports `HarnessError`, `ConfigError`, `AgentNotRegisteredError`, `AgentConflictError`, `SubAgentNotDeclaredError`, `AuditEmissionError`, `NetworkPolicyError`, `DispatchRefused` and `MCPInvocationError`. `SecretNotFound` imports from `harness.adapters.secrets.env`.
 
 Every error carries structured context on it — `agent_id`, `op`, `boundary`, `tool_name`, whatever's relevant. Format them in your logs the way you'd format `ValueError.args`.
 

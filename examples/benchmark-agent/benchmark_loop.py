@@ -32,6 +32,16 @@ Output:
 """
 from __future__ import annotations
 
+# Windows consoles default to a legacy codepage (cp1252), and every example
+# below prints box-drawing characters. Without this the first print() raises
+# UnicodeEncodeError before any SHAI output appears. Safe on POSIX, where the
+# stream is already UTF-8.
+import sys
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncio
 from pathlib import Path
 from typing import Any

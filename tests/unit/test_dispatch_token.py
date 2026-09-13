@@ -565,20 +565,13 @@ async def test_token_for_declared_mcp_source_carries_manifest_allow_lists(tmp_pa
     await harness.close()
 
 
-async def test_mcp_manifest_without_allowed_urls_denies_instead_of_minting(tmp_path, monkeypatch):
-    """A token bound to no destinations would pass ShaiTransport's URL binding
-    unchecked. With nothing to bind, the call is refused with one gate event."""
-    harness, ctx, sink = await _declared_mcp_harness(tmp_path, monkeypatch, "")
+async def test_declared_mcp_source_without_allowed_urls_fails_to_load(tmp_path, monkeypatch):
+    """allowed_urls is required in a manifest, so a declared source whose
+    manifest omits it fails at startup, before any tool call reaches the gate."""
+    from harness.core.errors import ConfigError
 
-    gate = await harness.check_tool_call("remote_read", {}, ctx)
-
-    assert not gate.allowed
-    assert gate.dispatch_token is None
-    assert "allowed_urls" in gate.deny_reason
-    gate_events = [e for e in sink.events if e.boundary == "tool_call_gate"]
-    assert len(gate_events) == 1
-    assert gate_events[0].token_id is None
-    await harness.close()
+    with pytest.raises(ConfigError, match="allowed_urls"):
+        await _declared_mcp_harness(tmp_path, monkeypatch, "")
 
 
 async def test_gate_token_reaches_shai_transport_and_joins_the_network_event(tmp_path, monkeypatch):

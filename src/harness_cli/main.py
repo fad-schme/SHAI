@@ -394,6 +394,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to a legacy codepage (cp1252), and command output
+    # carries non-ASCII (—, →). Safe on POSIX, where the stream is already UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

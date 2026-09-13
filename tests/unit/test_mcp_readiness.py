@@ -7,6 +7,7 @@ from harness.mcp.manifest import MCPArgumentSpec, MCPManifest, MCPToolSpec
 def _manifest(*tools: MCPToolSpec) -> MCPManifest:
     return MCPManifest(
         id="svc", display_name="Service", url="https://mcp.example.test/sse",
+        allowed_urls=["https://mcp.example.test/*"],
         tools=list(tools),
     )
 

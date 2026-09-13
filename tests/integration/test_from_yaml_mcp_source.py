@@ -26,6 +26,7 @@ async def test_from_yaml_with_mcp_source_does_not_crash(tmp_path: Path):
         "id: test_mcp\n"
         "display_name: \"Test MCP\"\n"
         "url: \"http://localhost:9999/mcp\"\n"
+        "allowed_urls: [\"http://localhost:9999/*\"]\n"
         "tags: [external]\n"
     )
     record_baseline(tmp_path / "baseline.db", "test_mcp",

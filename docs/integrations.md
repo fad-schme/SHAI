@@ -51,7 +51,7 @@ Tools discovered from an MCP source can't declare either — the manifest has no
 | LangChain classic (any version) | `wrap_tools()` |
 | Anthropic SDK raw loop | `gated_dispatch` + `make_tool_result_from_denial` |
 | CrewAI | `wrap_tools()` |
-| PydanticAI | `harness_tool` decorator + `add_harness_middleware()` |
+| PydanticAI | `create_tools()`, or `add_harness_middleware()` on an existing agent |
 | OpenAI Agents SDK | `wrap_tools()` |
 | Anything with manual tool dispatch | Call `check_tool_call`, `dispatch_scope` and `scan_tool_result` directly |
 
@@ -216,14 +216,20 @@ gated = await wrap_tools([search_docs], harness=harness, ctx=ctx)
 ## PydanticAI
 
 ```python
-from harness.integrations.pydantic_ai import harness_tool, add_harness_middleware
+from harness.integrations.pydantic_ai import create_tools, shai_tool
 from pydantic_ai import Agent
 
-@harness_tool(tags=["read", "internal"])
+@shai_tool(tags=["read", "internal"])
 async def search_docs(query: str) -> str: ...
 
-agent = Agent(model="openai:gpt-4o", tools=[search_docs])
-add_harness_middleware(agent, harness=harness, ctx=ctx)
+# create_tools() registers the tools and returns gated callables
+gated = await create_tools([search_docs], harness=harness, ctx=ctx)
+agent = Agent(model="openai:gpt-4o", tools=gated)
+```
+
+For an agent that already holds its tools, `add_harness_middleware(agent, harness=harness, ctx=ctx)` gates them in place. `harness_tool(harness=..., ctx=...)` gates a third-party function that `@shai_tool` can't wrap.
+
+```python
 ```
 
 ## OpenAI Agents SDK

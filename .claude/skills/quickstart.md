@@ -195,4 +195,4 @@ it. `shai harness inspect` shows the same topology offline.
 }
 ```
 
-→ See `05-verdicts-events.md` for the full field reference.
+→ See `verdicts-events.md` for the full field reference.

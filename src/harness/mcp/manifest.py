@@ -35,8 +35,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from harness.connectivity.token import _canonicalize_url
 from harness.core.errors import ConfigError
 
 
@@ -75,16 +76,32 @@ class MCPToolSpec(BaseModel, frozen=True, extra="forbid"):
 
 
 class MCPManifest(BaseModel, frozen=True, extra="forbid"):
-    """One MCP source, entirely as declared by the operator."""
+    """One MCP source, entirely as declared by the operator.
+
+    allowed_urls is the complete set of destinations the source reaches:
+    onboarding approves it by hash, ShaiTransport checks every request
+    against it, and every dispatch token for the source is bound to it.
+    """
     id:              str
     display_name:    str
     url:             str
-    allowed_urls:    list[str] = Field(default_factory=list)
+    allowed_urls:    list[str] = Field(min_length=1)
     allowed_methods: list[str] = Field(default_factory=lambda: ["GET", "POST"])
     tags:            list[str] = Field(default_factory=list)
     credentials:     dict[str, str] = Field(default_factory=dict)
     required:        bool = True
     tools:           list[MCPToolSpec] = Field(default_factory=list)
+
+    @field_validator("allowed_urls")
+    @classmethod
+    def _entries_canonicalize(cls, urls: list[str]) -> list[str]:
+        # Each entry canonicalizes the way matches_allowed_url canonicalizes a
+        # pattern. A malformed entry is a validation error here, so the list
+        # onboarding approves is exactly the list the matcher enforces.
+        bad = [i for i, u in enumerate(urls) if _canonicalize_url(u) is None]
+        if bad:
+            raise ValueError(f"allowed_urls entries at positions {bad} fail to canonicalize")
+        return urls
 
 
 def manifest_file_hash(path: str | Path) -> str:

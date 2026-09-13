@@ -161,20 +161,20 @@ async def test_every_boundary_emits_exactly_one_event(harness, ctx):
 
 ## Contract tests
 
-Each Protocol has a contract test suite in `tests/contracts/` — parameterise it over an implementation:
+The contract suites in `tests/contracts/` are parametrized pytest modules. Every test in `test_scanner_contract.py` runs over the list `all_scanners()` returns — add your implementation there:
 
 ```python
-# tests/contracts/test_my_scanner_contract.py
-from tests.contracts.scanner_contract import ScannerContract
-from my_package import MyScanner
-
-class TestMyScannerContract(ScannerContract):
-    @pytest.fixture
-    def scanner(self):
-        return MyScanner(...)
+# tests/contracts/test_scanner_contract.py
+def all_scanners():
+    return [
+        pytest.param(RegexPIIScanner(), id="regex_pii"),
+        pytest.param(InjectionScanner(), id="injection_scan"),
+        pytest.param(HeuristicScanner(), id="heuristic_scan"),
+        pytest.param(MyScanner(...), id="my_scanner"),
+    ]
 ```
 
-The base class runs every invariant the built-in scanners are required to satisfy. If your implementation passes, it composes correctly with the rest of SHAI.
+The suite runs every invariant the built-in scanners satisfy. An implementation that passes composes correctly with the rest of SHAI.
 
 Adapters that don't pass contract tests are a latent bug in production. Run them in CI.
 

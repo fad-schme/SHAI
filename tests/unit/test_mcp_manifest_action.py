@@ -32,6 +32,7 @@ _MANIFEST = """\
 id: svc
 display_name: "Service"
 url: "https://mcp.example.test/sse"
+allowed_urls: ["https://mcp.example.test/*"]
 tools:
   - name: search
     description: "Search the corpus."

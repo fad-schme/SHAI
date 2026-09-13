@@ -167,6 +167,12 @@ already-loaded parent config and returns a new frozen `AgentContext`. It
 raises `SubAgentNotDeclaredError` if the sub_agent_id is not declared under
 the parent.
 
+`harness.tools_for(ctx)` returns the tools a context reaches the gate's
+per-call layers with: L1 `allowed_tool_names` and L4 `allowed_tags` applied
+to the context's effective profile, so a subagent context gets its narrowed
+set. It is a superset of what `check_tool_call` allows — use it to build the
+tool list you give the LLM, and gate every call with `check_tool_call`.
+
 In `check_tool_call`, the subagent's `allowed_tool_names` and `policy_rules`
 are used directly. The parent's `policy_rules` are added after the
 subagent's (intersection model — both must pass for an allow).

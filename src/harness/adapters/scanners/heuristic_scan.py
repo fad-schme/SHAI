@@ -10,6 +10,7 @@ No dependencies. No ML.
 """
 from __future__ import annotations
 
+import functools
 import math
 import re
 import unicodedata
@@ -190,6 +191,11 @@ class _FuzzyIntent:
         return bool(self.actions and self.protected_objects and self.has_obfuscation)
 
 
+# Largest edit distance _typoglycemia_match_kind accepts. The candidate lookup
+# in _TypoIndex is complete only up to this bound, so both read it from here.
+_MAX_TYPO_DISTANCE = 2
+
+
 def _bounded_dl_distance(a: str, b: str, limit: int) -> int | None:
     """Bounded optimal-string-alignment distance, including transpositions."""
     if abs(len(a) - len(b)) > limit:
@@ -248,7 +254,7 @@ def _typoglycemia_match_kind(word: str, target: str) -> str | None:
             and word[0] == target[0] and word[-1] == target[-1]
             and sorted(word[1:-1]) == sorted(target[1:-1])):
         return "strong"
-    distance_limit = 2 if min(len(word), len(target)) >= 7 else 1
+    distance_limit = _MAX_TYPO_DISTANCE if min(len(word), len(target)) >= 7 else 1
     if _bounded_dl_distance(word, target, distance_limit) is None:
         return None
     # Prefix-relationship rejection: one is the other + trailing chars →
@@ -334,6 +340,66 @@ def _normalize_fuzzy_text(text: str) -> tuple[list[str], frozenset[str]]:
     return _FUZZY_TOKEN_RE.findall(separated), frozenset(transformed_tokens)
 
 
+# ── Fuzzy candidates by lookup ────────────────────────────────────────────
+# _typoglycemia_match_kind accepts a pair only as a same-length scramble or at
+# OSA distance of at most _MAX_TYPO_DISTANCE. Two words at distance d share a
+# string reachable by at most d single-character deletions from each: a
+# substitution or transposition deletes one character on both sides, an
+# insertion or deletion on one. So every target a token can match is indexed
+# under one of the token's own deletion forms or under its scramble key.
+# Looking those up replaces running the pure-Python distance against every
+# vocabulary word — which was most of this scanner's cost — while the verdict
+# stays _typoglycemia_match_kind's, over the same sorted order.
+
+
+def _deletion_forms(word: str) -> set[str]:
+    """word and every string up to _MAX_TYPO_DISTANCE deletions away from it."""
+    forms, frontier = {word}, {word}
+    for _ in range(_MAX_TYPO_DISTANCE):
+        frontier = {w[:i] + w[i + 1:] for w in frontier for i in range(len(w))}
+        forms |= frontier
+    return forms
+
+
+def _scramble_key(word: str) -> tuple[int, str, str, str]:
+    return len(word), word[0], word[-1], "".join(sorted(word[1:-1]))
+
+
+@dataclass(frozen=True)
+class _TypoIndex:
+    by_deletion: dict[str, frozenset[str]]
+    by_scramble: dict[tuple[int, str, str, str], frozenset[str]]
+    max_len: int
+
+    def candidates(self, token: str) -> list[str]:
+        """The targets token can fuzzy-match, sorted; a superset, never fewer."""
+        # Outside _typoglycemia_match_kind's length window nothing matches. The
+        # upper bound also keeps an attacker-sized token from costing the
+        # quadratic number of deletion forms it would generate.
+        if len(token) < 4 or len(token) > self.max_len + _MAX_TYPO_DISTANCE:
+            return []
+        found = set(self.by_scramble.get(_scramble_key(token), ()))
+        for form in _deletion_forms(token):
+            found |= self.by_deletion.get(form, frozenset())
+        return sorted(found)
+
+
+@functools.cache
+def _typo_index(targets: frozenset[str]) -> _TypoIndex:
+    by_deletion: dict[str, set[str]] = {}
+    by_scramble: dict[tuple[int, str, str, str], set[str]] = {}
+    for target in targets:
+        for form in _deletion_forms(target):
+            by_deletion.setdefault(form, set()).add(target)
+        if len(target) >= 4:
+            by_scramble.setdefault(_scramble_key(target), set()).add(target)
+    return _TypoIndex(
+        by_deletion={form: frozenset(ts) for form, ts in by_deletion.items()},
+        by_scramble={key: frozenset(ts) for key, ts in by_scramble.items()},
+        max_len=max(map(len, targets), default=0),
+    )
+
+
 def _match_fuzzy_class(
     tokens: list[str],
     targets: frozenset[str],
@@ -343,7 +409,10 @@ def _match_fuzzy_class(
     fuzzy_targets: set[str] = set()
     fuzzy = False
     strong = False
-    for token in tokens:
+    index = _typo_index(targets)
+    # Each distinct token once: its outcome depends on the token alone and is
+    # folded into sets and flags, so a repeat adds nothing but cost.
+    for token in dict.fromkeys(tokens):
         if token in targets:
             matched.add(token)
             if token in transformed_tokens:
@@ -357,8 +426,7 @@ def _match_fuzzy_class(
         # Order — `targets` is a frozenset, and set iteration order for strings
         # varies with PYTHONHASHSEED, so taking whichever match appeared first
         # made the classification differ between processes on byte-identical
-        # input. Sorting fixes the order; the cost is trivial on vocabularies
-        # this size.
+        # input. Candidates come back sorted, which fixes the order.
         #
         # Strength — a weak (same-length substitution) match found first used
         # to suppress a strong match on another target, which was arbitrary
@@ -366,9 +434,7 @@ def _match_fuzzy_class(
         # still short-circuited because nothing beats it.
         best_target: str | None = None
         best_kind: str | None = None
-        for target in sorted(targets):
-            if abs(len(token) - len(target)) > 2:
-                continue
+        for target in index.candidates(token):
             match_kind = _typoglycemia_match_kind(token, target)
             if match_kind is None:
                 continue

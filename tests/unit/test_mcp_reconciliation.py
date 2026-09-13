@@ -8,6 +8,7 @@ from harness.mcp.reconciliation import reconcile
 def _manifest(**tools_by_name: str) -> MCPManifest:
     return MCPManifest(
         id="svc", display_name="Service", url="https://mcp.example.test/sse",
+        allowed_urls=["https://mcp.example.test/*"],
         tools=[MCPToolSpec(name=n, description=d) for n, d in tools_by_name.items()],
     )
 

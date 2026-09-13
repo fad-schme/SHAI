@@ -868,14 +868,14 @@ class SHAI:
         is_mcp_tool = tool_entry is not None and tool_entry[1].transport == Transport.MCP
         manifest = self._mcp_manifests.get(source_name) if is_mcp_tool else None
 
-        # An MCP tool's dispatch token is bound to the destinations its
-        # manifest declares. With none declared there is nothing to bind it to,
-        # and an unbound token would pass ShaiTransport's URL check unchecked,
-        # so the call is refused rather than minted for.
-        if is_mcp_tool and (manifest is None or not manifest.allowed_urls):
+        # An MCP tool's dispatch token is bound to the allowed_urls of its
+        # source's approved manifest, which always declares at least one. A
+        # call to an MCP tool whose source lacks an approved manifest is
+        # refused here, before the gate.
+        if is_mcp_tool and manifest is None:
             return await self._deny_pre_gate(
-                f"MCP source '{source_name}' declares no allowed_urls — "
-                "a dispatch token cannot be bound to a destination",
+                f"MCP source '{source_name}' has no approved manifest — "
+                "a dispatch token is bound to a manifest's allowed_urls",
                 name, ctx,
             )
 
@@ -1222,10 +1222,9 @@ class SHAI:
         Called by the gate on its allow path only. manifest is the approved
         manifest of an MCP tool's source, None for every other tool. An MCP
         tool's token carries that manifest's allow-lists, the same lists
-        ShaiTransport enforces for the source. check_tool_call refuses the call
-        before the gate runs when the manifest declares no allowed_urls. Any
-        other tool has no network target, so its token binds no URL and no
-        method and can never pass ShaiTransport.
+        ShaiTransport enforces for the source; an approved manifest always
+        declares allowed_urls. Any other tool has no network target, so its
+        token binds no URL and no method, and ShaiTransport refuses it.
         """
         from harness.connectivity.token import encode_token, sign_token
 

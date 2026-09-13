@@ -46,6 +46,10 @@ gate.dispatch_token  # str | None — encoded token, pass to source.call()
 **What the token asserts:**
 - `agent_id`, `sub_agent_id`, `tenant_id` — identity
 - `tool_name`, `source_name` — exactly which tool on which source
+- `purpose` — `tool_call` (one `tools/call`) or `connect` (one request of the
+  MCP session handshake: SSE `GET`, `initialize`, `notifications/initialized`,
+  `tools/list`). Connect tokens are minted from the source's onboarding
+  approval, one per connect-phase request, with `tool_name` unset.
 - `allowed_urls`, `allowed_methods` — what the call may reach
 - `expires_at` — short TTL (default 15 seconds)
 - `token_id` — UUID, consumed as a one-time nonce
@@ -88,9 +92,11 @@ Every outbound request passes through these checks in order:
 2. Method enforcement — request method must match self._allowed_methods
 3. Token validation   — verify HMAC signature + expiry
    3a. Source binding  — token.source_name must match transport's source_name
-   3b. URL binding     — request URL must match token.allowed_urls (token claim)
-   3c. Method binding  — request method must match token.allowed_methods
-   3d. Nonce check     — token_id must not have been used before
+   3b. Purpose binding — connect token on a connect-phase request, tool-call
+                         token on tools/call
+   3c. URL binding     — request URL must match token.allowed_urls (token claim)
+   3d. Method binding  — request method must match token.allowed_methods
+   3e. Nonce check     — token_id is consumed on first use
 4. X-Shai-Token header injected
 5. Forward to inner transport
 6. Emit NetworkAuditEvent

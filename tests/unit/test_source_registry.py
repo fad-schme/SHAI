@@ -478,6 +478,99 @@ async def test_open_sse_session_raises_when_sessionid_missing(monkeypatch):
         await src._open_sse_session()
 
 
+# ── notifications/initialized — a policy refusal fails the connect ────────
+#
+# A real MCPSource connect through a real ShaiTransport. Only the network
+# under the transport is mocked.
+
+_CONNECT_SECRET = b"test-connectivity-secret"
+
+
+def _slack_token(purpose: str) -> str:
+    from harness.connectivity.token import encode_token, sign_token
+
+    return encode_token(sign_token(
+        agent_id=CTX.agent_id, sub_agent_id=None, tenant_id="default",
+        tool_name="send_message" if purpose == "tool_call" else None,
+        source_name="slack", purpose=purpose,
+        allowed_urls=["https://mcp.slack.com/*"], allowed_methods=["GET", "POST"],
+        secret=_CONNECT_SECRET,
+    ))
+
+
+def _slack_server(monkeypatch, seen: list, *, notification_error=None) -> None:
+    import json
+
+    import httpx
+
+    def network(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            seen.append("sse")
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"},
+                content=b"event: endpoint\ndata: /message?sessionId=abc\n\n",
+            )
+        body = json.loads(request.content)
+        seen.append(body["method"])
+        if body["method"] == "notifications/initialized" and notification_error:
+            raise notification_error
+        result = {"tools": []} if body["method"] == "tools/list" else {}
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body.get("id"), "result": result})
+
+    monkeypatch.setattr(httpx, "AsyncHTTPTransport", lambda *a, **k: httpx.MockTransport(network))
+
+
+def _slack_source(sink, minter) -> MCPSource:
+    return MCPSource(
+        _mcp(allowed_urls=["https://mcp.slack.com/*"]),
+        connectivity=ConnectivityConfig(token_secret=_CONNECT_SECRET.decode()),
+        emitter=AuditEmitter([sink]),
+        mint_connect_token=minter,
+    )
+
+
+async def test_refused_initialized_notification_fails_the_connect(monkeypatch):
+    from harness.core.errors import NetworkPolicyError
+    from harness.core.events import NetworkAuditEvent
+    from tests.conftest import RecordingSink
+
+    seen: list = []
+    _slack_server(monkeypatch, seen)
+    mints: list = []
+
+    async def minter(ctx, *, method, destination):
+        # Mint order: GET /sse, initialize, notifications/initialized, tools/list.
+        # The notification gets a tool-call token, which its purpose refuses.
+        mints.append(method)
+        return _slack_token("tool_call" if len(mints) == 3 else "connect")
+
+    sink = RecordingSink()
+    with pytest.raises(ConfigError) as err:
+        await _slack_source(sink, minter).load(CTX)
+
+    assert isinstance(err.value.__cause__, NetworkPolicyError)
+    assert "notifications/initialized" not in seen
+    assert "tools/list" not in seen
+    denied = [e for e in sink.events
+              if isinstance(e, NetworkAuditEvent) and e.status == "denied"]
+    assert len(denied) == 1
+
+
+async def test_failed_initialized_notification_is_logged_and_the_connect_continues(monkeypatch):
+    import httpx
+
+    from tests.conftest import RecordingSink
+
+    seen: list = []
+    _slack_server(monkeypatch, seen, notification_error=httpx.ConnectError("connection reset"))
+
+    async def minter(ctx, *, method, destination):
+        return _slack_token("connect")
+
+    assert await _slack_source(RecordingSink(), minter).load(CTX) == []
+    assert seen == ["sse", "initialize", "notifications/initialized", "tools/list"]
+
+
 # ── SourceConfig schema ───────────────────────────────────────────────────
 
 def test_source_config_accepts_mcp_transport_by_name():

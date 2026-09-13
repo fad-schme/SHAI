@@ -52,6 +52,22 @@ def test_missing_required_field_names_it(tmp_path: Path):
         load_manifest_file(path)
 
 
+@pytest.mark.parametrize("allowed_urls_line", [
+    "",
+    "allowed_urls: []\n",
+    'allowed_urls: ["https://user:pw@evil.example/*"]\n',
+    'allowed_urls: ["https://mcp.slack.com/*", "https://user:pw@evil.example/*"]\n',
+], ids=["missing", "empty", "only-malformed", "one-malformed"])
+def test_allowed_urls_is_required_non_empty_and_well_formed(tmp_path: Path, allowed_urls_line):
+    path = tmp_path / "slack.yaml"
+    path.write_text(
+        'id: slack\ndisplay_name: Slack\nurl: "https://mcp.slack.com/sse"\n'
+        + allowed_urls_line
+    )
+    with pytest.raises(ConfigError, match="allowed_urls"):
+        load_manifest_file(path)
+
+
 def test_not_a_mapping_raises(tmp_path: Path):
     path = tmp_path / "bad.yaml"
     path.write_text("- just\n- a\n- list\n")

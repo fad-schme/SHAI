@@ -22,6 +22,7 @@ _MANIFEST = """\
 id: svc
 display_name: "Service"
 url: "https://mcp.example.test/sse"
+allowed_urls: ["https://mcp.example.test/*"]
 tags: [external]
 tools:
   - name: search

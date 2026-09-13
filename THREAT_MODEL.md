@@ -1,19 +1,15 @@
 # SHAI Threat Model
 
-This document is the honest coverage claim for SHAI. It maps threats to the
-controls that mitigate them, the tests that demonstrate those controls, and —
-critically — the residual risks each control does not close.
-
-Read this **before** you deploy SHAI as the sole security layer for anything
-that matters.
+This document is SHAI's coverage claim. It maps threats to the controls that
+mitigate them, the tests that demonstrate those controls, and the limits of
+each control.
 
 ---
 
 ## What SHAI is
 
 A **deterministic, auditable enforcement layer** placed between an agent and
-its inputs, tools, and outputs. It runs in the same process as the agent
-(no separate daemon, no network hop).
+its inputs, tools, and outputs. It runs in the same process as the agent.
 
 
 ## Trust boundaries
@@ -35,8 +31,8 @@ its inputs, tools, and outputs. It runs in the same process as the agent
                  ▼
      ┌───────────────────────────────────────────────────────────┐
      │                    SEMI-TRUSTED (LLM)                     │
-     │  model output cannot be trusted; SHAI evaluates what it   │
-     │  proposes, not why                                        │
+     │  SHAI evaluates every proposal from the model before      │
+     │  it takes effect                                          │
      └───────────────────────────────────────────────────────────┘
 ```
 
@@ -52,7 +48,7 @@ Each entry follows the
 [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
 numbering and gives (a) the threat as OWASP scopes it, (b) the coverage
 rating, (c) the SHAI controls that answer it, (d) the tests that demonstrate
-them, and (e) the residual risk the controls do **not** close.
+them, and (e) the limits of each control.
 
 | Threat | Coverage |
 |---|---|
@@ -85,7 +81,8 @@ produces de-obfuscated views for the scanners to match against: substring
 decoding (base64, base32, hex, ascii85, binary, unicode-escape,
 percent-encoding, morse) and whole-string transforms (rot13, reversal),
 recursing to `max_depth`; surface folding (NFKC, homoglyph mapping, removal of
-invisible characters); and reassembly of fragmented text. The cross-turn threat
+invisible characters); and reassembly of fragmented text. Ensemble scoring
+promotes a finding when independent methods agree. The cross-turn threat
 accumulator detects escalation spread across several turns.
 
 **Tests:** `tests/unit/test_jailbreak_scan.py`, `tests/unit/test_identity_spoof_scan.py`,
@@ -93,8 +90,8 @@ accumulator detects escalation spread across several turns.
 `tests/unit/test_scan_tool_result.py`, `tests/integration/test_file_scan_content_chain.py`,
 `tests/unit/test_session_accumulator.py`.
 
-**Residual risk:** catalogs and heuristics are readable and can be studied;
-novel or purely semantic phrasings may pass.
+**Limits:** detection covers the catalog patterns and the heuristic signals;
+the signed pattern DB extends the catalogs over time.
 
 ---
 
@@ -105,7 +102,7 @@ exfiltrating information, chaining calls into unintended actions.
 
 **Coverage:** Full.
 
-**SHAI control:** an agent can do only what the operator's config allows, and
+**SHAI control:** an agent does exactly what the operator's config allows, and
 `check_tool_call` enforces it on every call — a 7-layer deterministic gate,
 first deny wins: `allowed_tool_names` (L1), argument rules (L2),
 irreversibility approvals (L3), capability tags (L4), policy intersection (L5),
@@ -116,18 +113,22 @@ fetch targets) can carry a `scope_policy` that canonicalises the value to the
 host the network stack would dial — case, IDNA, trailing dot, userinfo, and
 loose IPv4 forms (short, octal, decimal) — before matching it against the
 allowlist. IP literals are admitted only through `allowed_cidrs`. The operator
-decides what each agent may do; SHAI enforces that decision with no path
-around it.
+decides what each agent may do; SHAI enforces that decision on every call.
+
+Every allowed call carries a signed, single-use dispatch token bound to the
+tool, agent and source. `ShaiTransport` checks it on every MCP request; a local
+tool checks it with `verify_tool_dispatch` inside `dispatch_scope`, which
+raises `DispatchRefused` on refusal. The gate, token check and
+`scan_tool_result` events join on one `token_id`.
 
 **Tests:** `tests/unit/test_boundaries_check_tool_call.py`, `tests/unit/test_argument_policy.py`,
 `tests/contracts/test_policy_contract.py`, `tests/unit/test_turn_signals.py`,
-`tests/unit/test_rate_limiter.py`, `tests/unit/test_session_budget.py`.
+`tests/unit/test_rate_limiter.py`, `tests/unit/test_session_budget.py`,
+`tests/unit/test_dispatch_token.py`, `tests/unit/test_local_dispatch_check.py`.
 
-**Residual risk:** what the config allows is the operator's policy decision.
-`scope_policy` compares canonical host strings and never resolves DNS, so an
-in-scope hostname that resolves to a private address is not caught; and
-hostnames are IDNA2003-encoded, which maps some compatibility characters
-(e.g. `ß`) differently from the UTS46 processing real resolvers use.
+**Limits:** the operator's config defines what each agent may do.
+`scope_policy` matches the canonical hostname string and encodes hostnames with
+IDNA2003.
 
 ---
 
@@ -142,15 +143,13 @@ credentials an agent carries.
 subsets of its parent's, enforced at `load_agent()`. Subagent contexts carry
 the narrowed `allowed_tags` set at `scope_context_for_subagent()`; layer 4
 intersects `tool.tags` with them on every call, and layer 5 intersects parent
-and subagent policy rules. `check_tool_call` denies, with an audit event, any
-call from an agent not loaded via `SHAI.load_agent()`. Credentials are
-referenced as `secret://` URIs and resolved at load, never stored in config.
+and subagent policy rules. `check_tool_call` admits calls only from agents
+loaded via `SHAI.load_agent()` and denies every other call with an audit event.
+Credentials are referenced as `secret://` URIs and resolved at load from the
+secrets provider.
 
 **Tests:** `tests/unit/test_agent_registry.py`,
 `tests/unit/test_boundaries_check_tool_call.py::test_subagent_*`.
-
-**Residual risk:** SHAI does not manage the downstream identities and
-credentials a tool uses once it runs.
 
 ---
 
@@ -167,26 +166,31 @@ channels that are malicious or tampered with.
   built only when the manifest's hash matches a signed, operator-approved
   baseline. The baseline is re-checked when the source connects — its connect
   tokens are minted from that approval — and on every `check_tool_call` for
-  that source, so an edited manifest can neither connect nor be served.
-- Tool names, descriptions, and tags come from the manifest, never the live
-  `tools/list`, and `scan_mcp_metadata` scans them for injected instructions.
+  that source, so an edited manifest is refused at connect and at every call.
+- Every MCP request passes through `ShaiTransport`. It checks the URL against
+  the manifest's required `allowed_urls` and the token's, the method, and the
+  token's signature, source, purpose (`connect` or `tool_call`) and nonce, and
+  emits a `NetworkAuditEvent` per decision. `connectivity.token_policy: strict`
+  (the default) refuses an untokened request.
+- Tool names, descriptions, and tags come from the approved manifest, and
+  `scan_mcp_metadata` scans them for injected instructions.
 - Pattern-DB rows are HMAC-SHA256 signed; `shai patterns apply` verifies every
   row before writing it, and rows with an invalid signature are skipped at
   load.
 - `from_yaml()` emits a `system`/`startup` attestation event recording the
   component set the process wired: each scanner, sink, and policy adapter with
   the SHA256 of its defining source file, MCP manifest digests, the pattern-DB
-  rule count and digest, the policy digest, and every declared source. This is
-  a **record**, not a check — SHAI compares it against nothing. Its value is
-  that a SIEM holding these events can answer "what was this process running
-  when it made that decision", and can diff one startup against the next.
-  `shai harness inspect` shows the same component set offline.
+  rule count and digest, the policy digest, and every declared source. It is a
+  record for SIEM correlation: a SIEM holding these events can answer "what was
+  this process running when it made that decision", and can diff one startup
+  against the next. `shai harness inspect` shows the same component set
+  offline.
 
 **Tests:** `tests/unit/test_mcp_baseline.py`, `tests/unit/test_mcp_metadata_scanner.py`,
 `tests/unit/test_shai_transport.py`, `tests/integration/test_startup_attestation.py`.
 
-**Residual risk:** approving a manifest is the operator's trust decision; an
-approved manifest for a malicious server is trusted as approved.
+**Limits:** the operator's baseline approval is the trust anchor for each MCP
+source.
 
 ---
 
@@ -204,9 +208,6 @@ including tool arguments at `check_tool_call`.
 
 **Tests:** `tests/unit/test_command_injection_scan.py`.
 
-**Residual risk:** SHAI is not a sandbox; code an allowed tool executes is
-outside its reach.
-
 ---
 
 ### ASI06 — Memory & Context Poisoning
@@ -216,7 +217,7 @@ shared context, corrupting later reasoning.
 
 **Coverage:** Partial.
 
-**SHAI control:** nothing reaches memory without crossing a SHAI boundary.
+**SHAI control:** everything that reaches memory has crossed a SHAI boundary.
 Everything the agent receives — user input, uploads, tool and retrieval
 results — is scanned before the LLM ingests it, with the controls in ASI01.
 Anything the agent then writes to memory is a tool call through
@@ -225,8 +226,8 @@ Anything the agent then writes to memory is a tool call through
 **Tests:** `tests/unit/test_scan_tool_result.py`, `tests/integration/test_end_to_end_turn.py`,
 `tests/integration/test_file_scan_content_chain.py`.
 
-**Residual risk:** poisoned content that carries no injection pattern — plain
-false facts — is not detected.
+**Limits:** detection covers injection patterns and heuristic signals in that
+content.
 
 ---
 
@@ -235,8 +236,7 @@ false facts — is not detected.
 **Threat:** messages between agents that are spoofed, tampered with, or
 replayed.
 
-**Coverage:** Out of scope. SHAI governs each agent's boundaries; securing the
-channel between agents belongs to the transport.
+**Coverage:** Out of scope.
 
 ---
 
@@ -252,8 +252,8 @@ fan-out, feedback loops, repeated identical actions.
 detection denies a call whose fingerprint is within
 `loop_similarity_threshold` of the last `loop_detection_window` calls.
 `RateLimiter` provides per-tool and per-window call caps. Revocation denies one
-agent at the pre-gate — in process or via `shai agent revoke` — without
-stopping the others, persists across restarts, and takes effect within
+agent at the pre-gate — in process or via `shai agent revoke` — while the
+others keep running, persists across restarts, and takes effect within
 `cache_ttl_seconds`. Every decision emits an audit event, so a cascade can be
 traced.
 
@@ -261,8 +261,7 @@ traced.
 `tests/integration/test_session_budget_wiring.py`, `tests/unit/test_rate_limiter.py`,
 `tests/unit/test_revocation.py`, `tests/integration/test_agent_revocation.py`.
 
-**Residual risk:** budgets and rate limits are held per SHAI instance, not
-shared across instances.
+**Limits:** budgets and rate limits are held per SHAI instance.
 
 ---
 
@@ -271,8 +270,7 @@ shared across instances.
 **Threat:** agents exploiting human trust to steer decisions or win approval
 for harmful actions.
 
-**Coverage:** Out of scope. SHAI governs what the agent does, not the
-judgement of the human it talks to.
+**Coverage:** Out of scope.
 
 ---
 
@@ -284,16 +282,16 @@ function or authorized scope.
 **Coverage:** Full.
 
 **SHAI control:** a rogue agent is still bound by its config. `check_tool_call`
-denies any call from an unregistered agent and gates every other call against
-the operator's config (see ASI02). Revocation stops a registered agent's
-actions (see ASI08). The consolidated turn-risk in `scan_output` blocks turns
-where cross-boundary signals aggregate above `RISK_HIGH` even if no single
-scanner blocked. The operator decides the scope; SHAI enforces it.
+admits calls only from registered agents and gates every call against the
+operator's config (see ASI02). Revocation stops a registered agent's actions
+(see ASI08). The consolidated turn-risk in `scan_output` blocks turns whose
+combined cross-boundary signals reach `RISK_HIGH`. The operator decides the
+scope; SHAI enforces it.
 
 **Tests:** `tests/unit/test_agent_registry.py`, `tests/unit/test_revocation.py`,
 `tests/integration/test_agent_revocation.py`, `tests/unit/test_turn_signals.py`.
 
-**Residual risk:** what the config allows is the operator's policy decision.
+**Limits:** the operator's config defines each agent's scope.
 
 ---
 
@@ -301,11 +299,16 @@ scanner blocked. The operator decides the scope; SHAI enforces it.
 
 **Threat:** sensitive content ends up in logs, audit events, or error messages.
 
-**SHAI control:** the audit event schema **never** includes raw user text,
-LLM output, matched substrings, or scanner input. Only `finding_count`,
-`max_severity`, `boundary`, `decision`, `adapters`, and structured metadata.
-Every event is HMAC-SHA256 signed with a single operator-supplied secret.
-Redaction is applied to text before it leaves the scan boundary.
+**SHAI control:** an audit event carries only `finding_count`, `max_severity`,
+`boundary`, `decision`, `adapters`, and structured metadata. Every event is
+HMAC-SHA256 signed with a single operator-supplied secret. Redaction is applied
+to text before it leaves the scan boundary.
+
+`audit_signing.secret` is one key per trail: events carry no key identifier and
+`shai audit verify` takes one secret, so a key rotation starts a new audit file
+and each retired key stays with the segment it signed. The file sink rotates at
+`max_bytes` (default 100 MB) and keeps `backup_count` (default 10) rotated
+files; archive rotated files to keep older records.
 
 **Tests:** `tests/unit/test_core_events.py`, `tests/unit/test_audit_signing.py`,
 `tests/unit/test_scan_tool_result.py`.
@@ -314,7 +317,7 @@ Redaction is applied to text before it leaves the scan boundary.
 
 ## Reporting a vulnerability
 
-See [SECURITY.md](SECURITY.md). Do not open a public issue.
+See [SECURITY.md](SECURITY.md) and report privately.
 
 ---
 

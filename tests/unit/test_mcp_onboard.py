@@ -42,6 +42,7 @@ def _write_manifest(tmp_path: Path, name: str = "svc.yaml", **fields) -> Path:
         "id": "svc",
         "display_name": "Service",
         "url": "https://mcp.example.test/sse",
+        "allowed_urls": ["https://mcp.example.test/*"],
         "tools": [
             {"name": "search", "description": "Search internal documentation for a query."},
         ],
@@ -183,6 +184,28 @@ async def test_blocked_finding_path_fails_and_records_nothing(tmp_path: Path, mo
     assert sink.events[0].decision == Decision.BLOCKED
     assert sink.events[0].deny_reason is not None
     assert lookup_baseline(config.mcp_baseline.path, "svc", _SECRET) is None
+
+
+async def test_manifest_without_allowed_urls_fails_before_the_scan(tmp_path: Path, monkeypatch):
+    path = tmp_path / "svc.yaml"
+    path.write_text('id: svc\ndisplay_name: "Service"\nurl: "https://mcp.example.test/sse"\n')
+    scanned: list = []
+
+    async def fake(manifest, **_):
+        scanned.append(manifest)
+        return []
+    monkeypatch.setattr(onboard_module, "_fetch_live_tools", fake)
+    emitter, sink = await _emitter()
+
+    with pytest.raises(ConfigError, match="allowed_urls"):
+        await onboard_module.run_onboarding(
+            path, config=_config(tmp_path), provider=None, emitter=emitter,
+        )
+
+    assert scanned == []
+    assert sink.events == []
+    baseline_db = tmp_path / "baseline.db"
+    assert not baseline_db.exists() or lookup_baseline(baseline_db, "svc", _SECRET) is None
 
 
 async def test_missing_info_path_raises_before_any_audit_event(tmp_path: Path):

@@ -188,7 +188,7 @@ policy:
 
 An agent whose `allowed_tags` is a superset of any entry raises `ConfigError` from `load()`/`register()`/`reload()` and is never registered. Entries need ≥2 distinct tags. Subagents are not checked separately (their tags are a subset of the parent's — Invariant 4).
 
-→ See `07-policy.md` for the full rule grammar.
+→ See `policy.md` for the full rule grammar.
 
 ---
 
@@ -444,7 +444,7 @@ connectivity:                 # required
 Connectivity is always on: `check_tool_call` issues a signed `DispatchToken`
 on every allowed gate decision. `ShaiTransport` validates it on every
 outbound MCP request.
-→ See `10-connectivity.md`.
+→ See `connectivity.md`.
 
 ---
 

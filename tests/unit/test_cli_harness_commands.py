@@ -45,6 +45,7 @@ _MANIFEST = """\
 id: slack
 display_name: "Slack"
 url: "https://mcp.slack.com/sse?token=SHOULD_NOT_LEAK"
+allowed_urls: ["https://mcp.slack.com/*"]
 credentials:
   token: literal-token
 tools:

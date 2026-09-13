@@ -7,6 +7,7 @@ serializer survived the suite. Real classes fail the way production fails.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,13 @@ from harness.config.schema import AdapterRef, BoundaryConfig, ToolResultScanConf
 from harness.core.context import AgentContext
 from harness.core.events import AnyAuditEvent
 from harness.core.types import OnError, ScanAction, Severity
+
+# Windows consoles default to a legacy codepage (cp1252), and tests run with -s
+# (tests/perf) print box-drawing characters. Safe on POSIX, where the stream is
+# already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 FIXTURES = Path(__file__).parent / "fixtures"
 AGENTS   = FIXTURES / "agents"

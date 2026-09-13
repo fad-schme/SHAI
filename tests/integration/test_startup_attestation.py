@@ -35,6 +35,7 @@ _MANIFEST = (
     "id: test_mcp\n"
     "display_name: \"Test MCP\"\n"
     "url: \"https://user:tok@mcp.example.com/mcp?api_key=SECRET#frag\"\n"
+    "allowed_urls: [\"https://mcp.example.com/*\"]\n"
     "tags: [external]\n"
 )
 

@@ -7,12 +7,16 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Semver policy
 
 - **PATCH**: bug fixes, pattern catalog updates, new scanners (additive)
-- **MINOR**: new config fields with defaults, new boundaries, new integrations
-- **BREAKING**: removing config fields, changing defaults, verdict/event schema changes
+- **MINOR**: new config fields with defaults, new boundaries, new integrations, changed defaults, removed config fields, verdict/event schema changes
 
 ## [Unreleased]
 
 ### Fixed
+- **A refused `notifications/initialized` fails the MCP connect.**
+  `MCPSource` logged the transport's `NetworkPolicyError` on the handshake
+  notification at debug level and kept connecting; it now fails the connect
+  like every other connect-phase refusal, and the source's `required` flag
+  decides the outcome. Other notification failures are logged as before.
 - **A request refused by `ShaiTransport` raises `NetworkPolicyError`.**
   `MCPSource.call()` wrapped the transport's policy refusal in `ConfigError`,
   so a caller could not tell a blocked call from a broken connection without
@@ -22,8 +26,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   connectivity enabled, minting read allow-lists from the `sources:` entry,
   which carries none, so every allowed call to a declared MCP source raised out
   of `check_tool_call`; the token now carries the manifest's `allowed_urls` and
-  `allowed_methods`, and a manifest declaring no `allowed_urls` is refused at
-  the gate. A local tool's token binds no URL and no method, whatever
+  `allowed_methods`. A local tool's token binds no URL and no method, whatever
   `source_name` it carries.
 
 - **MCP tool calls carry their dispatch token.** `MCPSource.call()` accepted
@@ -32,6 +35,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NetworkAuditEvent` joined a tool call to its gate event.
 
 ### Changed
+- **An MCP manifest declares `allowed_urls`.** The field is required and
+  non-empty, and every entry must canonicalize, so `shai mcp onboard` and
+  startup refuse a manifest whose list is missing, empty or malformed.
+  `ShaiTransport` forwards a request when its URL matches both the source's and
+  the token's list.
 - **`connectivity.token_policy: strict | audit` replaces `no_token_policy`,
   default `strict`.** Every legitimate request carries a token, so an
   untokened one is refused under `strict` with a denied `NetworkAuditEvent`,

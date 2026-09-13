@@ -381,13 +381,20 @@ async def test_denied_url_emits_audit_event():
     assert "allowed_urls" in event.deny_reason
 
 
-async def test_empty_allowed_urls_permits_any():
-    """Empty allowed_urls = no URL restriction (local tools, test scenarios)."""
-    inner = AsyncMock()
-    inner.handle_async_request = AsyncMock(return_value=_response())
-    t = _transport(allowed_urls=[], config=_config(token_policy="audit"), inner=inner)
-    req = _request("https://anywhere.com/api")
-    await t.handle_async_request(req)   # must not raise
+async def test_empty_allowed_urls_refuses_every_request():
+    """The URL check runs on every request; an empty allow-list refuses each one."""
+    sink = RecordingSink()
+    t = _transport(allowed_urls=[], config=_config(token_policy="audit"),
+                   emitter=AuditEmitter([sink]), inner=_network())
+    with pytest.raises(NetworkPolicyError, match="allowed_urls"):
+        await t.handle_async_request(_request("https://mcp.slack.com/message"))
+    assert [e.status for e in sink.events] == ["denied"]
+
+
+async def test_token_with_empty_allowed_urls_is_refused_at_url_binding():
+    t = _transport(inner=_network())
+    with pytest.raises(NetworkPolicyError, match="token.allowed_urls"):
+        await t.handle_async_request(_request(token=_token(allowed_urls=[])))
 
 
 # ── Method enforcement ────────────────────────────────────────────────────

@@ -862,6 +862,11 @@ class MCPSource:
                 "/message", json=payload, params=params_q,
                 extensions={"shai_dispatch_token": token} if token else {},
             )
+        except NetworkPolicyError:
+            # ShaiTransport refused the notification and has already emitted
+            # its denied NetworkAuditEvent. A refused handshake request fails
+            # the connect, the same as every other connect-phase refusal.
+            raise
         except Exception as e:
             log.debug("mcp notification failed",
                       extra={"source": self.name, "method": method,

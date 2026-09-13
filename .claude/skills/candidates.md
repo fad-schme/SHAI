@@ -214,5 +214,5 @@ candidate is no longer needed — the regex rule is the permanent fix.
 
 ---
 
-→ See `04-boundaries.md` for how findings flow through the ensemble.
-→ See `02-harness-yaml.md` for the pattern-DB CLI workflow.
+→ See `boundaries.md` for how findings flow through the ensemble.
+→ See `harness-yaml.md` for the pattern-DB CLI workflow.

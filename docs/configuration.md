@@ -20,6 +20,19 @@ tenant_id: "my-deployment"
 
 `tenant_id` is stamped on every audit event. Set it to something that identifies this deployment in your SIEM.
 
+### Connectivity (required)
+
+Every allowed tool call carries a signed dispatch token, and every MCP request passes through `ShaiTransport`. The block and its secret are required:
+
+```yaml
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"   # HMAC-SHA256 signing key, required
+  token_ttl_seconds: 15                         # default; 1–300
+  token_policy: strict                          # strict (default) | audit
+```
+
+`token_secret` signs every dispatch token. `token_policy` decides what `ShaiTransport` does with an untokened request: `strict` refuses it, `audit` forwards and records it. See [connectors.md](connectors.md#dispatch-tokens-and-shaitransport).
+
 ### Scan boundaries
 
 All four scan boundaries share the same shape. Turn one on:

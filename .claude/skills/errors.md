@@ -12,15 +12,26 @@ HarnessError
 ├── SubAgentNotDeclaredError  — sub_agent_id not in parent's sub_agents
 ├── ToolNotRegisteredError    — tool name not in ToolRegistry
 ├── PolicyEvaluationError     — policy engine internal failure (not a normal deny)
+├── ArgumentViolationError    — an ArgumentRule failed; check_tool_call returns it as a deny
+├── IrreversibleActionError   — approval quorum unmet; check_tool_call returns it as a deny
 ├── AuditEmissionError        — all audit sinks failed simultaneously
 ├── NetworkPolicyError        — ShaiTransport blocked an outbound MCP request
 ├── DispatchRefused           — a local tool's verify_tool_dispatch refused its call
-├── SecretNotFound            — secret:// reference not in environment
 └── MCPInvocationError        — MCP server returned a JSON-RPC error
+
+SecretsProviderError          — a secrets provider failed to resolve a secret:// reference
+└── SecretNotFound            — secret:// reference not in environment
 ```
 
-All errors carry structured context attributes (`agent_id`, `op`, `boundary`, etc.)
-for log formatters.
+Every class imports from `harness.core.errors`. `from harness import ...`
+exports `HarnessError`, `ConfigError`, `AgentNotRegisteredError`,
+`AgentConflictError`, `SubAgentNotDeclaredError`, `AuditEmissionError`,
+`NetworkPolicyError`, `DispatchRefused`, `MCPInvocationError`.
+`SecretNotFound` imports from `harness.adapters.secrets.env`.
+
+`HarnessError` subclasses carry structured context attributes (`agent_id`,
+`op`, `boundary`, etc.) for log formatters. `SecretsProviderError` is raised
+by the secrets provider during `from_yaml()`.
 
 ---
 

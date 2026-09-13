@@ -82,7 +82,7 @@ prints a concise configuration summary.
 shai validate
 # Validating config/harness.yaml ... OK
 #   tenant_id:     acme-prod
-#   policy_rules:  4
+#   source_rules:  1
 #   audit_sinks:   ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
 #   session:       enabled=True  backend=sqlite  threshold=0.7  window=50  on_escalation=block
@@ -296,8 +296,8 @@ The DB has two tables:
 | `patterns` | `shai patterns apply` | `shai patterns list`, `shai patterns verify`, and `SHAI.from_yaml()` at startup when `patterns_db.enabled` is set |
 | `heuristic_candidates` | Every scan (fire-and-forget) | `shai patterns candidates`, promoted rows read by the scan pipeline |
 
-→ See `13-candidates.md` for the candidate lifecycle.
-→ See `02-harness-yaml.md` for the pattern-DB CLI workflow.
+→ See `candidates.md` for the candidate lifecycle.
+→ See `harness-yaml.md` for the pattern-DB CLI workflow.
 
 ### `apply` — install a signed bundle
 
@@ -356,7 +356,7 @@ and mid-flight corruption before the DB reaches production.
 
 ### `candidates`, `promote`, `dismiss`, `retire`
 
-Heuristic candidate management — full reference in `13-candidates.md`:
+Heuristic candidate management — full reference in `candidates.md`:
 
 ```bash
 shai patterns candidates --db state/patterns.db --status open
@@ -459,9 +459,9 @@ Pipes and redirects receive plain text. Set `NO_COLOR=1` to disable color
 explicitly in a terminal.
 
 **`shai patterns list` shows fewer rules than the bundle contains**
-Some rows verified as invalid at apply time and were skipped, OR the bundle
-used `INSERT OR REPLACE` semantics and overwrote earlier rules with the same
-`rule_id`. Run `shai patterns verify` to distinguish the two.
+The bundle carries several rows with the same `rule_id`. Rows are upserted by
+`rule_id`, so the last one wins. Every listed row passed verification: one bad
+signature aborts the whole apply.
 
 **`shai validate` passes but `from_yaml()` fails at runtime**
 The validator does not resolve `secret://` URIs — those are checked at
@@ -470,6 +470,6 @@ but fail startup. Include env-var presence checks in your deploy playbook.
 
 ---
 
-→ See `02-harness-yaml.md` for the pattern-DB CLI workflow.
-→ See `13-candidates.md` for the candidate lifecycle.
-→ See `05-verdicts-events.md` for `AuditEvent` field reference (what `audit tail` renders).
+→ See `harness-yaml.md` for the pattern-DB CLI workflow.
+→ See `candidates.md` for the candidate lifecycle.
+→ See `verdicts-events.md` for `AuditEvent` field reference (what `audit tail` renders).

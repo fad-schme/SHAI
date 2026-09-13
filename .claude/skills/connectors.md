@@ -57,6 +57,12 @@ tools:
     action: allow
 ```
 
+`allowed_urls` is required: a non-empty list of URL patterns whose hosts
+canonicalize. It is every destination the source reaches — `ShaiTransport`
+checks each request against it and each dispatch token is bound to it.
+Onboarding and startup refuse a manifest whose list is missing, empty or
+malformed.
+
 `action` is `allow` or `block`, and it is enforced. Each `action: block`
 compiles at startup to an ordinary deny rule evaluated by the existing
 policy layer, placed ahead of every operator rule — agent-scoped and global

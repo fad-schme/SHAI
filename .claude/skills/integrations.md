@@ -230,15 +230,18 @@ gated = await wrap_tools([search_docs], harness=harness, ctx=ctx)
 ## PydanticAI
 
 ```python
-from harness.integrations.pydantic_ai import harness_tool, add_harness_middleware
+from harness.integrations.pydantic_ai import create_tools, shai_tool
 from pydantic_ai import Agent
 
-@harness_tool(tags=["read", "internal"])
+@shai_tool(tags=["read", "internal"])
 async def search_docs(query: str) -> str: ...
 
-agent = Agent(model="<your-model>", tools=[search_docs])
-add_harness_middleware(agent, harness=harness, ctx=ctx)
+gated = await create_tools([search_docs], harness=harness, ctx=ctx)  # registers + gates
+agent = Agent(model="<your-model>", tools=gated)
 ```
+
+`add_harness_middleware(agent, harness=, ctx=)` gates an existing agent's
+tools in place; `harness_tool(harness=, ctx=)` gates a third-party function.
 
 ---
 

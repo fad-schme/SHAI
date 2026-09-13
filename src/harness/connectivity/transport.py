@@ -127,7 +127,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         tool_name = None
 
         # ── 1. URL enforcement ────────────────────────────────────────────
-        if self._allowed_urls and not matches_allowed_url(url_str, self._allowed_urls):
+        if not matches_allowed_url(url_str, self._allowed_urls):
             deny_reason = (
                 f"destination '{url_str}' is not in allowed_urls for "
                 f"source '{self._source_name}'"
@@ -207,7 +207,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 raise NetworkPolicyError(deny_reason)
 
             # ── 3b. URL binding — request must match token's allowed_urls ─
-            if token.allowed_urls and not matches_allowed_url(url_str, token.allowed_urls):
+            if not matches_allowed_url(url_str, token.allowed_urls):
                 deny_reason = (
                     f"destination '{url_str}' not in token.allowed_urls "
                     f"for source '{self._source_name}'"

@@ -8,6 +8,7 @@ from harness.mcp.posture import protocol_posture
 def _manifest(url: str, credentials: dict | None = None) -> MCPManifest:
     return MCPManifest(
         id="svc", display_name="Service", url=url,
+        allowed_urls=["https://mcp.example.test/*"],
         credentials=credentials or {},
     )
 
