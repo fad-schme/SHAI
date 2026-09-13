@@ -44,13 +44,13 @@ user input → [scan] → LLM → [gate] → tool → [scan result] → LLM → 
                                                           signed audit event stream
 ```
 
-| Boundary | What runs | Catches (see THREAT_MODEL.md for the honest coverage matrix) |
+| Boundary | What runs | Catches (see THREAT_MODEL.md) |
 |---|---|---|
 | `scan_input` | PII regex, injection catalogs, heuristic scanner | Direct prompt injection, PII, credentials in user text |
 | `check_tool_call` | 7-layer gate | Unauthorised tools, argument violations, irreversibility without approval, subagent scope violations, policy denies, cross-boundary signal correlation |
 | `scan_tool_result` | Configured scanner chain (common + input injection catalogs, plus heuristic) | Indirect injection and authority spoofing in fetched documents, MCP responses, web pages |
 | `scan_output` | PII regex, consolidated-risk block | PII leakage, data exfiltration, turn-level risk accumulation |
-| `scan_file` | Structural + configured content scan (common + input + document injection catalogs) | Malicious PDFs, Office macros, EXIF anomalies, embedded payloads |
+| `scan_file` | Structural + configured content scan (common + input + document injection catalogs) | Malicious PDFs, Office macros, EXIF anomalies, embedded payloads, Zip Bombs and svg checks |
 
 Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block, or degraded. No raw user text, LLM response, or matched substring ever appears in the log.
 
@@ -183,7 +183,7 @@ CI runs unit tests, contract tests, security-invariant tests, `pip-audit`
 (CVE scan), `bandit` (static analysis), and `gitleaks` (secret scan) on
 every PR. Nothing merges without a green pipeline.
 
-Security issues: see [SECURITY.md](SECURITY.md). Do not open a public issue.
+Security issues: see [SECURITY.md](SECURITY.md).
 
 ---
 

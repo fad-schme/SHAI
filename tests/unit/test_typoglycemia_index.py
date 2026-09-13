@@ -99,6 +99,23 @@ def test_repeated_word_is_matched_once(monkeypatch):
     assert calls <= 2
 
 
+def test_word_is_matched_once_across_the_passages_of_a_document(monkeypatch):
+    """Passages overlap and repeat words; a word's match depends on the word
+    alone, so 500 copies spread over two dozen passages still cost one fuzzy
+    decision."""
+    calls = 0
+    original = heuristic._typoglycemia_match_kind
+
+    def counting(word: str, target: str) -> str | None:
+        nonlocal calls
+        calls += 1
+        return original(word, target)
+
+    monkeypatch.setattr(heuristic, "_typoglycemia_match_kind", counting)
+    heuristic._fuzzy_intent(" ".join(["content"] * 500))
+    assert calls <= 2
+
+
 def test_token_longer_than_any_target_is_never_compared(monkeypatch):
     """A token past the longest target by more than the edit bound cannot
     match, so it is rejected before its deletion forms are built — a single

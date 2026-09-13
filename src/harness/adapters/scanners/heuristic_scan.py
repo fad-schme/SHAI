@@ -400,16 +400,53 @@ def _typo_index(targets: frozenset[str]) -> _TypoIndex:
     )
 
 
+# A token's fuzzy match against one vocabulary: (target, "strong" | "weak"), or
+# (None, None) when it matches nothing.
+_FuzzyMatch = tuple[str | None, str | None]
+
+
+def _best_fuzzy_match(token: str, index: _TypoIndex) -> _FuzzyMatch:
+    # A token can fuzzy-match several targets. Two rules decide which one
+    # is recorded, and both matter:
+    #
+    # Order — `targets` is a frozenset, and set iteration order for strings
+    # varies with PYTHONHASHSEED, so taking whichever match appeared first
+    # made the classification differ between processes on byte-identical
+    # input. Candidates come back sorted, which fixes the order.
+    #
+    # Strength — a weak (same-length substitution) match found first used
+    # to suppress a strong match on another target, which was arbitrary
+    # rather than a judgement. Strong wins wherever it appears, and is
+    # still short-circuited because nothing beats it.
+    best: _FuzzyMatch = (None, None)
+    for target in index.candidates(token):
+        match_kind = _typoglycemia_match_kind(token, target)
+        if match_kind == "strong":
+            return target, "strong"
+        if match_kind is not None and best[0] is None:
+            best = (target, match_kind)
+    return best
+
+
 def _match_fuzzy_class(
     tokens: list[str],
     targets: frozenset[str],
     transformed_tokens: frozenset[str],
+    *,
+    best_matches: dict[str, _FuzzyMatch] | None = None,
 ) -> tuple[frozenset[str], bool, bool, int]:
+    """Fold ``tokens`` into matched targets and fuzzy/strong flags.
+
+    ``best_matches`` memoises each token's match against ``targets``. A caller
+    judging several passages of one document passes the same dict to every
+    call, so a word is matched once rather than once per passage it falls in.
+    """
     matched: set[str] = set()
     fuzzy_targets: set[str] = set()
     fuzzy = False
     strong = False
     index = _typo_index(targets)
+    best_matches = {} if best_matches is None else best_matches
     # Each distinct token once: its outcome depends on the token alone and is
     # folded into sets and flags, so a repeat adds nothing but cost.
     for token in dict.fromkeys(tokens):
@@ -420,30 +457,9 @@ def _match_fuzzy_class(
                 strong = True
                 fuzzy_targets.add(token)
             continue
-        # A token can fuzzy-match several targets. Two rules decide which one
-        # is recorded, and both matter:
-        #
-        # Order — `targets` is a frozenset, and set iteration order for strings
-        # varies with PYTHONHASHSEED, so taking whichever match appeared first
-        # made the classification differ between processes on byte-identical
-        # input. Candidates come back sorted, which fixes the order.
-        #
-        # Strength — a weak (same-length substitution) match found first used
-        # to suppress a strong match on another target, which was arbitrary
-        # rather than a judgement. Strong wins wherever it appears, and is
-        # still short-circuited because nothing beats it.
-        best_target: str | None = None
-        best_kind: str | None = None
-        for target in index.candidates(token):
-            match_kind = _typoglycemia_match_kind(token, target)
-            if match_kind is None:
-                continue
-            if match_kind == "strong":
-                best_target, best_kind = target, "strong"
-                break
-            if best_target is None:
-                best_target, best_kind = target, match_kind
-
+        if token not in best_matches:
+            best_matches[token] = _best_fuzzy_match(token, index)
+        best_target, best_kind = best_matches[token]
         if best_target is not None:
             matched.add(best_target)
             fuzzy = True
@@ -452,24 +468,36 @@ def _match_fuzzy_class(
     return frozenset(matched), fuzzy, strong, len(fuzzy_targets)
 
 
-def _fuzzy_intent(text: str) -> _FuzzyIntent:
-    """Classify fuzzy action, protected-object, and destination evidence."""
+def _passage_intent(
+    text: str,
+    *,
+    matches: dict[frozenset[str], dict[str, _FuzzyMatch]] | None = None,
+) -> _FuzzyIntent:
+    """Classify fuzzy action, protected-object, and destination evidence.
+
+    ``matches`` holds one _match_fuzzy_class memo per vocabulary, shared across
+    the passages of one document.
+    """
+    matches = {} if matches is None else matches
     tokens, transformed_tokens = _normalize_fuzzy_text(text)
     actions, fuzzy_actions, strong_actions, action_fuzzy_count = _match_fuzzy_class(
         tokens,
         _TYPO_ACTIONS,
         transformed_tokens,
+        best_matches=matches.setdefault(_TYPO_ACTIONS, {}),
     )
     protected, fuzzy_protected, strong_protected, protected_fuzzy_count = _match_fuzzy_class(
         tokens,
         _TYPO_PROTECTED_OBJECTS,
         transformed_tokens,
+        best_matches=matches.setdefault(_TYPO_PROTECTED_OBJECTS, {}),
     )
     destinations, fuzzy_destinations, strong_destinations, destination_fuzzy_count = (
         _match_fuzzy_class(
             tokens,
             _TYPO_EXECUTION_DESTINATIONS,
             transformed_tokens,
+            best_matches=matches.setdefault(_TYPO_EXECUTION_DESTINATIONS, {}),
         )
     )
     # Corroboration for weak (same-length substitution) matches must come from
@@ -529,6 +557,33 @@ def _fuzzy_intent(text: str) -> _FuzzyIntent:
         protected_objects=protected,
         execution_destinations=destinations,
         has_obfuscation=has_obfuscation,
+    )
+
+
+# Fuzzy evidence is judged within one passage: this many whitespace-delimited
+# words, with windows overlapping by half so a phrase near a boundary sits whole
+# in one of them. Pooled over a whole document, accidental near-misses from
+# passages far apart — `revel` for `reveal` on one page, `concept` for
+# `context` on another — formed a HIGH compound on 19 of 40 benign 10 KB
+# encyclopedia documents. An injected instruction is a phrase; its evidence
+# sits together. Evidence spread wider than a passage does not combine.
+_PASSAGE_WORDS = 40
+_PASSAGE_STEP = _PASSAGE_WORDS // 2
+
+
+def _fuzzy_intent(text: str) -> _FuzzyIntent:
+    """The strongest passage's evidence: a compound first, then by score."""
+    words = text.split()
+    if len(words) <= _PASSAGE_WORDS:
+        return _passage_intent(text)
+    matches: dict[frozenset[str], dict[str, _FuzzyMatch]] = {}
+    passages = (
+        " ".join(words[start:start + _PASSAGE_WORDS])
+        for start in range(0, len(words) - _PASSAGE_STEP, _PASSAGE_STEP)
+    )
+    return max(
+        (_passage_intent(passage, matches=matches) for passage in passages),
+        key=lambda intent: (intent.is_compound_attack, intent.score),
     )
 
 

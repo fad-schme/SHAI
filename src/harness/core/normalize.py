@@ -225,6 +225,27 @@ _ODD_DELIM = re.compile(r"(?:\s[\-/_.|~*]+\s|[\-/_.|~*]{2,})")
 # trigger word and long enough that initials, table cells, and "a b c" in prose
 # do not qualify.
 _MIN_CHAR_RUN = 4
+# Local fragmentation tells, as spans. Each is a run — words or characters held
+# apart by separators — so prose around a payload cannot dilute it, and the span
+# is the text the repair has to rewrite.
+_NON_SEP = r"[^\s\-/_.|~*]"
+# Three or more words chained by fragmentation delimiters: "ignore -/- your
+# -/- previous". One delimiter between two words is punctuation ("the budget -
+# a long session - and"), however many times a document uses it. Anchored to a
+# word start: unanchored, every position inside one long token re-scans the rest
+# of it, and a single 8 KB token cost a second.
+_DELIM_RUN = re.compile(
+    rf"(?<!{_NON_SEP}){_NON_SEP}+(?:{_ODD_DELIM.pattern}{_NON_SEP}+){{2,}}"
+)
+# _MIN_CHAR_RUN or more single-character tokens in a row: "i g n o r e".
+_CHAR_RUN = re.compile(
+    rf"(?<!{_NON_SEP}){_NON_SEP}(?!{_NON_SEP})"
+    rf"(?:{_FRAGMENT_SEP_CLASS}{_NON_SEP}(?!{_NON_SEP})){{{_MIN_CHAR_RUN - 1},}}"
+)
+# Characters of surrounding text kept on each side of a local fragment in its
+# repair views, so a signature running from the fragment into the text around
+# it ("i g n o r e your previous instructions") still matches.
+_FRAGMENT_MARGIN = 200
 # Transitions that reveal a word glued to what precedes it with no separator.
 # Deliberately not letter → digit: "UK12345678901234567890" splits into noise
 # and no bypass needs it.
@@ -311,15 +332,6 @@ def _split_glued(text: str) -> str:
     return split if split != text else ""
 
 
-def _longest_char_run(tokens: list[str]) -> int:
-    """Length of the longest run of consecutive single-character tokens."""
-    longest = run = 0
-    for token in tokens:
-        run = run + 1 if len(token) == 1 else 0
-        longest = max(longest, run)
-    return longest
-
-
 def _join_char_runs(text: str) -> str:
     """Join runs of single-character tokens, leaving whole words spaced.
 
@@ -383,24 +395,17 @@ def _join_char_runs(text: str) -> str:
 def _reassemble(text: str, uncollapsed: str) -> list[tuple[str, str]]:
     """Return reassembled views when ``text`` looks fragmented.
 
-    Three fragmentation styles need three different repairs, so this may yield
-    three views:
+    Up to three views, one per repair — see _repair_views.
 
-    - separators collapsed to single spaces — repairs word-level fragmentation
-      ("ignore -/- previous" -> "ignore previous"), preserving word boundaries
-      that space-delimited signatures rely on;
-    - single-character runs joined in place — repairs per-character
-      fragmentation while keeping the surrounding words separate
-      ("i g n o r e your previous" -> "ignore your previous");
-    - separators removed entirely — repairs per-character fragmentation
-      ("i g n o r e" -> "ignore").
-
-    Fires when the text looks fragmented anywhere: a long enough run of
-    single-character tokens, many short tokens once split on separators, or
-    separators appearing between the majority of characters. The run test is
-    what makes this local — the ratio tests are computed over the whole string,
-    so fragmenting three words inside an ordinary paragraph dilutes both below
-    threshold and the repair would never fire on ratios alone.
+    Text fragmented throughout — many short tokens once split on separators, or
+    separators between the majority of characters — is repaired whole. Those
+    two tests average over the string, so a fragment inside ordinary prose
+    dilutes them below threshold; the local tells catch that case instead: a
+    run of single-character tokens (_CHAR_RUN) or of words chained by
+    fragmentation delimiters (_DELIM_RUN). A local fragment is repaired in the
+    passage around it, not across the document: the surface view already
+    carries the whole text, and rewriting all of it for one fragmented phrase
+    made every scanner scan two more full copies.
 
     ``uncollapsed`` is ``text`` with its whitespace runs intact. Detection and
     the separator-substitution views run on ``text`` — the collapsed form the
@@ -415,17 +420,53 @@ def _reassemble(text: str, uncollapsed: str) -> list[tuple[str, str]]:
     short_ratio = sum(1 for t in tokens if len(t) <= 2) / len(tokens)
     # Separator density: separators as a fraction of all characters.
     seps = sum(1 for ch in text if _FRAGMENT_SEP.match(ch))
-    dense = seps / max(len(text), 1) > 0.3
-    # Repeated multi-character punctuation delimiters ("-/-", "|", "::") between
-    # words are a strong fragmentation tell — they effectively never occur two
-    # or more times in ordinary prose.
-    odd_delims = len(_ODD_DELIM.findall(text)) >= 2
-    # Local tell: an unbroken run of single-character tokens. Dilution-proof,
-    # because it does not average over the rest of the document.
-    char_run = _longest_char_run(tokens) >= _MIN_CHAR_RUN
-    if not char_run and short_ratio < 0.6 and not dense and not odd_delims:
+    if short_ratio >= 0.6 or seps / max(len(text), 1) > 0.3:
+        return _repair_views(text, uncollapsed)
+    passages = _fragment_passages(text, _CHAR_RUN, _DELIM_RUN)
+    if not passages:
         return []
+    return _repair_views(passages, _fragment_passages(uncollapsed, _CHAR_RUN))
 
+
+def _fragment_passages(text: str, *tells: re.Pattern[str]) -> str:
+    """The text around every match of ``tells``, merged; "" when none match.
+
+    Each match widens by _FRAGMENT_MARGIN on both sides, then out to the
+    nearest whitespace — a cut through a word could leave a fragment that reads
+    as a different word — and overlapping passages merge. Passages are joined
+    by a newline, which the separator class treats as a word gap.
+
+    The walk to whitespace goes at most one more margin. Unbounded, every match
+    in a document without whitespace walked to its edge, and a fragment tell
+    every few bytes made that quadratic: 80 KB cost 20 seconds.
+    """
+    spans: list[list[int]] = []
+    for start, end in sorted(
+        (m.start(), m.end()) for tell in tells for m in tell.finditer(text)
+    ):
+        start = max(0, start - _FRAGMENT_MARGIN)
+        edge = max(0, start - _FRAGMENT_MARGIN)
+        while start > edge and not text[start - 1].isspace():
+            start -= 1
+        end = min(len(text), end + _FRAGMENT_MARGIN)
+        edge = min(len(text), end + _FRAGMENT_MARGIN)
+        while end < edge and not text[end].isspace():
+            end += 1
+        if spans and start <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+    return "\n".join(text[start:end] for start, end in spans)
+
+
+def _repair_views(text: str, uncollapsed: str) -> list[tuple[str, str]]:
+    """The three repairs of a fragmented text, minus any that change nothing.
+
+    - separators collapsed to single spaces — word-level fragmentation;
+    - single-character runs joined in place, read off ``uncollapsed`` —
+      per-character fragmentation with the surrounding words kept apart;
+    - separators removed entirely — per-character fragmentation.
+    """
     views: list[tuple[str, str]] = []
     spaced = _FRAGMENT_SEP.sub(" ", text).strip()
     if spaced and spaced != text:
