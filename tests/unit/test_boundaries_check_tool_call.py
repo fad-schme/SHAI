@@ -444,7 +444,7 @@ _AWS = "AKIAIOSFODNN7EXAMPLE"
 _SSN = "123-45-6789"
 
 
-async def _run_with_arg_scanners(scanners, args):
+async def _run_with_arg_scanners(scanners, args, *, normalization=None):
     agent = make_agent(allowed_tool_names=["send_email"],
                        allowed_tags=["read", "internal", "external_write", "sensitive"])
     tools, sink, emitter, policy = setup()
@@ -454,6 +454,7 @@ async def _run_with_arg_scanners(scanners, args):
         agent_config=agent, tools=tools, policy=policy,
         arg_scanners=scanners, emitter=emitter, tenant_id="test",
         scan_args_for_tags=frozenset({"sensitive"}),
+        normalization=normalization,
     )
     return gate, sink
 
@@ -501,6 +502,63 @@ async def test_l7_block_outranks_a_redaction_on_the_same_argument():
     gate, _ = await _run_with_arg_scanners(scanners, {"body": f"{_AWS} {_SSN}"})
     assert gate.allowed is False
     assert "arg scan blocked" in gate.deny_reason
+
+
+class _SeenViews:
+    """Records every text it is asked to scan; finds nothing."""
+
+    name = "seen"
+
+    def __init__(self) -> None:
+        self.views: list[str] = []
+
+    async def scan(self, text, ctx):
+        from harness.adapters.scanners.base import ScanResult
+        self.views.append(text)
+        return ScanResult()
+
+
+async def test_l7_normalizes_an_argument_once_for_every_scanner(monkeypatch):
+    """Views depend on the text alone. Until a redaction changes the text,
+    every scanner in the chain reads the same views — normalizing again per
+    scanner cost the full-stack gate five redundant passes per argument."""
+    from harness.adapters.scanners.base import ConfiguredScanner
+    from harness.config.schema import NormalizationConfig
+
+    calls: list[str] = []
+    original = check_tool_call.canonicalize_config
+
+    def counting(text, config):
+        calls.append(text)
+        return original(text, config)
+
+    monkeypatch.setattr(check_tool_call, "canonicalize_config", counting)
+    scanners = [ConfiguredScanner(scanner=_SeenViews()) for _ in range(4)]
+    gate, _ = await _run_with_arg_scanners(
+        scanners, {"body": "quarterly figures attached"},
+        normalization=NormalizationConfig(),
+    )
+    assert gate.allowed is True
+    assert len(calls) == 1
+
+
+async def test_l7_scanner_after_a_redaction_reads_views_of_the_redacted_text():
+    """Reusing views must stop at a redaction: the next scanner in the chain
+    reads the redacted text, never the secret the redactor removed."""
+    from harness.adapters.scanners.base import ConfiguredScanner
+    from harness.config.schema import NormalizationConfig
+
+    seen = _SeenViews()
+    scanners = [
+        *_redactors(("aws", r"AKIA[0-9A-Z]{16}", "aws_key")),
+        ConfiguredScanner(scanner=seen),
+    ]
+    gate, _ = await _run_with_arg_scanners(
+        scanners, {"body": f"key {_AWS}"}, normalization=NormalizationConfig(),
+    )
+    assert gate.allowed is True
+    assert seen.views
+    assert not any(_AWS in view for view in seen.views), seen.views
 
 
 async def test_l7_redaction_covering_the_key_becomes_the_value():

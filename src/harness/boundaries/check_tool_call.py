@@ -290,15 +290,16 @@ async def run(
         ]
         _state = scan_state if scan_state is not None else ScanState()
 
-        async def _guarded_arg_scan(configured: ConfiguredScanner, text: str) -> Any:
+        def _arg_views(text: str) -> list[str]:
+            if normalization is not None and normalization.enabled:
+                return canonicalize_config(text, normalization).views
+            return [text]
+
+        async def _guarded_arg_scan(configured: ConfiguredScanner, views: list[str]) -> Any:
             scanner = configured.scanner
             breaker = _state.get_breaker(scanner)
             if breaker.is_open:
                 raise RuntimeError(f"circuit breaker open for scanner '{scanner.name}'")
-            if normalization is not None and normalization.enabled:
-                views = canonicalize_config(text, normalization).views
-            else:
-                views = [text]
             result = await _scan_views(scanner, views, ctx)
             breaker.record_success()
             return result
@@ -316,10 +317,17 @@ async def run(
             """Run every scanner over one argument, feeding each the previous
             one's redaction. Returns (key, redacted_value or None)."""
             redacted: str | None = None
+            # Views depend on the text alone, so every scanner reads the same
+            # ones until a redaction changes the text (cleared below). Built
+            # inside the try, so a normalization failure fails closed here as
+            # a scanner exception does.
+            views: list[str] | None = None
             for configured in arg_scanners:
                 scanner = configured.scanner
                 try:
-                    result = await _guarded_arg_scan(configured, text)
+                    if views is None:
+                        views = _arg_views(text)
+                    result = await _guarded_arg_scan(configured, views)
                 except Exception as exc:
                     _state.get_breaker(scanner).record_failure()
                     log.error(
@@ -380,6 +388,7 @@ async def run(
                     # scanner's detection depend on its position in the list.
                     # Where the prefix survived this rebuilds it byte-identically.
                     text = f"{prefix}{redacted}"
+                    views = None
                     continue
 
                 raise _ArgDeny(f"arg scan blocked: {blocking[0].category}")
