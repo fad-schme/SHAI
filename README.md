@@ -30,8 +30,7 @@ condition**, not an exceptional one. That means enforcement at the *system
 boundary*: deterministic code that evaluates what the agent proposes to do,
 independently of why it proposed it.
 
-SHAI is one implementation of that idea. It does not replace prompt-side
-guardrails, model-level fine-tuning, or runtime sandboxing. It is a
+SHAI is one implementation of that idea. It is a
 **deterministic, auditable enforcement layer** you compose with them.
 
 ---
@@ -103,13 +102,11 @@ Framework-specific templates live in [`docs/integrations.md`](docs/integrations.
 Full docs are in [`docs/`](docs/):
 
 - **[quickstart.md](docs/quickstart.md)** — five-minute walkthrough
-- **[concepts.md](docs/concepts.md)** — boundaries, trust envelope, verdicts, cross-turn accumulator
 - **[architecture.md](docs/architecture.md)** — how SHAI is put together
 - **[configuration.md](docs/configuration.md)** — `harness.yaml`, `agent.yaml`, policy rules
 - **[integrations.md](docs/integrations.md)** — LangGraph, LangChain, Anthropic SDK, CrewAI, PydanticAI, OpenAI Agents
 - **[connectors.md](docs/connectors.md)** — MCP manifest onboarding and dispatch-token enforcement
 - **[testing.md](docs/testing.md)** — writing tests against SHAI
-- **[errors.md](docs/errors.md)** — exception hierarchy and common failures
 - **[cli.md](docs/cli.md)** — `shai` command reference
 - **[THREAT_MODEL.md](THREAT_MODEL.md)** — threat → control → residual risks
 
@@ -146,27 +143,6 @@ SHAI treats the **whole agent lifecycle** as the unit of enforcement, not just i
 4. **Cross-turn threat accumulation.** Adversarial patterns that stay below any single turn's threshold are caught at the session level.
 5. **Signed, tamper-evident audit trail.** HMAC-SHA256 over every event, one event per boundary call, no raw content ever recorded. Structured for SIEM ingestion.
 6. **Framework-agnostic drop-in.** Same package integrates with LangGraph, LangChain, CrewAI, PydanticAI, Anthropic SDK, and OpenAI Agents. You don't rewrite your agent to add SHAI.
-
-Prompt injection defence is one of the things a harness has to do. It is not the whole job, and it is not what makes SHAI different.
-
-Scope boundaries and residual risks are covered in [THREAT_MODEL.md](THREAT_MODEL.md).
-
----
-
-## Honest coverage claim
-
-We implement deterministic controls that map to the OWASP Top 10 for LLM
-Agentic Applications. Coverage is **layered and imperfect by design** — no
-single scanner catches every attack, and a bundled regex catalog can be
-studied and bypassed by anyone who reads the source (yours can too, and
-you should assume they will).
-
-The [THREAT_MODEL.md](THREAT_MODEL.md) file has the honest mapping:
-which threat maps to which boundary, which tests demonstrate the control,
-and — critically — the residual risks each control does not close.
-
-Please read it before you deploy SHAI as the sole security layer for anything
-that matters.
 
 ---
 

@@ -422,6 +422,6 @@ async def test_9_summary(tmp_path: Path):
             f"{budget:>8.1f}ms {status}"
         )
 
-    print("\n  Note: scanners are run concurrently — total cost ≈ slowest scanner,")
-    print("  not the sum. Normalization adds one pre-processing step before all scanners.")
+    print("\n  Note: scanners run one after another — a boundary call costs about the")
+    print("  sum of the scanners above. Normalization adds one step before all of them.")
     print("=" * 70 + "\n")

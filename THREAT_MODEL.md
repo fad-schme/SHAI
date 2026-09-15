@@ -76,19 +76,7 @@ external data.
 (`injection_common.yaml` + `injection_patterns.yaml`),
 `jailbreak_patterns.yaml`, and `identity_spoof_patterns.yaml`, each merged with
 its fr/es/de/zh variants, plus the heuristic scanner. `scan_file` also adds the
-document-tuned catalog (`patterns_for_doc.yaml`). The normalisation pipeline
-produces de-obfuscated views for the scanners to match against: substring
-decoding (base64, base32, hex, ascii85, binary, unicode-escape,
-percent-encoding, morse) and whole-string transforms (rot13, reversal),
-recursing to `max_depth`; surface folding (NFKC, homoglyph mapping, removal of
-invisible characters); and reassembly of fragmented text. Ensemble scoring
-promotes a finding when independent methods agree. The cross-turn threat
-accumulator detects escalation spread across several turns.
-
-**Tests:** `tests/unit/test_jailbreak_scan.py`, `tests/unit/test_identity_spoof_scan.py`,
-`tests/unit/test_heuristic_candidates.py`, `tests/integration/test_normalization_pipeline.py`,
-`tests/unit/test_scan_tool_result.py`, `tests/integration/test_file_scan_content_chain.py`,
-`tests/unit/test_session_accumulator.py`.
+document-tuned catalog (`patterns_for_doc.yaml`).
 
 **Limits:** detection covers the catalog patterns and the heuristic signals;
 the signed pattern DB extends the catalogs over time.
@@ -108,11 +96,7 @@ first deny wins: `allowed_tool_names` (L1), argument rules (L2),
 irreversibility approvals (L3), capability tags (L4), policy intersection (L5),
 cross-boundary signal correlation (L6), argument scanning (L7 — sensitive-tagged
 tools, or any tool once L6 has tightened). Revocation, rate limits, and the
-session budget run before the gate. Destination-typed arguments (webhook URLs,
-fetch targets) can carry a `scope_policy` that canonicalises the value to the
-host the network stack would dial — case, IDNA, trailing dot, userinfo, and
-loose IPv4 forms (short, octal, decimal) — before matching it against the
-allowlist. IP literals are admitted only through `allowed_cidrs`. The operator
+session budget run before the gate. The operator
 decides what each agent may do; SHAI enforces that decision on every call.
 
 Every allowed call carries a signed, single-use dispatch token bound to the
@@ -121,14 +105,7 @@ tool checks it with `verify_tool_dispatch` inside `dispatch_scope`, which
 raises `DispatchRefused` on refusal. The gate, token check and
 `scan_tool_result` events join on one `token_id`.
 
-**Tests:** `tests/unit/test_boundaries_check_tool_call.py`, `tests/unit/test_argument_policy.py`,
-`tests/contracts/test_policy_contract.py`, `tests/unit/test_turn_signals.py`,
-`tests/unit/test_rate_limiter.py`, `tests/unit/test_session_budget.py`,
-`tests/unit/test_dispatch_token.py`, `tests/unit/test_local_dispatch_check.py`.
-
-**Limits:** the operator's config defines what each agent may do.
-`scope_policy` matches the canonical hostname string and encodes hostnames with
-IDNA2003.
+**Limits:** the operator's set the limits over the config to define what each agent may do.
 
 ---
 
@@ -148,9 +125,7 @@ loaded via `SHAI.load_agent()` and denies every other call with an audit event.
 Credentials are referenced as `secret://` URIs and resolved at load from the
 secrets provider.
 
-**Tests:** `tests/unit/test_agent_registry.py`,
-`tests/unit/test_boundaries_check_tool_call.py::test_subagent_*`.
-
+**Limits:** the operator's baseline agent configuration is the trust anchor for each action.
 ---
 
 ### ASI04 — Agentic Supply Chain Vulnerabilities
@@ -174,20 +149,6 @@ channels that are malicious or tampered with.
   (the default) refuses an untokened request.
 - Tool names, descriptions, and tags come from the approved manifest, and
   `scan_mcp_metadata` scans them for injected instructions.
-- Pattern-DB rows are HMAC-SHA256 signed; `shai patterns apply` verifies every
-  row before writing it, and rows with an invalid signature are skipped at
-  load.
-- `from_yaml()` emits a `system`/`startup` attestation event recording the
-  component set the process wired: each scanner, sink, and policy adapter with
-  the SHA256 of its defining source file, MCP manifest digests, the pattern-DB
-  rule count and digest, the policy digest, and every declared source. It is a
-  record for SIEM correlation: a SIEM holding these events can answer "what was
-  this process running when it made that decision", and can diff one startup
-  against the next. `shai harness inspect` shows the same component set
-  offline.
-
-**Tests:** `tests/unit/test_mcp_baseline.py`, `tests/unit/test_mcp_metadata_scanner.py`,
-`tests/unit/test_shai_transport.py`, `tests/integration/test_startup_attestation.py`.
 
 **Limits:** the operator's baseline approval is the trust anchor for each MCP
 source.
@@ -201,12 +162,10 @@ the host.
 
 **Coverage:** Limited.
 
-**SHAI control:** `command_injection_scan` (`shell` extra) parses shell syntax
+**SHAI control:** `command_injection_scan` parses shell code syntax
 and flags dangerous compositions — a pipeline whose sink is an interpreter, a
 redirect to `/dev/tcp`, a fetch composed with an exec — at any boundary,
 including tool arguments at `check_tool_call`.
-
-**Tests:** `tests/unit/test_command_injection_scan.py`.
 
 ---
 
@@ -222,9 +181,6 @@ Everything the agent receives — user input, uploads, tool and retrieval
 results — is scanned before the LLM ingests it, with the controls in ASI01.
 Anything the agent then writes to memory is a tool call through
 `check_tool_call`.
-
-**Tests:** `tests/unit/test_scan_tool_result.py`, `tests/integration/test_end_to_end_turn.py`,
-`tests/integration/test_file_scan_content_chain.py`.
 
 **Limits:** detection covers injection patterns and heuristic signals in that
 content.
@@ -257,10 +213,6 @@ others keep running, persists across restarts, and takes effect within
 `cache_ttl_seconds`. Every decision emits an audit event, so a cascade can be
 traced.
 
-**Tests:** `tests/unit/test_session_budget.py`,
-`tests/integration/test_session_budget_wiring.py`, `tests/unit/test_rate_limiter.py`,
-`tests/unit/test_revocation.py`, `tests/integration/test_agent_revocation.py`.
-
 **Limits:** budgets and rate limits are held per SHAI instance.
 
 ---
@@ -284,12 +236,7 @@ function or authorized scope.
 **SHAI control:** a rogue agent is still bound by its config. `check_tool_call`
 admits calls only from registered agents and gates every call against the
 operator's config (see ASI02). Revocation stops a registered agent's actions
-(see ASI08). The consolidated turn-risk in `scan_output` blocks turns whose
-combined cross-boundary signals reach `RISK_HIGH`. The operator decides the
-scope; SHAI enforces it.
-
-**Tests:** `tests/unit/test_agent_registry.py`, `tests/unit/test_revocation.py`,
-`tests/integration/test_agent_revocation.py`, `tests/unit/test_turn_signals.py`.
+(see ASI08). The operator decides the scope; SHAI enforces it.
 
 **Limits:** the operator's config defines each agent's scope.
 
@@ -303,24 +250,3 @@ scope; SHAI enforces it.
 `boundary`, `decision`, `adapters`, and structured metadata. Every event is
 HMAC-SHA256 signed with a single operator-supplied secret. Redaction is applied
 to text before it leaves the scan boundary.
-
-`audit_signing.secret` is one key per trail: events carry no key identifier and
-`shai audit verify` takes one secret, so a key rotation starts a new audit file
-and each retired key stays with the segment it signed. The file sink rotates at
-`max_bytes` (default 100 MB) and keeps `backup_count` (default 10) rotated
-files; archive rotated files to keep older records.
-
-**Tests:** `tests/unit/test_core_events.py`, `tests/unit/test_audit_signing.py`,
-`tests/unit/test_scan_tool_result.py`.
-
----
-
-## Reporting a vulnerability
-
-See [SECURITY.md](SECURITY.md) and report privately.
-
----
-
-*This document reflects the state of SHAI as of the current release. Threat
-coverage evolves; this file is versioned in-tree and updated with every
-release that changes coverage.*

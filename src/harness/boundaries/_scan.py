@@ -285,7 +285,11 @@ async def run_scan(
     forced_block_extra: dict[str, Any] | None = None,
     token_id: str | None = None,
 ) -> ScanVerdict:
-    """Run scanners concurrently, apply action logic, emit one AuditEvent.
+    """Run every scanner over each view, apply action logic, emit one AuditEvent.
+
+    The scanners for a view are awaited together, but each is CPU-bound, so
+    they run one after another on the event loop: a call costs the sum of its
+    scanners.
 
     Invariants:
     - Exactly one AuditEvent per call, on every code path.

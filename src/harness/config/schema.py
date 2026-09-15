@@ -391,7 +391,7 @@ class ToolResultScanConfig(BoundaryConfig):
     Mitigates T6 indirect prompt injection (injected content in tool results).
     Configured injection_scan instances use the common and input catalogs.
     """
-    enabled: bool = False
+    enabled: bool = True  # default True because scan_tool_result is the only mitigation for T6
 
 
 class SourceConfig(BaseModel, frozen=True, extra="forbid"):

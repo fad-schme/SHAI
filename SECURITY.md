@@ -1,15 +1,5 @@
 # Security Policy
 
-## Supported Versions
-
-| Version | Supported |
-|---|---|
-| Latest release | ✅ |
-| Previous minor | ✅ security fixes only |
-| Older versions | ❌ |
-
----
-
 ## Reporting a Vulnerability
 
 SHAI is a security project. Responsible disclosure of vulnerabilities is an
