@@ -15,8 +15,8 @@ from harness.core.errors import ConfigError
 
 def _minimal() -> dict:
     return {
-        "scan_input":  {"enabled": False},
-        "scan_output": {"enabled": False},
+        "scan_input":  {},
+        "scan_output": {},
         "connectivity": {"token_secret": "test-connectivity-secret"},
         "policy":      {},
         "audit_sinks": [{"name": "stdout"}],
@@ -31,7 +31,7 @@ def test_load_dict_minimal():
 def test_load_dict_validation_error_surfaces_field():
     """A bad field value surfaces as ConfigError with the field name."""
     with pytest.raises(ConfigError):
-        load_dict({**_minimal(), "scan_input": {"enabled": True, "block_at": "invalid_severity"}})
+        load_dict({**_minimal(), "scan_input": {"block_at": "invalid_severity"}})
 
 
 def test_load_yaml_missing_file():
@@ -46,17 +46,17 @@ def test_load_yaml_malformed(tmp_path: Path):
         load_yaml(p)
 
 
-def test_load_yaml_disabled_boundaries(tmp_path: Path):
+def test_load_yaml_empty_scanner_lists(tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     cfg = load_yaml(p)
-    assert not cfg.scan_input.enabled
-    assert not cfg.scan_output.enabled
+    assert cfg.scan_input.scanners == []
+    assert cfg.scan_output.scanners == []
 
 
 def test_env_var_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -64,8 +64,8 @@ def test_env_var_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
         "connectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: ${TEST_SINK}\n"
     )
     cfg = load_yaml(p)
@@ -77,8 +77,8 @@ def test_missing_env_var_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     p = tmp_path / "h.yaml"
     p.write_text(
         "connectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: ${MISSING_VAR_X}\n"
     )
     with pytest.raises(ConfigError, match="MISSING_VAR_X"):
@@ -90,8 +90,8 @@ def test_nested_env_interpolation(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     p = tmp_path / "h.yaml"
     p.write_text(
         "connectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: ${SINK_NAME}\n"
     )
     cfg = load_yaml(p)
@@ -102,20 +102,20 @@ def test_non_string_values_unchanged(tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
         "connectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     cfg = load_yaml(p)
-    assert cfg.scan_input.enabled is False   # bool preserved
+    assert cfg.scan_input.scanners == []
 
 
 def test_unknown_field_in_yaml_rejected(tmp_path: Path):
     p = tmp_path / "h.yaml"
     p.write_text(
         "connectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
         "unknown_typo_field: oops\n"
     )

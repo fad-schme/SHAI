@@ -15,8 +15,8 @@ async def harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     return await SHAI.from_yaml(cfg)
@@ -118,8 +118,8 @@ async def test_async_context_manager_closes_the_harness(tmp_path: Path):
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     closed: list[bool] = []
@@ -142,8 +142,8 @@ async def test_close_is_still_public_and_idempotent(tmp_path: Path):
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
     )
     h = await SHAI.from_yaml(cfg)
     await h.close()

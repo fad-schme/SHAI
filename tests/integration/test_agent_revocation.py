@@ -29,8 +29,8 @@ async def _harness(tmp_path: Path, *, revocation: bool = True) -> tuple[SHAI, Pa
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         + (
             # 0 = read every call. Any nonzero TTL would race these tests, which
             # is the contract working: the TTL is the kill latency.

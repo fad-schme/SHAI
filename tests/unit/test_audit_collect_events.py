@@ -30,7 +30,6 @@ def _event(decision: Decision = Decision.ALLOW) -> AuditEvent:
         ctx=CTX,
         tenant_id="test",
         duration_ms=1,
-        disabled=False,
         deny_reason="test denial" if decision is Decision.DENY else None,
     )
 

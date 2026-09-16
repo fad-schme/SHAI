@@ -378,7 +378,6 @@ class MCPSource:
         emitter:           AuditEmitter,
         tenant_id:         str = "default",
         metadata_scanners: Sequence[Any] = (),
-        metadata_enabled:  bool = True,
         metadata_block_at: Severity | None = None,
         metadata_action:   ScanAction | None = None,
         mint_connect_token: Callable[..., Awaitable[str]] | None = None,
@@ -399,7 +398,7 @@ class MCPSource:
         that connection produces the approval tokens are minted from, so it is
         the one connection without a minter, exempt from the token check only.
         metadata_scanners defaults to empty, which makes metadata scanning a
-        no-op regardless of metadata_enabled.
+        no-op.
         """
         if not params.url:
             raise ConfigError(
@@ -433,9 +432,8 @@ class MCPSource:
         # Authoritative for registration (see _fetch_tools) — the manifest, not
         # the live tools/list response, is the source of truth for what the LLM sees.
         self._tool_specs:                 dict = dict(params.tool_specs)
-        # MCP metadata scanning — MCPMetadataScanner instances and their gate
+        # MCP metadata scanning — the MCPMetadataScanner instances
         self._mcp_metadata_scanners:      list = list(metadata_scanners)
-        self._scan_mcp_metadata_enabled:  bool = metadata_enabled
         self._mcp_metadata_block_at:      Severity | None = metadata_block_at
         self._mcp_metadata_action:        ScanAction = metadata_action or ScanAction.BLOCK
 
@@ -532,7 +530,7 @@ class MCPSource:
 
         Returns (blocked, findings). blocked=True means the tool must not
         be registered. findings is the combined list across all scanners.
-        Called only when scan_mcp_metadata.enabled and scanners are present.
+        Called only when metadata scanners are present.
 
         Emits exactly one AuditEvent per tool scanned, on every path — clean,
         flagged, and blocked alike. A blocked tool is never registered, so it
@@ -789,7 +787,7 @@ class MCPSource:
             manifest_tool = {"name": tool_name, "description": description or ""}
 
             # Scan metadata for injection payloads before registering
-            if self._scan_mcp_metadata_enabled and self._mcp_metadata_scanners:
+            if self._mcp_metadata_scanners:
                 blocked, findings = await self._scan_mcp_metadata(
                     manifest_tool, tool_name
                 )

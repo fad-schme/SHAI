@@ -22,8 +22,8 @@ CTX = AgentContext(agent_id="a1")
 
 _BASE = (
     "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-    "scan_input:\n  enabled: false\n"
-    "scan_output:\n  enabled: false\n"
+    "scan_input:\n  scanners: []\n"
+    "scan_output:\n  scanners: []\n"
     "audit_sinks:\n  - name: stdout\n"
 )
 
@@ -51,8 +51,15 @@ def _chain(h: SHAI) -> list[str]:
 
 # ── Chain composition ─────────────────────────────────────────────────────
 
-async def test_empty_content_chain_has_only_the_heuristic(tmp_path: Path):
-    h = await _harness(tmp_path, "scan_file:\n  enabled: true\n")
+async def test_omitted_block_runs_the_recommended_chain(tmp_path: Path):
+    h = await _harness(tmp_path, "")
+    assert _chain(h) == ["injection_scan", "jailbreak_scan", "regex_pii", "heuristic_scan"]
+
+
+async def test_empty_scanner_list_has_only_the_heuristic(tmp_path: Path):
+    """`scanners: []` is the backstop-only posture — the structural pass plus
+    the heuristic content scan, and nothing else."""
+    h = await _harness(tmp_path, "scan_file:\n  scanners: []\n")
     assert _chain(h) == ["heuristic_scan"]
 
 
@@ -61,7 +68,6 @@ async def test_declared_scanners_are_authoritative(tmp_path: Path):
     h = await _harness(
         tmp_path,
         "scan_file:\n"
-        "  enabled: true\n"
         "  scanners:\n"
         "    - name: jailbreak_scan\n"
         "    - name: identity_spoof_scan\n",
@@ -77,7 +83,6 @@ async def test_file_injection_scanner_loads_all_three_catalogs(tmp_path: Path):
     h = await _harness(
         tmp_path,
         "scan_file:\n"
-        "  enabled: true\n"
         "  scanners:\n"
         "    - name: injection_scan\n",
     )
@@ -108,18 +113,18 @@ async def test_file_injection_scanner_loads_all_three_catalogs(tmp_path: Path):
 async def test_jailbreak_in_document_body_is_caught_by_the_chain(tmp_path: Path):
     """A persona-override payload carries no injection signature.
 
-    The heuristic-only default misses it; declaring jailbreak_scan for the file
-    boundary catches it.
+    The backstop-only posture misses it; jailbreak_scan — which the omitted
+    block runs by default — catches it.
     """
     doc = tmp_path / "poison.txt"
     doc.write_text(_POISON)
 
-    default = await _harness(tmp_path, "scan_file:\n  enabled: true\n")
-    assert not (await default.scan_file(str(doc), CTX)).blocked
+    backstop = await _harness(tmp_path, "scan_file:\n  scanners: []\n")
+    assert not (await backstop.scan_file(str(doc), CTX)).blocked
 
     chained = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  scanners:\n    - name: jailbreak_scan\n",
+        "scan_file:\n  scanners:\n    - name: jailbreak_scan\n",
     )
     verdict = await chained.scan_file(str(doc), CTX)
     assert verdict.blocked
@@ -138,7 +143,7 @@ async def test_per_scanner_action_is_rejected(tmp_path: Path):
     with pytest.raises(ConfigError, match="per-scanner"):
         await _harness(
             tmp_path,
-            "scan_file:\n  enabled: true\n  scanners:\n"
+            "scan_file:\n  scanners:\n"
             "    - name: injection_scan\n      action: alert\n",
         )
 
@@ -147,7 +152,7 @@ async def test_per_scanner_redact_with_is_rejected(tmp_path: Path):
     with pytest.raises(ConfigError, match="per-scanner"):
         await _harness(
             tmp_path,
-            "scan_file:\n  enabled: true\n  scanners:\n"
+            "scan_file:\n  scanners:\n"
             "    - name: regex_pii\n      redact_with: '***'\n",
         )
 
@@ -156,7 +161,7 @@ async def test_boundary_level_action_still_works(tmp_path: Path):
     """Removing per-scanner overrides must not remove boundary-level action."""
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  action: alert\n"
+        "scan_file:\n  action: alert\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     assert h._config.scan_file.action == "alert"
@@ -167,14 +172,14 @@ async def test_boundary_level_action_still_works(tmp_path: Path):
 async def test_on_error_is_read_from_config(tmp_path: Path):
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  on_error: fail_open\n"
+        "scan_file:\n  on_error: fail_open\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     assert h._config.scan_file.on_error == "fail_open"
 
 
 async def test_on_error_defaults_to_fail_closed(tmp_path: Path):
-    h = await _harness(tmp_path, "scan_file:\n  enabled: true\n")
+    h = await _harness(tmp_path, "")
     assert h._config.scan_file.on_error == "fail_closed"
 
 
@@ -189,7 +194,7 @@ async def test_failing_content_scanner_blocks_under_fail_closed(tmp_path: Path):
 
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  on_error: fail_closed\n"
+        "scan_file:\n  on_error: fail_closed\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     # Replace the chain with one that always raises.
@@ -207,7 +212,7 @@ async def test_failing_content_scanner_passes_under_fail_open(tmp_path: Path):
 
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  on_error: fail_open\n"
+        "scan_file:\n  on_error: fail_open\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     from tests.conftest import FailingScanner
@@ -232,7 +237,7 @@ async def test_content_scanner_failure_keeps_structural_findings(tmp_path: Path)
     )
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  on_error: fail_open\n"
+        "scan_file:\n  on_error: fail_open\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     from tests.conftest import FailingScanner
@@ -253,7 +258,7 @@ async def test_oversized_file_is_not_read_by_the_content_scanner(tmp_path: Path)
 
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  max_size_mb: 1\n"
+        "scan_file:\n  max_size_mb: 1\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     from tests.conftest import FailingScanner
@@ -289,7 +294,7 @@ async def test_ooxml_bomb_is_detected_like_any_archive(tmp_path: Path):
 
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  max_size_mb: 50\n"
+        "scan_file:\n  max_size_mb: 50\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     verdict = await h.scan_file(str(bomb), CTX)
@@ -305,7 +310,7 @@ async def test_archive_bomb_is_never_unpacked_by_the_content_scanner(tmp_path: P
 
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  max_size_mb: 50\n"
+        "scan_file:\n  max_size_mb: 50\n"
         "  scanners:\n    - name: jailbreak_scan\n",
     )
     from tests.conftest import FailingScanner
@@ -326,7 +331,7 @@ async def test_benign_ooxml_still_scans(tmp_path: Path):
 
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  scanners:\n    - name: jailbreak_scan\n",
+        "scan_file:\n  scanners:\n    - name: jailbreak_scan\n",
     )
     verdict = await h.scan_file(str(ok), CTX)
     assert not verdict.blocked
@@ -341,7 +346,7 @@ _COMPRESSIBLE = b"\0" * (80 * 1024 * 1024)
 async def _scan(tmp_path: Path, name: str, data: bytes):
     f = tmp_path / name
     f.write_bytes(data)
-    h = await _harness(tmp_path, "scan_file:\n  enabled: true\n")
+    h = await _harness(tmp_path, "")
     return await h.scan_file(str(f), CTX)
 
 
@@ -540,14 +545,14 @@ async def test_svg_text_reaches_the_content_chain(tmp_path: Path):
     )
     h = await _harness(
         tmp_path,
-        "scan_file:\n  enabled: true\n  scanners:\n    - name: jailbreak_scan\n",
+        "scan_file:\n  scanners:\n    - name: jailbreak_scan\n",
     )
     verdict = await h.scan_file(str(svg), CTX)
     assert any(f.category.startswith("jailbreak.") for f in verdict.findings)
 
 
 _SCAN_FILE_JAILBREAK = (
-    "scan_file:\n  enabled: true\n  scanners:\n    - name: jailbreak_scan\n"
+    "scan_file:\n  scanners:\n    - name: jailbreak_scan\n"
 )
 
 
@@ -613,12 +618,10 @@ async def test_structural_and_content_are_distinct_families(tmp_path):
 _EQUIV_BASE = (
     "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n"
-    "  enabled: true\n"
     "  block_at: high\n"
     "  scanners:\n    - name: injection_scan\n"
-    "scan_output:\n  enabled: false\n"
+    "scan_output:\n  scanners: []\n"
     "scan_file:\n"
-    "  enabled: true\n"
     "  block_at: high\n"
     "  scanners:\n    - name: injection_scan\n"
     "audit_sinks:\n  - name: stdout\n"
@@ -741,7 +744,6 @@ async def test_oversized_and_undersized_files_are_not_both_allowed(tmp_path: Pat
     h = await _harness(
         tmp_path,
         "scan_file:\n"
-        "  enabled: true\n"
         "  max_size_mb: 1\n"
         "  scanners:\n"
         "    - name: jailbreak_scan\n",
@@ -763,7 +765,6 @@ async def test_oversized_file_is_refused_rather_than_partly_inspected(tmp_path: 
     h = await _harness(
         tmp_path,
         "scan_file:\n"
-        "  enabled: true\n"
         "  max_size_mb: 1\n"
         "  scanners:\n"
         "    - name: jailbreak_scan\n",
@@ -781,7 +782,6 @@ async def test_file_under_the_limit_is_fully_inspected(tmp_path: Path):
     h = await _harness(
         tmp_path,
         "scan_file:\n"
-        "  enabled: true\n"
         "  max_size_mb: 10\n"
         "  scanners:\n"
         "    - name: jailbreak_scan\n",
@@ -799,7 +799,6 @@ async def test_configured_limit_governs_not_a_default(tmp_path: Path):
     h = await _harness(
         tmp_path,
         "scan_file:\n"
-        "  enabled: true\n"
         "  max_size_mb: 0.001\n"
         "  scanners:\n"
         "    - name: jailbreak_scan\n",

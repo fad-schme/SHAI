@@ -19,8 +19,8 @@ async def harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     return await SHAI.from_yaml(cfg)

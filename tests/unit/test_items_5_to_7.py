@@ -398,10 +398,9 @@ def _write_config(
     body = (
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n"
-        "  enabled: true\n"
         "  scanners:\n"
         + "".join(f"    - name: {s}\n" for s in scanners)
-        + "scan_output:\n  enabled: false\n"
+        + "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     if db_path is not None:
@@ -481,8 +480,8 @@ class TestPatternsDBWiring:
         cfg = tmp_path / "harness.yaml"
         cfg.write_text(
             "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-            "scan_input:\n  enabled: false\n"
-            "scan_output:\n  enabled: false\n"
+            "scan_input:\n  scanners: []\n"
+            "scan_output:\n  scanners: []\n"
             "patterns_db:\n  enabled: true\n"
         )
         with pytest.raises(ConfigError):

@@ -45,19 +45,15 @@ version: 1
 connectivity:
   token_secret: test-connectivity-secret
 scan_input:
-  enabled: true
   scanners:
     - name: injection_scan
 scan_output:
-  enabled: true
   scanners:
     - name: injection_scan
 scan_tool_result:
-  enabled: true
   scanners:
     - name: injection_scan
 scan_file:
-  enabled: true
   scanners:
     - name: injection_scan
 audit_sinks:
@@ -224,7 +220,7 @@ async def test_one_event_per_call_when_a_scanner_raises(
     SYSTEM/DEGRADED events are emitted alongside and are not counted — the
     invariant is one event *at the boundary*, not one event in total.
     """
-    cfg = _ALL_ON.replace("  enabled: true\n", f"  enabled: true\n  on_error: {on_error}\n")
+    cfg = _ALL_ON.replace("  scanners:\n", f"  on_error: {on_error}\n  scanners:\n")
     h, sink = await _harness(tmp_path, cfg)
     _set_scanners(h, _Raiser())
 
@@ -233,13 +229,13 @@ async def test_one_event_per_call_when_a_scanner_raises(
 
 
 @pytest.mark.parametrize("boundary", ALL_BOUNDARIES)
-async def test_one_event_per_call_when_boundary_disabled(
+async def test_one_event_per_call_with_the_backstop_only(
     tmp_path: Path, boundary: BoundaryName
 ):
-    """A disabled boundary still records that it was asked and declined to act."""
+    """`scanners: []` is the quietest a boundary gets — and it still emits."""
     if boundary is BoundaryName.TOOL_CALL_GATE:
-        pytest.skip("the gate is mandatory — it has no disabled state")
-    cfg = _ALL_ON.replace("  enabled: true", "  enabled: false")
+        pytest.skip("the gate reads its scanners from check_tool_call, not a boundary block")
+    cfg = _ALL_ON.replace("  scanners:\n    - name: injection_scan\n", "  scanners: []\n")
     h, sink = await _harness(tmp_path, cfg)
 
     await _call_boundary(h, boundary, AgentContext(agent_id="orchestrator_agent"), tmp_path)
@@ -378,7 +374,7 @@ async def test_scan_boundaries_never_raise_when_scanner_faults(
     tmp_path: Path, exc: Exception, on_error: str
 ):
     """Any scanner exception type is absorbed by the on_error policy."""
-    cfg = _ALL_ON.replace("  enabled: true\n", f"  enabled: true\n  on_error: {on_error}\n")
+    cfg = _ALL_ON.replace("  scanners:\n", f"  on_error: {on_error}\n  scanners:\n")
     h, _ = await _harness(tmp_path, cfg)
     _set_scanners(h, _Raiser(exc))
     ctx = AgentContext(agent_id="orchestrator_agent")

@@ -4,7 +4,7 @@ Measures the overhead SHAI adds to a normal agentic interaction.
 Each section answers a specific question:
 
   1. Baseline              — raw async dispatch without SHAI (reference point)
-  2. Framework overhead    — SHAI with all boundaries disabled
+  2. Framework overhead    — SHAI with the backstop scanner only
   3. Normalization         — de-obfuscation pre-processing alone
   4. Per-scanner (benign)  — each scanner on a clean input (no findings)
   5. Per-scanner (attack)  — each scanner on a known-bad input (findings + scoring)
@@ -106,12 +106,11 @@ async def _make_harness(
     session_enabled: bool = False,
     db_path: str | None = None,
 ) -> SHAI:
-    scanner_block = ""
+    scanner_block = "  scanners: []\n"
     if scan_enabled and scanners:
         items = "".join(f"    - name: {s}\n" for s in scanners)
         scanner_block = f"  scanners:\n{items}"
 
-    enabled_str = "true" if scan_enabled else "false"
     session_block = ""
     if session_enabled and db_path:
         session_block = (
@@ -127,8 +126,8 @@ async def _make_harness(
     cfg.write_text(
         f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         f"{session_block}"
-        f"scan_input:\n  enabled: {enabled_str}\n{scanner_block}"
-        f"scan_output:\n  enabled: {enabled_str}\n{scanner_block}"
+        f"scan_input:\n{scanner_block}"
+        f"scan_output:\n{scanner_block}"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -158,7 +157,7 @@ async def test_1_baseline_no_shai(tmp_path: Path):
     h   = await _make_harness(tmp_path)
 
     m_disabled = await _measure(lambda: h.scan_input(BENIGN, ctx))
-    print(_row("scan_input (boundary disabled)", m_disabled, budget_ms=2.0))
+    print(_row("scan_input (backstop only)", m_disabled, budget_ms=2.0))
 
     m_gate = await _measure(
         lambda: h.check_tool_call("search_docs", {"query": "test"}, ctx)
@@ -329,7 +328,7 @@ async def test_7_full_recommended_turn(tmp_path: Path):
     overhead_ms  = m_full["mean_ms"] - m_bare["mean_ms"]
     overhead_pct = (overhead_ms / m_bare["mean_ms"]) * 100 if m_bare["mean_ms"] > 0 else 0
 
-    print(_row("without SHAI (boundaries disabled)", m_bare))
+    print(_row("without SHAI (backstop only)", m_bare))
     print(_row("with SHAI    (full stack + session)", m_full, budget_ms=50.0))
     print(f"\n  {'SHAI overhead per turn:':<48} +{overhead_ms:.2f}ms  (+{overhead_pct:.0f}%)")
 

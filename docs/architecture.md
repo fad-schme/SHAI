@@ -53,14 +53,14 @@ with the `shell` extra.
 Runs on uploads. `FileScanner` checks structure (size, MIME, extension, PDF
 markers, SVG, archives, macros, metadata); `FileContentScanner` runs the
 `scan_file.scanners` chain over extracted text — the document-tuned injection
-catalog by default. Disabled by default.
+catalog by default.
 
 ### Tool Stream Control — `scan_tool_result`
 
 Runs before tool results re-enter the LLM context. The example config runs
-`injection_scan`, `identity_spoof_scan`, and `jailbreak_scan` here. When the
-input scan flagged injection this turn, `block_at` steps down one level.
-Disabled by default.
+`injection_scan`, `identity_spoof_scan`, and `jailbreak_scan` here — which is
+also what an omitted block runs. When the input scan flagged injection this
+turn, `block_at` steps down one level.
 
 ### Egress Scan — `scan_output`
 

@@ -15,7 +15,6 @@ normalization:
 
 # Input scanning: injection + PII on every user message.
 scan_input:
-  enabled: true
   block_at: high
   scanners:
     - name: injection_scan
@@ -26,7 +25,6 @@ scan_input:
 # Tool result scanning: catches indirect injection (AgentDojo T6).
 # Configured injection_scan loads the common and input catalogs.
 scan_tool_result:
-  enabled: true
   block_at: medium
   scanners:
     - name: injection_scan
@@ -34,7 +32,6 @@ scan_tool_result:
 
 # Output scanning: PII redaction before the response reaches the caller.
 scan_output:
-  enabled: true
   block_at: high
   scanners:
     - name: regex_pii

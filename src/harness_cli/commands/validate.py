@@ -51,8 +51,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     ]:
         scanners = [s.name for s in getattr(boundary_cfg, "scanners", [])]
         console.write(
-            f"    {boundary_name}: enabled={boundary_cfg.enabled}"
-            f"  block_at={boundary_cfg.block_at}"
+            f"    {boundary_name}: always on  block_at={boundary_cfg.block_at}"
             + (f"  scanners={scanners}" if scanners else "")
         )
 

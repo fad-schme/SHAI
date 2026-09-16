@@ -274,8 +274,8 @@ async def test_gate_issues_token_on_allow(tmp_path):
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "connectivity:\n"        "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
         "  token_ttl_seconds: 15\n"
     )
@@ -321,8 +321,8 @@ async def test_gate_denied_carries_no_token(tmp_path):
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "connectivity:\n"        "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET2'\n"
     )
     # The deny now comes from the agent's own rules — global policy no longer
@@ -374,8 +374,8 @@ def test_harness_config_requires_connectivity_block():
 
     with pytest.raises(ValidationError, match="connectivity"):
         HarnessConfig(
-            scan_input=BoundaryConfig(enabled=False),
-            scan_output=BoundaryConfig(enabled=False),
+            scan_input=BoundaryConfig(scanners=[]),
+            scan_output=BoundaryConfig(scanners=[]),
         )
 
 
@@ -402,8 +402,8 @@ async def test_gate_event_carries_the_token_id_it_issued(tmp_path):
         cfg = tmp_path / "h.yaml"
         cfg.write_text(
             "version: 1\n"
-            "scan_input:\n  enabled: false\n"
-            "scan_output:\n  enabled: false\n"
+            "scan_input:\n  scanners: []\n"
+            "scan_output:\n  scanners: []\n"
             "connectivity:\n"            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
             "  token_ttl_seconds: 15\n"
         )
@@ -452,8 +452,8 @@ async def test_denied_call_mints_no_token(tmp_path):
         cfg = tmp_path / "h.yaml"
         cfg.write_text(
             "version: 1\n"
-            "scan_input:\n  enabled: false\n"
-            "scan_output:\n  enabled: false\n"
+            "scan_input:\n  scanners: []\n"
+            "scan_output:\n  scanners: []\n"
             "connectivity:\n"            "  token_secret: 'secret://SHAI_TEST_TOKEN_SECRET'\n"
         )
         agent = tmp_path / "agent.yaml"
@@ -519,8 +519,8 @@ async def _declared_mcp_harness(tmp_path, monkeypatch, manifest_extra: str,
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n  - name: remote_mcp\n    transport: mcp\n"
         f"mcp_manifests_dir: {mcp_dir}\n"
         f"mcp_baseline:\n  path: {baseline_db}\n  secret: test-secret\n"
@@ -670,8 +670,8 @@ async def _live_mcp_harness(tmp_path, monkeypatch, seen, *, connectivity_extra: 
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n  - name: remote_mcp\n    transport: mcp\n"
         f"mcp_manifests_dir: {mcp_dir}\n"
         f"mcp_baseline:\n  path: {baseline_db}\n  secret: test-secret\n"
@@ -793,8 +793,8 @@ async def test_local_tool_token_carries_no_destinations(tmp_path):
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "connectivity:\n"
         f"  token_secret: {CONNECTIVITY_SECRET.decode()}\n"
     )

@@ -96,7 +96,7 @@ def cmd_harness_inspect(args: argparse.Namespace) -> int:
         cfg = getattr(config, field)
         scanners = [s.name for s in cfg.scanners]
         console.write(
-            f"  {field:<18} enabled={cfg.enabled}  block_at={cfg.block_at}"
+            f"  {field:<18} always on  block_at={cfg.block_at}"
             + (f"  scanners={', '.join(scanners)}" if scanners else "")
         )
     gate = config.check_tool_call

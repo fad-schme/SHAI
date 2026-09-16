@@ -3,6 +3,10 @@
 Demonstrates the full per-turn flow with a hand-rolled agent loop:
   scan_input → check_tool_call → scan_tool_result → scan_output
 
+Section 8 shows the approval cycle for an IRREVERSIBLE tool: the gate denies
+for want of a quorum, the application collects approval and signs a grant per
+approver, and the same call is made again.
+
 Configuration is loaded from config/harness.yaml and
 config/agents/orchestrator_agent.yaml — edit those files to change
 scanner actions, rate limits, and policy rules.
@@ -11,6 +15,7 @@ Run from the repo root:
     python examples/hand_rolled_loop.py
 
 Requires: pip install shai-harness
+Environment: SHAI_TOKEN_SECRET, SHAI_APPROVAL_KEY
 """
 from __future__ import annotations
 
@@ -25,17 +30,24 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from harness import SHAI, Tool
-from harness.core.types import Transport
+from harness.core.approval import encode_grant, sign_grant
+from harness.core.types import Irreversibility, Transport
 
 CONFIG       = Path(__file__).parent.parent / "config"
 HARNESS_YAML = CONFIG / "harness.yaml"
 AGENT_YAML   = CONFIG / "agents" / "orchestrator_agent.yaml"
+
+# Grants are bound to the tenant the harness runs as — this is `tenant_id` in
+# harness.yaml. The signing key is the one `approvals.secret` resolves to
+# there: the application issuing grants and the gate verifying them share it.
+TENANT_ID    = "shai-demo"
 
 
 async def main() -> None:
@@ -51,6 +63,10 @@ async def main() -> None:
         Tool(name="search_docs", tags=["read", "internal"],            transport=Transport.LOCAL),
         Tool(name="send_email",  tags=["external_write", "sensitive"], transport=Transport.LOCAL),
         Tool(name="list_inbox",  tags=["read", "internal"],            transport=Transport.LOCAL),
+        # Classified IRREVERSIBLE, so gate layer 3 holds it until a quorum of
+        # signed approval grants is present — see section 8.
+        Tool(name="send_alert",  tags=["external_write"],              transport=Transport.LOCAL,
+             irreversibility=Irreversibility.IRREVERSIBLE),
     ])
 
     # ── 3. Load agent ─────────────────────────────────────────────────────
@@ -98,7 +114,43 @@ async def main() -> None:
     )
     print(f"[check_tool_call] send_email   allowed={gate2.allowed}  reason={gate2.deny_reason!r}")
 
-    # ── 8. scan_output ────────────────────────────────────────────────────
+    # ── 8. The approval cycle — IRREVERSIBLE tool ─────────────────────────
+    # SHAI verifies approvals inline; it cannot pause a run to wait for one.
+    # So the cycle belongs to this loop: call, read the denial, collect the
+    # humans, sign, call again.
+    alert_args = {"channel": "#ops", "message": "deploy complete"}
+
+    # First call carries no grants. Layer 3 denies — irreversible_quorum is 2.
+    gate3 = await harness.check_tool_call("send_alert", alert_args, ctx)
+    print(f"[check_tool_call] send_alert   allowed={gate3.allowed}  reason={gate3.deny_reason!r}")
+
+    # The application now prompts its approvers however it likes — a Slack
+    # button, a CIBA flow, a terminal prompt — and signs one grant per
+    # decision. Quorum counts distinct approver_ids, so two grants from one
+    # person would still be one approver.
+    approval_key = os.environ["SHAI_APPROVAL_KEY"].encode()
+    grants = tuple(
+        encode_grant(sign_grant(
+            agent_id=ctx.agent_id,
+            tenant_id=TENANT_ID,
+            tool_name="send_alert",
+            args=alert_args,      # the same args the retry passes — the grant
+                                  # binds their digest, so a value changed in
+                                  # between is a different call, and denied
+            approver_id=who,
+            secret=approval_key,
+            ttl_seconds=300,      # come back inside the TTL or sign again
+        ))
+        for who in ("alex@example.com", "sam@example.com")
+    )
+
+    # Same call, now with the grants attached. SHAI re-issues nothing: this
+    # loop does. The approver ids land on the allow event as extra.approvers.
+    approved_ctx = ctx.model_copy(update={"approvals": grants})
+    gate4 = await harness.check_tool_call("send_alert", alert_args, approved_ctx)
+    print(f"[check_tool_call] send_alert   allowed={gate4.allowed}  (2 approvers)")
+
+    # ── 9. scan_output ────────────────────────────────────────────────────
     llm_response = "Here are the docs I found: onboarding.pdf, setup.md, faq.html"
     out_verdict = await harness.scan_output(llm_response, ctx)
     print(f"[scan_output]     status={out_verdict.status}  findings={len(out_verdict.findings)}")
@@ -107,7 +159,7 @@ async def main() -> None:
     print("\n── Agent response ───────────────────────────────────────────")
     print(f"  {final_response!r}")
 
-    # ── 9. Subagent example ───────────────────────────────────────────────
+    # ── 10. Subagent example ───────────────────────────────────────────────
     print("\n── Subagent turn ────────────────────────────────────────────")
     child_ctx = harness.scope_context_for_subagent(ctx, sub_agent_id="research_sub")
     print(f"[scope_subagent]  agent_id={child_ctx.agent_id}  sub_agent_id={child_ctx.sub_agent_id}")

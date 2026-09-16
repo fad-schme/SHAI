@@ -33,8 +33,8 @@ def _recording_sink(h: SHAI) -> RecordingSink:
 
 async def _make_harness(tmp_path: Path, *, on_escalation: str = "block", scan_enabled: bool = False) -> SHAI:
     """Build a real SHAI instance from a YAML written to tmp_path."""
-    scanners_block = "  scanners:\n    - name: injection_scan\n    - name: jailbreak_scan\n" if scan_enabled else ""
-    enabled_str = "true" if scan_enabled else "false"
+    scanners_block = ("  scanners:\n    - name: injection_scan\n    - name: jailbreak_scan\n"
+                      if scan_enabled else "  scanners: []\n")
     db_path = str(tmp_path / "sessions.db")
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
@@ -48,8 +48,8 @@ async def _make_harness(tmp_path: Path, *, on_escalation: str = "block", scan_en
         f"  reframe_similarity: 0.72\n"
         f"  ttl_hours: 72\n"
         f"  on_escalation: {on_escalation}\n"
-        f"scan_input:\n  enabled: {enabled_str}\n{scanners_block}"
-        f"scan_output:\n  enabled: {enabled_str}\n{scanners_block}"
+        f"scan_input:\n{scanners_block}"
+        f"scan_output:\n{scanners_block}"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

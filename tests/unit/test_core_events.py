@@ -29,7 +29,6 @@ def test_build_allow_defaults():
     assert e.tenant_id == "tenant_test"
     assert e.agent_id == "a1"
     assert e.finding_count == 0
-    assert e.disabled is False
     assert e.sub_agent_id is None
 
 
@@ -45,18 +44,6 @@ def test_build_deny_with_reason():
         deny_reason="policy denied",
     )
     assert e.deny_reason == "policy denied"
-
-
-def test_disabled_boundary_event():
-    e = _build(disabled=True)
-    assert e.disabled is True
-    assert e.decision == Decision.ALLOW
-    assert e.finding_count == 0
-
-
-def test_disabled_with_nonzero_findings_rejected():
-    with pytest.raises(ValidationError):
-        _build(disabled=True, finding_count=1)
 
 
 def test_blocked_on_gate_rejected():

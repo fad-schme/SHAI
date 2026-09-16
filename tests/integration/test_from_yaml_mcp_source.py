@@ -36,9 +36,9 @@ async def test_from_yaml_with_mcp_source_does_not_crash(tmp_path: Path):
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n"
-        "  enabled: false\n"
+        "  scanners: []\n"
         "scan_output:\n"
-        "  enabled: false\n"
+        "  scanners: []\n"
         "audit_sinks:\n"
         "  - name: stdout\n"
         "sources:\n"
@@ -60,7 +60,6 @@ async def test_from_yaml_with_mcp_source_does_not_crash(tmp_path: Path):
     assert source.name == "test_mcp"
 
     # Verify MCP metadata scanner config was wired correctly
-    assert source._scan_mcp_metadata_enabled is True
     assert len(source._mcp_metadata_scanners) > 0  # default mcp_metadata_scan
 
     await harness.close()

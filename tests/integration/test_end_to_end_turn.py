@@ -18,15 +18,16 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 async def _make_harness(tmp_path: Path, *, scan_enabled: bool = False) -> SHAI:
     cfg = tmp_path / "h.yaml"
+    # Boundaries are always on. scan_enabled=False means the backstop only —
+    # `scanners: []` — which is the quietest a boundary gets.
     scanners_block = (
         "  scanners:\n    - name: regex_pii\n    - name: injection_scan\n"
-        if scan_enabled else ""
+        if scan_enabled else "  scanners: []\n"
     )
-    enabled_str = "true" if scan_enabled else "false"
     cfg.write_text(
         f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        f"scan_input:\n  enabled: {enabled_str}\n{scanners_block if scan_enabled else ''}"
-        f"scan_output:\n  enabled: {enabled_str}\n{scanners_block if scan_enabled else ''}"
+        f"scan_input:\n{scanners_block}"
+        f"scan_output:\n{scanners_block}"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

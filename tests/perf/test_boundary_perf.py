@@ -2,8 +2,8 @@
 
 Measures wall-clock overhead of each boundary on the hot path.
 Targets (single-core, no network):
-  - scan_input  (disabled):    < 1 ms per call
-  - scan_output (disabled):    < 1 ms per call
+  - scan_input  (backstop only):    < 1 ms per call
+  - scan_output (backstop only):    < 1 ms per call
   - check_tool_call (allow):   < 2 ms per call
   - 50 concurrent turns:       completes in < 200 ms total
 
@@ -35,8 +35,8 @@ async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -58,21 +58,21 @@ async def _measure(coro_factory, n: int = 100) -> float:
 
 # ── Sequential overhead ───────────────────────────────────────────────────
 
-async def test_scan_input_disabled_overhead(tmp_path: Path):
+async def test_scan_input_backstop_overhead(tmp_path: Path):
     h   = await _build_harness(tmp_path)
     ctx = AgentContext(agent_id="orchestrator_agent")
 
     mean_ms = await _measure(lambda: h.scan_input("hello world", ctx), n=200)
-    print(f"\n  scan_input (disabled):    {mean_ms:.3f} ms/call")
+    print(f"\n  scan_input (backstop):    {mean_ms:.3f} ms/call")
     assert mean_ms < 10, f"scan_input overhead too high: {mean_ms:.1f} ms"
 
 
-async def test_scan_output_disabled_overhead(tmp_path: Path):
+async def test_scan_output_backstop_overhead(tmp_path: Path):
     h   = await _build_harness(tmp_path)
     ctx = AgentContext(agent_id="orchestrator_agent")
 
     mean_ms = await _measure(lambda: h.scan_output("hello world", ctx), n=200)
-    print(f"\n  scan_output (disabled):   {mean_ms:.3f} ms/call")
+    print(f"\n  scan_output (backstop):   {mean_ms:.3f} ms/call")
     assert mean_ms < 10, f"scan_output overhead too high: {mean_ms:.1f} ms"
 
 
@@ -99,7 +99,7 @@ async def test_full_turn_overhead(tmp_path: Path):
         await h.scan_output("test output", ctx)
 
     mean_ms = await _measure(one_turn, n=100)
-    print(f"\n  full turn (all disabled): {mean_ms:.3f} ms/turn")
+    print(f"\n  full turn (backstop):     {mean_ms:.3f} ms/turn")
     assert mean_ms < 50, f"full turn overhead too high: {mean_ms:.1f} ms"
 
 

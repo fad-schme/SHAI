@@ -114,8 +114,8 @@ def test_policy_rules_key_is_rejected():
     """A stale config must fail loudly, not be silently ignored."""
     with pytest.raises(ConfigError):
         load_dict({
-            "scan_input":  {"enabled": False},
-            "scan_output": {"enabled": False},
+            "scan_input":  {},
+            "scan_output": {},
             "audit_sinks": [{"name": "stdout"}],
             "policy": {"rules": [
                 {"id": "x", "match": {"tool_tags": ["mcp"]},

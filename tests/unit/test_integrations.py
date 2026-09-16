@@ -24,8 +24,8 @@ async def _build_harness(tmp_path: Path) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -113,9 +113,9 @@ async def test_run_turn_input_blocked(tmp_path: Path):
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: true\n  block_at: info\n"
+        "scan_input:\n  block_at: info\n"
         "  scanners:\n    - name: regex_pii\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -279,10 +279,9 @@ async def _poisoned_harness(tmp_path: Path) -> tuple[SHAI, AgentContext]:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "scan_tool_result:\n"
-        "  enabled: true\n"
         "  block_at: high\n"
         "  scanners:\n"
         "    - name: injection_scan\n"
@@ -473,8 +472,8 @@ async def _mcp_harness(tmp_path: Path) -> tuple[SHAI, AgentContext, _FakeMCPSour
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"        "audit_sinks:\n  - name: stdout\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"        "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
     await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")

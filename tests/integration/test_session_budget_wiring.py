@@ -27,8 +27,8 @@ async def _harness(tmp_path: Path, **limits) -> SHAI:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     limit_lines = "".join(f"  {k}: {v}\n" for k, v in limits.items())
@@ -132,8 +132,8 @@ def _bare_harness_yaml(tmp_path: Path) -> Path:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     return cfg

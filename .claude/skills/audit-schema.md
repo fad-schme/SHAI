@@ -11,7 +11,6 @@ Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output
 | `timestamp` | ISO 8601 datetime (UTC) | Yes | Wall-clock time of the event |
 | `boundary` | string enum | Yes | `input_scan`, `tool_call_gate`, `tool_dispatch_check`, `tool_result_scan`, `output_scan`, `file_scan`, `mcp_metadata_scan`, `mcp_source_onboarding`, `system` |
 | `decision` | string enum | Yes | `allow`, `deny`, `blocked`, `redact` |
-| `disabled` | bool | Yes | `true` when the boundary is configured `enabled: false` |
 | `duration_ms` | int | Yes | Wall-clock duration of the boundary call in milliseconds |
 | `tenant_id` | string | Yes | From `harness.yaml` — identifies the deployment |
 | `agent_id` | string | Yes | The top-level agent making the call |
@@ -20,7 +19,7 @@ Every boundary call emits exactly one `AuditEvent`. No raw user text, LLM output
 | `transport` | string | No | `local`, `mcp`, or `skill` for `tool_call_gate` events |
 | `token_id` | string | No | `DispatchToken.token_id` — join key with `NetworkAuditEvent`, set when a gate call issues a dispatch token |
 | `adapters` | list[string] | Yes | Scanner or policy adapter names that ran |
-| `finding_count` | int | Yes | Number of findings (0 for gate and disabled events) |
+| `finding_count` | int | Yes | Number of findings (0 for gate events) |
 | `max_severity` | string | No | Highest finding severity: `info`, `low`, `medium`, `high`, `critical` |
 | `deny_reason` | string | No | Required when `decision=deny` |
 | `audit_tags` | object | Yes | Operator-defined tags from agent-xx.yaml `audit_tags` |
@@ -73,7 +72,6 @@ Unlike the degrade event, this emission is not best-effort: if every sink fails,
   "timestamp": "2025-01-15T10:23:45.123456+00:00",
   "boundary": "input_scan",
   "decision": "blocked",
-  "disabled": false,
   "duration_ms": 3,
   "tenant_id": "platform-prod",
   "agent_id": "orchestrator_agent",
@@ -91,7 +89,6 @@ Unlike the degrade event, this emission is not best-effort: if every sink fails,
   "timestamp": "2025-01-15T10:23:45.456789+00:00",
   "boundary": "tool_call_gate",
   "decision": "deny",
-  "disabled": false,
   "duration_ms": 2,
   "tenant_id": "platform-prod",
   "agent_id": "orchestrator_agent",
@@ -111,7 +108,6 @@ Unlike the degrade event, this emission is not best-effort: if every sink fails,
   "timestamp": "2025-01-15T10:23:46.789012+00:00",
   "boundary": "tool_result_scan",
   "decision": "blocked",
-  "disabled": false,
   "duration_ms": 5,
   "tenant_id": "platform-prod",
   "agent_id": "orchestrator_agent",

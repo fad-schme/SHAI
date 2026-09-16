@@ -22,14 +22,14 @@ CTX = AgentContext(agent_id="a1")
 
 _PII_ONLY = (
     "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-    "scan_input:\n  enabled: true\n  scanners:\n    - name: regex_pii\n"
-    "scan_output:\n  enabled: false\n"
+    "scan_input:\n  scanners:\n    - name: regex_pii\n"
+    "scan_output:\n  scanners: []\n"
     "audit_sinks:\n  - name: stdout\n"
 )
 _INJECTION_ONLY = (
     "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-    "scan_input:\n  enabled: true\n  scanners:\n    - name: injection_scan\n"
-    "scan_output:\n  enabled: false\n"
+    "scan_input:\n  scanners:\n    - name: injection_scan\n"
+    "scan_output:\n  scanners: []\n"
     "audit_sinks:\n  - name: stdout\n"
 )
 
@@ -83,8 +83,8 @@ async def test_gate_arg_scanners_use_the_scanners_key(tmp_path):
 
     body = (
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: true\n  scanners:\n    - name: regex_pii\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners:\n    - name: regex_pii\n"
+        "scan_output:\n  scanners: []\n"
         "check_tool_call:\n  scanners:\n    - name: regex_pii\n"
         "audit_sinks:\n  - name: stdout\n"
     )
@@ -102,9 +102,9 @@ async def test_gate_arg_scanners_use_the_scanners_key(tmp_path):
         await SHAI.from_yaml(cfg)
 
 
-async def test_disabled_boundary_still_allows(tmp_path):
-    """Turning a boundary off is an explicit choice and stays an ALLOW —
-    distinct from an enabled boundary with nothing to run."""
+async def test_boundary_with_no_scanners_blocks(tmp_path):
+    """A boundary with nothing to run blocks: there is no way to switch one
+    off, so an empty scanner list is a configuration that cannot do its job."""
     from harness.boundaries._scan import ScanState, run_scan
     from tests.conftest import boundary_config
 
@@ -113,12 +113,11 @@ async def test_disabled_boundary_still_allows(tmp_path):
         "anything at all", CTX,
         boundary=BoundaryName.INPUT_SCAN,
         scanners=[],
-        config=boundary_config(enabled=False),
+        config=boundary_config(),
         emitter=AuditEmitter([sink]),
         tenant_id="t",
         state=ScanState(str(tmp_path / "p.db")),
     )
 
-    assert not verdict.blocked
-    assert sink.events[0].disabled is True
-    assert sink.events[0].decision == Decision.ALLOW
+    assert verdict.blocked
+    assert sink.events[0].decision == Decision.BLOCKED

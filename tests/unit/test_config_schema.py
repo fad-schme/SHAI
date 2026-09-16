@@ -3,6 +3,8 @@ import pytest
 from pydantic import ValidationError
 
 from harness.config.schema import (
+    RECOMMENDED_INPUT_SCANNERS,
+    RECOMMENDED_TOOL_RESULT_SCANNERS,
     BoundaryConfig,
     HarnessConfig,
     PolicyConfig,
@@ -12,8 +14,8 @@ from harness.config.schema import (
 
 def _minimal() -> dict:
     return {
-        "scan_input":  {"enabled": False},
-        "scan_output": {"enabled": False},
+        "scan_input":  {},
+        "scan_output": {},
         "connectivity": {"token_secret": "test-connectivity-secret"},
         "policy":      {},
         "audit_sinks": [{"name": "stdout"}],
@@ -35,15 +37,23 @@ def test_omitted_audit_sinks_defaults_to_stdout():
     assert [ref.name for ref in cfg.audit_sinks] == ["stdout"]
 
 
-def test_enabled_boundary_without_scanners_rejected():
-    with pytest.raises(ValidationError):
-        BoundaryConfig(enabled=True, scanners=[])
-
-
-def test_disabled_boundary_without_scanners_ok():
-    bc = BoundaryConfig(enabled=False)
-    assert not bc.enabled
+def test_empty_scanner_list_is_accepted():
+    """`scanners: []` is the backstop-only posture, not a rejected config —
+    a boundary cannot be switched off, so this is the quietest one gets."""
+    bc = BoundaryConfig(scanners=[])
     assert bc.scanners == []
+
+
+def test_omitted_scanners_get_the_recommended_list():
+    assert [s.name for s in BoundaryConfig().scanners] == list(
+        RECOMMENDED_INPUT_SCANNERS
+    )
+
+
+def test_enabled_key_is_rejected():
+    """The key is gone; extra="forbid" is what tells an operator so."""
+    with pytest.raises(ValidationError):
+        BoundaryConfig(enabled=False, scanners=[{"name": "regex_pii"}])
 
 
 def test_unknown_field_rejected():
@@ -52,20 +62,19 @@ def test_unknown_field_rejected():
         HarnessConfig.model_validate(data)
 
 
-def test_enabled_scan_with_scanners_ok():
-    bc = BoundaryConfig(enabled=True, scanners=[{"name": "regex_pii"}])
-    assert bc.enabled
-    assert bc.scanners[0].name == "regex_pii"
+def test_declared_scanners_replace_the_default():
+    bc = BoundaryConfig(scanners=[{"name": "regex_pii"}])
+    assert [s.name for s in bc.scanners] == ["regex_pii"]
 
 
-def test_enabled_tool_result_scan_requires_scanners():
-    with pytest.raises(ValidationError):
-        ToolResultScanConfig(enabled=True)
+def test_tool_result_scan_defaults_to_the_recommended_list():
+    assert [s.name for s in ToolResultScanConfig().scanners] == list(
+        RECOMMENDED_TOOL_RESULT_SCANNERS
+    )
 
 
 def test_tool_result_scan_accepts_scanners():
     cfg = ToolResultScanConfig(
-        enabled=True,
         scanners=[{"name": "injection_scan"}, {"name": "identity_spoof_scan"}],
     )
     assert [scanner.name for scanner in cfg.scanners] == [

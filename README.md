@@ -11,12 +11,6 @@ SHAI sits between your agent and its inputs, tools, and outputs. It scans inputs
 
 One Python package. Works with LangGraph, LangChain, CrewAI, PydanticAI, Anthropic SDK, OpenAI Agents, or a custom loop.
 
-> **Status:** pre-1.0. The public API is stable enough to build against; breaking
-> changes ship in minor bumps and are always announced in [CHANGELOG.md](CHANGELOG.md).
-> Not yet recommended as a sole security control for high-stakes production
-> agents. See [THREAT_MODEL.md](THREAT_MODEL.md) for what SHAI catches, what it
-> doesn't, and how to compose it with other defences.
-
 ---
 
 ## The premise

@@ -527,7 +527,6 @@ def test_mcp_metadata_scan_config_schema():
     from harness.config.schema import MCPMetadataScanConfig
     from harness.core.types import ScanAction, Severity
     cfg = MCPMetadataScanConfig()
-    assert cfg.enabled is True
     assert cfg.block_at == Severity.MEDIUM
     assert cfg.action   == ScanAction.BLOCK
     assert len(cfg.scanners) == 1
@@ -543,23 +542,18 @@ def test_harness_config_has_scan_mcp_metadata():
         "version": 1,
         "connectivity": {"token_secret": "test-connectivity-secret"},
         "tenant_id": "test",
-        "scan_input": {
-            "enabled": True,
-            "scanners": [{"name": "regex_pii"}],
-        },
-        "scan_output": {
-            "enabled": True,
-            "scanners": [{"name": "regex_pii"}],
-        },
+        "scan_input":  {"scanners": [{"name": "regex_pii"}]},
+        "scan_output": {"scanners": [{"name": "regex_pii"}]},
     })
     assert isinstance(cfg.scan_mcp_metadata, MCPMetadataScanConfig)
-    assert cfg.scan_mcp_metadata.enabled is True
     assert cfg.scan_mcp_metadata.block_at == Severity.MEDIUM
 
 
-def test_scan_mcp_metadata_disabled_skips_registration():
-    """When scan_mcp_metadata.enabled=false, tools bypass metadata scanning."""
+def test_scan_mcp_metadata_has_no_off_switch():
+    """`enabled` is gone; naming it is rejected rather than quietly ignored."""
+    import pytest
+    from pydantic import ValidationError
+
     from harness.config.schema import MCPMetadataScanConfig
-    cfg = MCPMetadataScanConfig(enabled=False, scanners=[])
-    # No scanner should be built when disabled
-    assert cfg.enabled is False
+    with pytest.raises(ValidationError):
+        MCPMetadataScanConfig(enabled=False)

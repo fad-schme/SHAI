@@ -149,7 +149,6 @@ def _kwargs():
         emitter=AuditEmitter([RecordingSink()]),
         tenant_id="test",
         metadata_scanners=[],
-        metadata_enabled=False,
         metadata_block_at=None,
         metadata_action=None,
         mint_connect_token=mint,

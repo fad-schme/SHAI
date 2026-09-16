@@ -367,8 +367,8 @@ async def test_two_unrestricted_mcp_sources_resolve_independently(tmp_path: Path
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n"
         "  - name: source_a\n    transport: mcp\n"
         "  - name: source_b\n    transport: mcp\n"
@@ -589,8 +589,8 @@ def test_source_config_local_valid():
 
 def _minimal_config_kwargs() -> dict:
     return dict(
-        scan_input={"enabled": False},
-        scan_output={"enabled": False},
+        scan_input={},
+        scan_output={},
         connectivity={"token_secret": "test-connectivity-secret"},
     )
 
@@ -634,8 +634,8 @@ async def test_shai_from_yaml_with_sources_section(tmp_path: Path):
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n"
         "  - name: docs_local\n"
         "    transport: local\n"
@@ -657,8 +657,8 @@ async def test_shai_source_tools_available_at_load_agent(tmp_path: Path):
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n"
         "  - name: docs_local\n"
         "    transport: local\n"
@@ -702,8 +702,8 @@ async def test_source_tags_visible_in_agent_tool_set(tmp_path):
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n"
         "  - name: tagged_local\n"
         "    transport: local\n"
@@ -747,8 +747,8 @@ async def test_other_agents_not_affected_by_source_override(tmp_path):
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n"
         "  - name: tagged_local\n"
         "    transport: local\n"
@@ -874,8 +874,8 @@ async def test_reload_agent_honours_required_false(tmp_path: Path):
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "sources:\n"
         "  - name: optional_src\n"
         "    transport: local\n"
@@ -911,8 +911,8 @@ async def _tools_for_harness(tmp_path: Path):
     cfg_file = tmp_path / "h.yaml"
     cfg_file.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
     )
     agent_file = tmp_path / "agent.yaml"
     agent_file.write_text(

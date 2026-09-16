@@ -29,8 +29,11 @@ _HARNESS_YAML = """\
 version: 1
 tenant_id: quickstart-demo
 
+# Dispatch-token signing key. Required: connectivity is always on.
+connectivity:
+  token_secret: quickstart-demo-token-secret
+
 scan_input:
-  enabled: true
   block_at: high
   on_error: fail_closed
   scanners:
@@ -41,7 +44,6 @@ scan_input:
       action: block
 
 scan_output:
-  enabled: true
   block_at: high
   on_error: fail_closed
   scanners:
@@ -50,18 +52,10 @@ scan_output:
       redact_with: "[REDACTED:{category}]"
 
 scan_tool_result:
-  enabled: true
   block_at: high
   scanners:
     - name: injection_scan
     - name: identity_spoof_scan
-
-policy:
-  rules:
-    - id: allow_local
-      match:
-        transport: [local]
-      action: allow
 
 audit_sinks:
   - name: stdout
@@ -71,7 +65,14 @@ _AGENT_YAML = """\
 id: demo_agent
 allowed_tool_names: [search_docs, send_email]
 allowed_tags: [read, internal, messaging]
-policy_rules: []
+
+# Per-tool-call policy is the agent's own. `policy:` in harness.yaml decides
+# which sources activate, not which tools an agent may call.
+policy_rules:
+  - id: allow_local
+    match:
+      transport: [local]
+    action: allow
 """
 
 

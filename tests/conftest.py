@@ -80,21 +80,18 @@ def boundary_config(*, cls: type = BoundaryConfig, **overrides) -> BoundaryConfi
     """Build a BoundaryConfig (or ToolResultScanConfig via cls=) for tests that
 
     call run_scan()/run_tool_result_scan() directly. Defaults match what most
-    such tests want: enabled, block, HIGH, fail-closed. run_scan reads
-    scanners as its own separate argument, not from config.scanners — the
-    ref here exists only to satisfy the config's own "enabled needs
-    scanners" validator. It names heuristic_scan, the backstop every
-    boundary runs, because the schema rejects a name it cannot build.
+    such tests want: block, HIGH, fail-closed. run_scan reads scanners as its
+    own separate argument, not from config.scanners — the ref here names
+    heuristic_scan, the backstop every boundary runs, so the config says what
+    the caller is actually passing.
     """
     defaults: dict = dict(
-        enabled=True,
         block_at=Severity.HIGH,
         action=ScanAction.BLOCK,
         on_error=OnError.FAIL_CLOSED,
+        scanners=[AdapterRef(name="heuristic_scan")],
     )
     defaults.update(overrides)
-    if defaults["enabled"] and "scanners" not in defaults:
-        defaults["scanners"] = [AdapterRef(name="heuristic_scan")]
     return cls(**defaults)
 
 

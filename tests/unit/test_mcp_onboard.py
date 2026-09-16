@@ -27,8 +27,8 @@ _REAL_FETCH_LIVE_TOOLS = onboard_module._fetch_live_tools
 
 def _config(tmp_path: Path, **overrides) -> HarnessConfig:
     return HarnessConfig(
-        scan_input=BoundaryConfig(enabled=False),
-        scan_output=BoundaryConfig(enabled=False),
+        scan_input=BoundaryConfig(scanners=[]),
+        scan_output=BoundaryConfig(scanners=[]),
         mcp_baseline=MCPBaselineConfig(
             path=str(tmp_path / "baseline.db"), secret="test-secret"
         ),

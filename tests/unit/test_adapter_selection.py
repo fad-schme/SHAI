@@ -35,8 +35,8 @@ _BUILTIN_SCANNERS = [
 
 def _config(**overrides: Any) -> dict:
     base = {
-        "scan_input":  {"enabled": False},
-        "scan_output": {"enabled": False},
+        "scan_input":  {},
+        "scan_output": {},
         "connectivity": {"token_secret": "test-connectivity-secret"},
         "audit_sinks": [{"name": "stdout"}],
     }
@@ -59,10 +59,10 @@ def _write(path: Path, body: str) -> Path:
 _TYPO = "injection_scann"   # one character off injection_scan
 
 _SCANNER_LISTS: dict[str, dict[str, Any]] = {
-    "scan_input":        {"scan_input":  {"enabled": True, "scanners": [{"name": _TYPO}]}},
-    "scan_output":       {"scan_output": {"enabled": True, "scanners": [{"name": _TYPO}]}},
+    "scan_input":        {"scan_input":  {"scanners": [{"name": _TYPO}]}},
+    "scan_output":       {"scan_output": {"scanners": [{"name": _TYPO}]}},
     "scan_tool_result":  {"scan_tool_result":  {"scanners": [{"name": _TYPO}]}},
-    "scan_file":         {"scan_file": {"enabled": True, "scanners": [{"name": _TYPO}]}},
+    "scan_file":         {"scan_file": {"scanners": [{"name": _TYPO}]}},
     "scan_mcp_metadata": {"scan_mcp_metadata": {"scanners": [{"name": _TYPO}]}},
     "check_tool_call":   {"check_tool_call":   {"scanners": [{"name": _TYPO}]}},
 }
@@ -86,7 +86,7 @@ def test_file_scanner_is_not_a_declarable_name():
     it is now an unknown name like any other."""
     with pytest.raises(ConfigError, match="file_scanner"):
         load_dict(_config(
-            scan_file={"enabled": True, "scanners": [{"name": "file_scanner"}]},
+            scan_file={"scanners": [{"name": "file_scanner"}]},
         ))
 
 
@@ -104,7 +104,7 @@ def test_empty_sink_list_fails_validation():
 
 
 def test_omitted_sink_list_means_stdout():
-    cfg = load_dict({"scan_input": {"enabled": False}, "scan_output": {"enabled": False},
+    cfg = load_dict({"scan_input": {}, "scan_output": {},
                      "connectivity": {"token_secret": "test-connectivity-secret"}})
     assert [ref.name for ref in cfg.audit_sinks] == ["stdout"]
     assert [type(s).__name__ for s in _build_sinks(cfg.audit_sinks)] == ["StdoutSink"]
@@ -171,9 +171,9 @@ async def test_every_builtin_scanner_still_builds(name, tmp_path: Path):
     """Regression: removing discovery must not have cost a legitimate name."""
     cfg = _write(tmp_path, (
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: true\n  scanners:\n"
+        "scan_input:\n  scanners:\n"
         f"    - name: {name}\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     ))
     harness = await SHAI.from_yaml(cfg)
@@ -188,8 +188,8 @@ async def test_builtin_sinks_still_build(block, tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = _write(tmp_path, (
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n" + block
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n" + block
     ))
     harness = await SHAI.from_yaml(cfg)
     await harness.close()

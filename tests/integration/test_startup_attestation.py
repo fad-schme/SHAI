@@ -19,9 +19,9 @@ from harness.mcp.manifest import manifest_file_hash
 _BASE = (
     "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
     "scan_input:\n"
-    "  enabled: false\n"
+    "  scanners: []\n"
     "scan_output:\n"
-    "  enabled: false\n"
+    "  scanners: []\n"
     "policy:\n"
     "  source_rules:\n"
     "    - id: suppress_untrusted\n"

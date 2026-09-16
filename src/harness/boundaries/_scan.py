@@ -88,7 +88,6 @@ class ScanBoundaryConfig(Protocol):
     so a caller can no longer pair one boundary's block_at with another's
     action by hand-copying the wrong field.
     """
-    enabled:  bool
     block_at: Severity
     action:   ScanAction
     on_error: OnError
@@ -293,8 +292,7 @@ async def run_scan(
 
     Invariants:
     - Exactly one AuditEvent per call, on every code path.
-    - Disabled boundary → ScanStatus.ALLOW, disabled=True audit event.
-    - Enabled boundary with no scanner to run → ScanStatus.BLOCK.
+    - No scanner to run → ScanStatus.BLOCK.
     - Scanner exceptions handled per config.on_error policy.
     - No raw text in the audit event.
     - Scanner action overrides boundary action for that scanner's findings only.
@@ -311,62 +309,29 @@ async def run_scan(
     start = now_ms()
     on_error = config.on_error
 
-    if not config.enabled:
-        # Turning a boundary off is an explicit operator decision, and the
-        # event records it as such — unless a forced block applies. That
-        # floor comes from evidence outside this boundary's own scanners
-        # (scan_output's cross-boundary turn-risk check) and must still hold
-        # when there is nothing here to scan.
-        if forced_block_reason is not None:
-            # disabled=True requires decision=allow (AuditEvent's own
-            # invariant) — the block did not come from this boundary being
-            # on, so it is not recorded as this boundary's own scan.
-            event = AuditEvent.build(
-                boundary=boundary,
-                decision=Decision.BLOCKED,
-                ctx=ctx,
-                tenant_id=tenant_id,
-                duration_ms=0,
-                deny_reason=forced_block_reason,
-                token_id=token_id,
-                audit_tags=audit_tags or {},
-                extra=forced_block_extra,
-            )
-            await emitter.emit(event)
-            return ScanVerdict(status=ScanStatus.BLOCK)
-        event = AuditEvent.build(
-            boundary=boundary,
-            decision=Decision.ALLOW,
-            ctx=ctx,
-            tenant_id=tenant_id,
-            duration_ms=0,
-            disabled=True,
-            token_id=token_id,
-            audit_tags=audit_tags or {},
-        )
-        await emitter.emit(event)
-        return ScanVerdict(status=ScanStatus.ALLOW)
-
     if not scanners:
-        # Enabled, but nothing is configured to inspect the content. Fail
-        # closed: "we looked and found nothing" and "nothing looked" are not
-        # the same answer, and returning ALLOW would make them indistinguishable
-        # to the caller. An operator who does not want this content scanned
-        # disables the boundary — which is the branch above, and says so in the
-        # trail. Reaching here means the configuration asks for a scan it cannot
-        # perform.
+        # Nothing is configured to inspect the content. Fail closed: "we
+        # looked and found nothing" and "nothing looked" are not the same
+        # answer, and returning ALLOW would make them indistinguishable to the
+        # caller. Wiring appends the backstop scanner to every boundary, so
+        # reaching here means a caller built this boundary by hand and left it
+        # with nothing to run.
+        #
+        # A forced block wins the reason: it comes from evidence outside this
+        # boundary's scanners (scan_output's turn-risk check), and the trail
+        # should name that rather than the configuration this call also has.
         event = AuditEvent.build(
             boundary=boundary,
             decision=Decision.BLOCKED,
             ctx=ctx,
             tenant_id=tenant_id,
             duration_ms=0,
-            deny_reason=(
-                "boundary is enabled but no scanner is configured to run — "
-                "declare one under scanners:, or disable the boundary"
+            deny_reason=forced_block_reason or (
+                "no scanner is configured to run — declare one under scanners:"
             ),
             token_id=token_id,
             audit_tags=audit_tags or {},
+            extra=forced_block_extra,
         )
         await emitter.emit(event)
         return ScanVerdict(status=ScanStatus.BLOCK)

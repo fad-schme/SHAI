@@ -7,7 +7,6 @@ connectivity:
 tenant_id: "shai-demo"
 
 scan_input:
-  enabled: true
   block_at: high
   action: block               # block | alert | redact
   # on_error: what happens when a scanner raises an exception.
@@ -23,7 +22,6 @@ scan_input:
       action: block           # always hard-block injection attempts
 
 scan_output:
-  enabled: true
   block_at: high
   action: block
   on_error: fail_closed
@@ -33,7 +31,6 @@ scan_output:
       redact_with: "[REDACTED:{category}]"
 
 scan_tool_result:
-  enabled: true
   block_at: high
   action: block
   on_error: fail_closed
@@ -54,7 +51,6 @@ scan_tool_result:
 # the file and the EXIF/XMP blob for images — configured exactly like
 # scan_input.
 scan_file:
-  enabled: false
   block_at: high
   action: block
   on_error: fail_closed
@@ -65,7 +61,6 @@ scan_file:
     - name: regex_pii
 
 scan_mcp_metadata:
-  enabled: true
   block_at: medium      # medium is correct — metadata injection is high signal
   action: block
   scanners:
@@ -81,6 +76,12 @@ check_tool_call:
     - name: regex_pii
   scan_args_for_tags:
     - sensitive
+  # Human approval for SENSITIVE / IRREVERSIBLE tools. Without a secret every
+  # such tool is denied — there is no weaker check to fall back to.
+  approvals:
+    secret: "secret://SHAI_APPROVAL_KEY"
+    sensitive_quorum: 1                  # one approver
+    irreversible_quorum: 2               # two-person rule
 
 audit_sinks:
   - name: file

@@ -265,13 +265,11 @@ gate = await harness.check_tool_call("bad_tool", {}, ctx)
 if not gate.allowed:
     assert gate.deny_reason is not None
 
-# 3. disabled=True → decision=allow, finding_count=0
+# 3. A boundary always emits, whatever its scanner list
 with harness.collect_events() as events:
-    # scan_input with enabled=False in config
+    # scan_input with `scanners: []` in config — the backstop only
     await harness.scan_input("test", ctx)
-if events[0].disabled:
-    assert str(events[0].decision) == "allow"
-    assert events[0].finding_count == 0
+assert len(events) == 1
 
 # 4. No raw text in audit events
 ev = events[0]

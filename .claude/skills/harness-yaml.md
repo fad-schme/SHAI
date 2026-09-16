@@ -16,11 +16,13 @@ tenant_id: "my-deployment"    # stamped on every audit event
 
 ## Scan boundaries
 
-All four scan boundaries share the same shape:
+All four scan boundaries share the same shape. **There is no `enabled` key** —
+a boundary cannot be switched off, and naming it fails config load. An omitted
+block runs SHAI's recommended scanners for that boundary; `scanners: []` leaves
+the built-in backstop alone; `action: alert` watches without blocking.
 
 ```yaml
 scan_input:           # or scan_output, scan_tool_result, scan_file
-  enabled: true       # false → boundary is skipped, disabled=True audit event
   block_at: high      # low | medium | high — findings at this severity → blocked
   action: block       # block | alert | redact — default action for this boundary
   on_error: fail_closed  # fail_closed (default) | fail_open | degrade
@@ -67,12 +69,11 @@ Circuit breaker (per scanner): 5 consecutive failures → OPEN for 60 s (exponen
 
 ### scan_file extras
 
-Configured exactly like the text boundaries — same `enabled`, `block_at`,
-`action`, `on_error`, `scanners` keys — plus `max_size_mb`.
+Configured exactly like the text boundaries — same `block_at`, `action`,
+`on_error`, `scanners` keys — plus `max_size_mb`.
 
 ```yaml
 scan_file:
-  enabled: false
   block_at: high
   action: block
   on_error: fail_closed
@@ -110,7 +111,6 @@ servers before the tools are registered with SHAI.
 
 ```yaml
 scan_mcp_metadata:
-  enabled: true
   block_at: medium    # default medium — metadata injection is high signal
   action: block
   scanners:
@@ -122,7 +122,6 @@ to `high`) because almost no legitimate content in tool metadata looks like
 an injection. "ignore all previous instructions" in a tool description has
 no benign interpretation.
 
-When `enabled: false`, tools are registered without metadata scanning.
 The `mcp_metadata_scan` scanner uses `mcp_metadata_patterns.yaml`.
 
 ## Tool Governance (`check_tool_call`)

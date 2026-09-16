@@ -35,11 +35,14 @@ connectivity:
 
 ### Scan boundaries
 
-All four scan boundaries share the same shape. Turn one on:
+**Every boundary is always on.** Scanning is what SHAI does, so there is no
+`enabled` key to switch one off — a config that names one is rejected. What an
+operator chooses is which scanners run and what each one does with a finding.
+
+All four scan boundaries share the same shape:
 
 ```yaml
 scan_input:
-  enabled: true
   block_at: high          # low | medium | high
   on_error: fail_closed   # fail_closed | fail_open | degrade
   scanners:
@@ -50,10 +53,23 @@ scan_input:
     - name: heuristic_scan
 ```
 
-Enabled input, output, and tool-result boundaries must declare at least one
-scanner. `heuristic_scan` is then added automatically if it is not already
-listed. File scanning can run its structural checks with only that heuristic
-content backstop.
+An omitted block runs SHAI's recommended scanners for that boundary, so a
+minimal config is a protected one:
+
+| Boundary | Scanners when the block is omitted |
+|---|---|
+| `scan_input` | `regex_pii`, `injection_scan`, `jailbreak_scan`, `identity_spoof_scan` |
+| `scan_output` | `regex_pii` |
+| `scan_tool_result` | `injection_scan`, `identity_spoof_scan`, `jailbreak_scan` |
+| `scan_file` | `injection_scan`, `jailbreak_scan`, `regex_pii` |
+| `scan_mcp_metadata` | `mcp_metadata_scan` |
+
+Declaring `scanners:` replaces that list outright. `heuristic_scan` is added
+automatically to a text boundary if it is not already listed, and `scan_file`
+always runs its structural pass, so `scanners: []` is a coherent minimum: the
+backstop alone, for an operator who has removed every scanner that conflicts
+with their traffic. To watch a boundary without stopping anything, set
+`action: alert` — findings are recorded and content passes.
 
 **`block_at`** decides which severity level blocks the turn. Lower-severity findings still appear in audit events — they just don't block. Default: `high`.
 
@@ -126,7 +142,6 @@ For tool-result scanning, configure the normal injection scanner:
 
 ```yaml
 scan_tool_result:
-  enabled: true
   block_at: high
   scanners:
     - name: injection_scan
@@ -190,6 +205,18 @@ gate = await harness.check_tool_call("pay_invoice", args, ctx)
 SHAI verifies the signature and the binding offline — it never calls out. Each grant is bound to one agent, tenant, tool, and **argument set**, so approving a $5 refund does not authorise a $50,000 one, and a grant for one tool cannot be replayed against another. Quorum counts *distinct* `approver_id`s, so two grants from one person is still one approver.
 
 Two things to know. `scope_context_for_subagent()` does **not** copy `approvals` onto the child context, so a delegated call is approved on its own terms unless you pass grants down deliberately — a grant binds a tool and its arguments, never a caller role, and whether a subagent may reach that tool at all is settled earlier by `allowed_tool_names` and `allowed_tags`. And the approvers land on the gate's allow event as `extra.approvers`, so the audit trail can answer who authorised an irreversible action.
+
+#### Running the approval cycle
+
+SHAI verifies a grant inline; it cannot pause a run to wait for one. There is no callback, no polling, and no resume — so the cycle belongs to your loop, in one of two shapes.
+
+**Ask first.** Before dispatching, read the tool's `irreversibility`. If it is `SENSITIVE` or `IRREVERSIBLE`, run your approval flow, sign a grant per approver over the arguments, attach them, and call the gate once.
+
+**Or let the gate ask.** Call the gate with no grants. Layer 3 denies, naming the tier and the quorum in `deny_reason`, and the call comes back as a denial rather than an exception. Your loop renders the prompt to the approvers, signs a grant for each decision, and **calls the gate again** with the grants attached. SHAI does not re-issue the call; you do.
+
+Two things the retry has to get right. Sign over the same arguments you will pass to `check_tool_call` — the grant binds an argument digest, so a value your loop normalised between the prompt and the retry is a different call and is denied. And come back inside `ttl_seconds` (300 by default): a longer human flow means raising the TTL knowingly, not reusing an expired grant.
+
+Prompt copy, reminders, escalation, who gets asked, and what happens on a timeout are all your application's. SHAI's part is to verify the signatures and the binding, and to record the approver ids on the audit event.
 
 ### Policy
 

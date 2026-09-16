@@ -28,7 +28,6 @@ def _make_event() -> AuditEvent:
         ctx=CTX,
         tenant_id="test",
         duration_ms=1,
-        disabled=False,
     )
 
 
@@ -188,8 +187,8 @@ async def test_harness_signing_disabled_by_default(tmp_path: Path):
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)
@@ -206,8 +205,8 @@ async def test_harness_signing_enabled_via_env(tmp_path: Path, monkeypatch):
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
         "audit_signing:\n  enabled: true\n  secret: \"secret://AUDIT_KEY\"\n"
     )

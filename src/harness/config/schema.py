@@ -149,8 +149,31 @@ class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
         return v
 
 
+def _refs(*names: str) -> list[AdapterRef]:
+    """Build a fresh ref list for a default_factory."""
+    return [AdapterRef(name=n) for n in names]
+
+
+# SHAI's recommended scanner list per boundary — what an omitted block means.
+# Every boundary is always on, so these are the scanners a minimal config runs,
+# not a suggestion an operator has to copy in. Declaring `scanners:` replaces
+# the list outright; `scanners: []` leaves the built-in backstop alone
+# (heuristic_scan for a text boundary, the structural pass for scan_file).
+RECOMMENDED_INPUT_SCANNERS       = ("regex_pii", "injection_scan", "jailbreak_scan",
+                                    "identity_spoof_scan")
+RECOMMENDED_OUTPUT_SCANNERS      = ("regex_pii",)
+RECOMMENDED_TOOL_RESULT_SCANNERS = ("injection_scan", "identity_spoof_scan",
+                                    "jailbreak_scan")
+RECOMMENDED_FILE_SCANNERS        = ("injection_scan", "jailbreak_scan", "regex_pii")
+
+
 class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
     """Configuration for a text-scanning boundary.
+
+    There is no `enabled` key: scanning is what SHAI does, so a boundary
+    cannot be switched off. Operators choose which scanners run and what each
+    one does on a finding — `action: alert` is the observe-only posture that
+    used to be reached by disabling the boundary.
 
     action:   what to do when a finding crosses block_at severity.
               block  — reject the content (default)
@@ -161,17 +184,12 @@ class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
               fail_open   — treat as empty findings (rollout / testing only)
               degrade     — treat as WARN; content passes, audit event flagged
     """
-    enabled:  bool       = True
     block_at: Severity   = Severity.HIGH
     action:   ScanAction = ScanAction.BLOCK
     on_error: OnError    = OnError.FAIL_CLOSED
-    scanners: ScannerRefs = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _enabled_needs_scanners(self) -> BoundaryConfig:
-        if self.enabled and not self.scanners:
-            raise ValueError("scanners must be non-empty when boundary is enabled")
-        return self
+    scanners: ScannerRefs = Field(
+        default_factory=lambda: _refs(*RECOMMENDED_INPUT_SCANNERS)
+    )
 
 
 class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
@@ -188,16 +206,12 @@ class FileScanConfig(BaseModel, frozen=True, extra="forbid"):
     posture; the content is never read, so no scan cost is incurred for a file
     whose size an attacker chose.
     """
-    # Off unless the operator asks for it: scan_file reads uploaded files from
-    # disk, and a harness that never receives uploads should not be doing that.
-    # One default, declared here — HarnessConfig used to override it to False
-    # while this said True, so the schema disagreed with itself about what an
-    # omitted scan_file block means.
-    enabled:             bool         = False
     block_at:            Severity     = Severity.HIGH
     action:              ScanAction   = ScanAction.BLOCK
     on_error:            OnError      = OnError.FAIL_CLOSED
-    scanners:            ScannerRefs  = Field(default_factory=list)
+    scanners:            ScannerRefs  = Field(
+        default_factory=lambda: _refs(*RECOMMENDED_FILE_SCANNERS)
+    )
     max_size_mb:         float        = 100.0
 
     @model_validator(mode="after")
@@ -391,7 +405,9 @@ class ToolResultScanConfig(BoundaryConfig):
     Mitigates T6 indirect prompt injection (injected content in tool results).
     Configured injection_scan instances use the common and input catalogs.
     """
-    enabled: bool = True  # default True because scan_tool_result is the only mitigation for T6
+    scanners: ScannerRefs = Field(
+        default_factory=lambda: _refs(*RECOMMENDED_TOOL_RESULT_SCANNERS)
+    )
 
 
 class SourceConfig(BaseModel, frozen=True, extra="forbid"):
@@ -536,7 +552,6 @@ class MCPMetadataScanConfig(BaseModel, frozen=True, extra="forbid"):
 
     Default scanner: mcp_metadata_scan (MCPMetadataScanner).
     """
-    enabled:  bool       = True
     block_at: Severity   = Severity.MEDIUM
     action:   ScanAction = ScanAction.BLOCK
     scanners: ScannerRefs = Field(
@@ -591,12 +606,16 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     tenant_id:       str = "default"
     normalization:        NormalizationConfig      = Field(default_factory=NormalizationConfig)
     session:              ThreatAccumulatorConfig  = Field(default_factory=ThreatAccumulatorConfig)
-    scan_input:      BoundaryConfig
+    scan_input:      BoundaryConfig = Field(
+        default_factory=lambda: BoundaryConfig(scanners=_refs(*RECOMMENDED_INPUT_SCANNERS))
+    )
     scan_file:       FileScanConfig       = Field(default_factory=FileScanConfig)
     scan_tool_result:    ToolResultScanConfig    = Field(default_factory=ToolResultScanConfig)
     scan_mcp_metadata:   MCPMetadataScanConfig   = Field(default_factory=MCPMetadataScanConfig)
     check_tool_call:     ToolCallGateConfig      = Field(default_factory=ToolCallGateConfig)
-    scan_output:         BoundaryConfig
+    scan_output:         BoundaryConfig = Field(
+        default_factory=lambda: BoundaryConfig(scanners=_refs(*RECOMMENDED_OUTPUT_SCANNERS))
+    )
     policy:          PolicyConfig = Field(default_factory=PolicyConfig)
     # Declared here so `extra="forbid"` accepts the block and `shai validate`
     # can see it. The provider itself is built from the *raw* block before

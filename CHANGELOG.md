@@ -35,6 +35,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NetworkAuditEvent` joined a tool call to its gate event.
 
 ### Changed
+- **Every scan boundary is always on.** `enabled` is gone from the five scan
+  boundaries and a config naming it is rejected; operators choose scanners and
+  each scanner's `action` instead. An omitted block runs SHAI's recommended
+  scanners for that boundary, and `scanners: []` runs the built-in backstop
+  alone. `AuditEvent` drops `disabled`, which recorded a state a boundary can
+  no longer be in.
 - **An MCP manifest declares `allowed_urls`.** The field is required and
   non-empty, and every entry must canonicalize, so `shai mcp onboard` and
   startup refuse a manifest whose list is missing, empty or malformed.

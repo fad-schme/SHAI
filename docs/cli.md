@@ -55,11 +55,11 @@ shai validate
 #   normalization: enabled=True  decode=True  max_depth=3
 #   session:       enabled=True  backend=sqlite  threshold=0.7  window=50  on_escalation=block
 #   boundaries:
-#     scan_input:       enabled=True   block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
-#     scan_file:        enabled=False  block_at=high
-#     scan_output:      enabled=True   block_at=high   scanners=['regex_pii']
-#     scan_tool_result: enabled=True   block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
-#     scan_mcp_metadata: enabled=True  block_at=medium  scanners=['mcp_metadata_scan']
+#     scan_input:       always on  block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
+#     scan_file:        always on  block_at=high   scanners=['injection_scan', 'jailbreak_scan', 'regex_pii']
+#     scan_output:      always on  block_at=high   scanners=['regex_pii']
+#     scan_tool_result: always on  block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
+#     scan_mcp_metadata: always on  block_at=medium  scanners=['mcp_metadata_scan']
 ```
 
 Exit codes: `0` valid, `1` invalid (first error on stderr). Wire it into CI to

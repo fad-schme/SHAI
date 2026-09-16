@@ -37,8 +37,8 @@ def _harness_config(tmp_path: Path) -> Path:
     cfg_path = tmp_path / "harness.yaml"
     cfg_path.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: false\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners: []\n"
+        "scan_output:\n  scanners: []\n"
         "audit_sinks:\n  - name: stdout\n"
         "sources:\n  - name: svc\n    transport: mcp\n"
         f"mcp_manifests_dir: {tmp_path / 'mcp'}\n"

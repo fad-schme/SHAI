@@ -39,7 +39,6 @@ version: 1
 tenant_id: "my-app"
 
 scan_input:
-  enabled: true
   block_at: high
   scanners:
     - name: regex_pii
@@ -49,13 +48,11 @@ scan_input:
     - name: heuristic_scan
 
 scan_output:
-  enabled: true
   block_at: high
   scanners:
     - name: regex_pii
 
 scan_tool_result:
-  enabled: true
   block_at: high
   scanners:
     - name: injection_scan

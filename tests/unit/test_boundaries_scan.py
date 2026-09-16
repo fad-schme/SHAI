@@ -33,40 +33,6 @@ def emitter(sink):
     return AuditEmitter([sink])
 
 
-# ── Disabled boundary ─────────────────────────────────────────────────────
-
-async def test_scan_input_disabled_emits_disabled_event(emitter, sink, state):
-    verdict = await run_scan(
-        "some text", CTX,
-        boundary=BoundaryName.INPUT_SCAN,
-        scanners=[],
-        config=boundary_config(enabled=False),
-        emitter=emitter,
-        tenant_id="test",
-        state=state,
-    )
-    assert not verdict.blocked
-    assert len(sink.events) == 1
-    assert sink.events[0].disabled is True
-    assert sink.events[0].decision == Decision.ALLOW
-    assert sink.events[0].boundary == BoundaryName.INPUT_SCAN
-
-
-async def test_scan_output_disabled_emits_disabled_event(emitter, sink, state):
-    verdict = await run_scan(
-        "output text", CTX,
-        boundary=BoundaryName.OUTPUT_SCAN,
-        scanners=[],
-        config=boundary_config(enabled=False),
-        emitter=emitter,
-        tenant_id="test",
-        state=state,
-    )
-    assert not verdict.blocked
-    assert sink.events[0].boundary == BoundaryName.OUTPUT_SCAN
-    assert sink.events[0].disabled is True
-
-
 # ── Exactly one audit event ───────────────────────────────────────────────
 
 async def test_scan_input_emits_exactly_one_event(emitter, sink, state):
@@ -231,11 +197,9 @@ async def test_boundaries_use_their_own_block_at(tmp_path):
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "session:\n  enabled: false\n"
         "scan_input:\n"
-        "  enabled: true\n"
         "  block_at: critical\n"
         "  scanners:\n    - name: regex_pii\n"
         "scan_output:\n"
-        "  enabled: true\n"
         "  block_at: high\n"
         "  scanners:\n    - name: regex_pii\n"
         "audit_sinks:\n  - name: stdout\n"
@@ -312,7 +276,7 @@ async def test_run_scan_propagates_cancellation_after_emitting():
 
     sink = RecordingSink()
     emitter = AuditEmitter([sink])
-    config = BoundaryConfig(enabled=True, scanners=[AdapterRef(name="heuristic_scan")])
+    config = BoundaryConfig(scanners=[AdapterRef(name="heuristic_scan")])
 
     with pytest.raises(_asyncio.CancelledError):
         await run_scan(

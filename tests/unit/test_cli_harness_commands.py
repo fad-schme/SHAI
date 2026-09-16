@@ -14,9 +14,9 @@ connectivity:
   token_secret: test-connectivity-secret
 tenant_id: demo
 scan_input:
-  enabled: false
+  scanners: []
 scan_output:
-  enabled: false
+  scanners: []
 audit_sinks:
   - name: stdout
 sources:

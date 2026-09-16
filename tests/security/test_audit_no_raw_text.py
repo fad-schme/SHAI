@@ -23,12 +23,12 @@ _SENSITIVE = "MyPII123456789SecretPassword_xK7qZ"
 async def _build_harness(tmp_path: Path, *, scan: bool = True) -> tuple[SHAI, StringIO]:
     buf = StringIO()
     cfg = tmp_path / "h.yaml"
-    enabled = "true" if scan else "false"
-    scanners = "  scanners:\n    - name: regex_pii\n    - name: injection_scan\n" if scan else ""
+    scanners = ("  scanners:\n    - name: regex_pii\n    - name: injection_scan\n"
+                if scan else "  scanners: []\n")
     cfg.write_text(
         f"version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        f"scan_input:\n  enabled: {enabled}\n{scanners}"
-        f"scan_output:\n  enabled: {enabled}\n{scanners}"
+        f"scan_input:\n{scanners}"
+        f"scan_output:\n{scanners}"
         f"audit_sinks:\n  - name: stdout\n"
     )
     h = await SHAI.from_yaml(cfg)

@@ -183,10 +183,6 @@ def test_validate_checks_inline_source_rules(
     config = tmp_path / "harness.yaml"
     config.write_text(
         """
-scan_input:
-  enabled: false
-scan_output:
-  enabled: false
 policy:
   source_rules:
     - id: bad
@@ -215,11 +211,8 @@ def test_validate_rejects_a_misspelled_scanner_name(
     config.write_text(
         """
 scan_input:
-  enabled: true
   scanners:
     - name: injection_scann
-scan_output:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -409,8 +402,8 @@ async def test_audit_verify_accepts_a_real_emitted_log(
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
-        "scan_input:\n  enabled: true\n  scanners:\n    - name: injection_scan\n"
-        "scan_output:\n  enabled: false\n"
+        "scan_input:\n  scanners:\n    - name: injection_scan\n"
+        "scan_output:\n  scanners: []\n"
         "audit_signing:\n  enabled: true\n  secret: real-key-value\n"
         f"audit_sinks:\n  - name: file\n    config:\n      path: {out.as_posix()}\n",
         encoding="utf-8",

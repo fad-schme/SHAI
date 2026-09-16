@@ -452,7 +452,6 @@ class SHAI:
                     emitter=emitter,
                     tenant_id=config.tenant_id,
                     metadata_scanners=mcp_metadata_scanners,
-                    metadata_enabled=config.scan_mcp_metadata.enabled,
                     metadata_block_at=config.scan_mcp_metadata.block_at,
                     metadata_action=config.scan_mcp_metadata.action,
                     mint_connect_token=partial(

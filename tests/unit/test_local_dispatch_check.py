@@ -34,19 +34,15 @@ version: 1
 connectivity:
   token_secret: test-connectivity-secret
 scan_input:
-  enabled: true
   scanners:
     - name: injection_scan
 scan_output:
-  enabled: true
   scanners:
     - name: injection_scan
 scan_tool_result:
-  enabled: true
   scanners:
     - name: injection_scan
 scan_file:
-  enabled: true
   scanners:
     - name: injection_scan
 audit_sinks:

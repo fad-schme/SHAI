@@ -27,7 +27,6 @@ class AuditEvent(BaseModel, frozen=True):
     timestamp:   datetime
     boundary:    BoundaryName
     decision:    Decision
-    disabled:    bool = False
     duration_ms: int
 
     # Identity — tenant_id from HarnessConfig, agent fields from AgentContext
@@ -60,11 +59,6 @@ class AuditEvent(BaseModel, frozen=True):
         if self.decision in (Decision.BLOCKED, Decision.WARN) \
                 and self.boundary == BoundaryName.TOOL_CALL_GATE:
             raise ValueError("tool_call_gate uses deny/allow, not blocked/warn")
-        if self.disabled:
-            if self.decision != Decision.ALLOW:
-                raise ValueError("disabled boundary must have decision=allow")
-            if self.finding_count != 0:
-                raise ValueError("disabled boundary must have finding_count=0")
         return self
 
     @classmethod
@@ -83,7 +77,6 @@ class AuditEvent(BaseModel, frozen=True):
         tool_name: str | None = None,
         transport: str | None = None,
         token_id: str | None = None,
-        disabled: bool = False,
         audit_tags: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> AuditEvent:
@@ -96,7 +89,6 @@ class AuditEvent(BaseModel, frozen=True):
             timestamp=datetime.now(UTC),
             boundary=boundary,
             decision=decision,
-            disabled=disabled,
             duration_ms=duration_ms,
             tenant_id=tenant_id,
             agent_id=ctx.agent_id,

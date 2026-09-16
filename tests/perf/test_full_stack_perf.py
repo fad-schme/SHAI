@@ -97,7 +97,7 @@ def _payload(size: int, *, attack: bool = False) -> str:
 
 async def _harness(tmp_path: Path) -> SHAI:
     refs = "".join(f"    - name: {name}\n" for name in SCANNERS)
-    text_boundary = f"  enabled: true\n  action: alert\n  scanners:\n{refs}"
+    text_boundary = f"  action: alert\n  scanners:\n{refs}"
     cfg = tmp_path / "harness.yaml"
     cfg.write_text(
         "version: 1\n"
@@ -105,7 +105,7 @@ async def _harness(tmp_path: Path) -> SHAI:
         f"scan_input:\n{text_boundary}"
         f"scan_output:\n{text_boundary}"
         f"scan_tool_result:\n{text_boundary}"
-        f"scan_file:\n  enabled: true\n  action: alert\n  scanners:\n{refs}"
+        f"scan_file:\n  action: alert\n  scanners:\n{refs}"
         f"check_tool_call:\n  scan_args_for_tags: [read]\n  scanners:\n{refs}"
         "audit_sinks:\n  - name: file\n    config:\n"
         f"      path: {(tmp_path / 'audit.jsonl').as_posix()}\n",
