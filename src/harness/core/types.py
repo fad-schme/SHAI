@@ -17,6 +17,7 @@ SCANNER_NAMES: frozenset[str] = frozenset({
     "command_injection_scan",
 })
 SINK_NAMES: frozenset[str] = frozenset({"stdout", "file"})
+STORE_NAMES: frozenset[str] = frozenset({"sqlite", "memory"})
 
 
 class BoundaryName(StrEnum):

@@ -160,7 +160,7 @@ class ScanState:
 
     def get_promoted(self) -> list[dict]:
         if self._promoted_cache is None:
-            from harness.patterns.store import load_promoted_candidates
+            from harness.patterns.candidates_store import load_promoted_candidates
             self._promoted_cache = load_promoted_candidates(self.candidates_db)
         return self._promoted_cache
 
@@ -731,12 +731,12 @@ def _record_candidate_if_needed(
         return  # regex scanners caught it — no gap
 
     try:
+        from harness.patterns.candidates_store import upsert_candidate
         from harness.patterns.fingerprint import (
             extract_fingerprint,
             extract_skeleton,
             fingerprint_to_json,
         )
-        from harness.patterns.store import upsert_candidate
 
         # Parse sub-scores from the heuristic detail string
         # Sub-scores come off the finding, not out of its prose. Every finding

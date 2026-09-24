@@ -36,10 +36,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     sess = config.session
     console.write(f"  session:       enabled={sess.enabled}" + (
-        f"  backend={sess.backend}  threshold={sess.escalation_threshold}"
+        f"  store={sess.store.name}  threshold={sess.escalation_threshold}"
         f"  window={sess.window_size}  on_escalation={sess.on_escalation}"
         if sess.enabled else ""
     ))
+    console.write(f"  session_budget: store={config.session_budget.store.name}")
 
     console.write("  boundaries:")
     for boundary_name, boundary_cfg in [

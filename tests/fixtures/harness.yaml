@@ -5,6 +5,10 @@ version: 1
 connectivity:
   token_secret: test-connectivity-secret
 
+session_budget:
+  store:
+    name: memory
+
 scan_input:
   scanners: []
 

@@ -103,7 +103,10 @@ async def test_attestation_payload_shape(tmp_path: Path):
     assert extra["sources"][0]["transport"] == "mcp"
 
     groups = {a["group"] for a in extra["adapters"]}
-    assert groups == {"scanner", "audit_sink", "policy"}
+    # session_budget's state store is always wired (the enforcer always
+    # runs); session/patterns_db's stores are absent here since both are
+    # disabled in this config.
+    assert groups == {"scanner", "audit_sink", "policy", "state_store:session_budget"}
     # Every wired component is identified by module path and source digest.
     assert all(a["module"] and len(a["sha256"]) == 64 for a in extra["adapters"])
 

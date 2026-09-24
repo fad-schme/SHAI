@@ -9,7 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from harness.config.schema import BoundaryConfig, HarnessConfig, MCPBaselineConfig
+from harness.config.schema import (
+    AdapterRef,
+    BoundaryConfig,
+    HarnessConfig,
+    MCPBaselineConfig,
+    SessionBudgetConfig,
+)
 from harness.connectivity.config import ConnectivityConfig
 from harness.core.errors import ConfigError
 from harness.core.types import BoundaryName, Decision
@@ -33,6 +39,7 @@ def _config(tmp_path: Path, **overrides) -> HarnessConfig:
             path=str(tmp_path / "baseline.db"), secret="test-secret"
         ),
         connectivity=_CONNECTIVITY,
+        session_budget=SessionBudgetConfig(store=AdapterRef(name="memory")),
         **overrides,
     )
 

@@ -12,20 +12,22 @@ Cross-cutting component, not a Scanner. Called by the SHAI facade:
 
 Persistence
 -----------
-SQLite via aiosqlite. Default path: state/sessions.db (configurable).
-Schema: two tables —
-  sessions(session_id, risk_score, updated_at)
-  turns(id, session_id, ts, text_hash, status, categories, turn_index)
+Backed by a state-store adapter (see adapters/state_store/base.py) rather
+than a hardcoded database — `store.kv` holds one row per session, `store.log`
+holds each session's per-turn history. Which backend that resolves to
+(SQLite, in-process, or otherwise) is an operator config choice; this module
+never imports a database driver.
 
-Risk score is pre-computed and stored in `sessions` so check() is one fast
-SELECT. The expensive window scan only happens in record(), after the verdict
+Risk score is pre-computed and stored in the kv row so check() is one fast
+get(). The expensive window read only happens in record(), after the verdict
 is already returned to the caller.
 
 Sliding window
 --------------
 record() always evaluates the LAST `window_size` turns for the session,
-regardless of where in the conversation they are. This naturally covers
-any attack start offset — turns [3..7] are evaluated the same as [1..5].
+regardless of where in the conversation they are, via `store.log.tail()`.
+This naturally covers any attack start offset — turns [3..7] are evaluated
+the same as [1..5].
 
 Signals (hashes and metadata only — never raw text)
 ----------------------------------------------------
@@ -41,7 +43,12 @@ Score formula (capped at 1.0):
 
 TTL
 ---
-Sessions older than ttl_hours are purged on each record() call (lazy GC).
+Sessions whose kv row's `updated_at` predates `ttl_hours` ago are purged by
+record() at most once a minute (lazy GC): the session's kv row and its entire turn log
+are deleted together. This is whole-*session* expiry, not per-turn expiry —
+an active, low-traffic session's early turns must survive past `ttl_hours`
+as long as the session itself keeps getting used; only an inactive session's
+history is dropped.
 
 on_escalation actions
 ---------------------
@@ -53,13 +60,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
+from harness.core.types import OnError
+
 if TYPE_CHECKING:
-    pass
+    from harness.adapters.state_store.base import StateStore
+
+log = logging.getLogger(__name__)
 
 # ── Weights ───────────────────────────────────────────────────────────────
 
@@ -71,31 +82,23 @@ WEIGHT_DENSITY = 0.25
 # a BLOCK for cross-turn accumulation, even if no individual boundary blocked.
 WEIGHT_TURN_RISK_HIGH = 0.35
 
-# ── DDL ───────────────────────────────────────────────────────────────────
+# Whole-session expiry does not need to run on every turn: a session is stale
+# for hours, and the sweep costs a listing plus a read per session.
+_SWEEP_INTERVAL_S = 60.0
 
-_DDL = """
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id  TEXT PRIMARY KEY,
-    risk_score  REAL NOT NULL DEFAULT 0.0,
-    updated_at  REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS turns (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  TEXT    NOT NULL,
-    ts          REAL    NOT NULL,
-    text_hash   TEXT    NOT NULL,
-    bigram_json TEXT    NOT NULL DEFAULT '[]',
-    status      TEXT    NOT NULL,
-    categories  TEXT    NOT NULL DEFAULT '[]',
-    turn_index  INTEGER NOT NULL DEFAULT 0,
-    density     REAL    NOT NULL DEFAULT 0.0,
-    turn_risk   REAL    NOT NULL DEFAULT 0.0,
-    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, turn_index);
-"""
+_SESSION_PREFIX = "session:"
+_TURNS_PREFIX   = "turns:"
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+def _number(value: object) -> float:
+    """A stored numeric field, or ValueError: a row is only as trustworthy as
+    the store it came from, and a null or string here must read as a damaged
+    row, not surface later as a TypeError from a comparison."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"expected a number, got {type(value).__name__}")
+    return float(value)
+
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()[:16]
@@ -125,64 +128,48 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
 # ── Accumulator ───────────────────────────────────────────────────────────
 
 class ThreatAccumulator:
-    """Async, SQLite-backed cross-turn threat accumulator.
+    """State-store-backed cross-turn threat accumulator.
 
-    One instance per SHAI facade. Thread/task-safe: uses an asyncio Lock
-    per session_id so concurrent turns on the same session serialize.
+    One instance per SHAI facade. Task-safe: uses an asyncio Lock per
+    session_id so concurrent turns on the same session serialize.
     """
 
     def __init__(
         self,
+        store: StateStore,
         *,
-        db_path: str = "state/sessions.db",
         escalation_threshold: float = 0.70,
         window_size: int            = 10,
         reframe_similarity: float   = 0.72,
         ttl_hours: float            = 72.0,
         on_escalation: str          = "block",
         density_threshold: float    = 0.05,
+        on_error: OnError            = OnError.FAIL_CLOSED,
     ) -> None:
-        self._db_path   = db_path
+        """`store` bundles `.kv` (KVStore) and `.log` (LogStore) — see
+        adapters/state_store/base.py. Constructed and injected by the
+        caller (core/wiring.py), never imported directly here.
+        """
+        self._store     = store   # kept for close() and test introspection
+        self._kv        = store.kv
+        self._log        = store.log
         self._threshold = escalation_threshold
         self._window    = window_size
         self._sim       = reframe_similarity
         self._ttl       = ttl_hours * 3600
         self._action    = on_escalation   # "block" | "flag"
         self._density_threshold = density_threshold
-        self._db        = None            # aiosqlite connection, opened lazily
-        self._init_lock = asyncio.Lock()
+        self._on_error  = on_error
+        self._next_sweep = 0.0
         # Per-session asyncio locks — serialise concurrent turns on same session
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
-    async def _conn(self):
-        """Return the shared connection, initialising DB on first call."""
-        if self._db is not None:
-            return self._db
-        async with self._init_lock:
-            if self._db is not None:
-                return self._db
-            import aiosqlite
-            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-            db = await aiosqlite.connect(self._db_path)
-            db.row_factory = aiosqlite.Row
-            await db.executescript(_DDL)
-            await db.commit()
-            self._db = db
-        return self._db
-
     async def close(self) -> None:
-        """Close the shared connection. Idempotent — called from SHAI.close().
-
-        Clearing the handle means a later check()/record() reopens rather than
-        using a closed connection, so close-then-reuse degrades to a reconnect
-        instead of an error.
-        """
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
+        """Close the underlying store. Idempotent — called from SHAI.close()."""
+        await self._store.close()
 
     async def _session_lock(self, session_id: str) -> asyncio.Lock:
         async with self._locks_lock:
@@ -195,16 +182,24 @@ class ThreatAccumulator:
     async def check(self, session_id: str) -> tuple[bool, str | None]:
         """Read persisted risk score. Called BEFORE run_scan.
 
-        Returns (escalated, reason). O(1) — single SELECT.
+        Returns (escalated, reason). One kv get(). A store failure (adapter
+        raises, or the row is unreadable) follows `on_error` and never raises:
+        this runs ahead of scan_input's boundary, which must always return a
+        verdict.
         """
-        db = await self._conn()
-        async with db.execute(
-            "SELECT risk_score FROM sessions WHERE session_id = ?", (session_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        if row is None or row["risk_score"] < self._threshold:
+        try:
+            raw = await self._kv.get(_SESSION_PREFIX + session_id)
+            if raw is None:
+                return False, None
+            score = _number(json.loads(raw)["risk_score"])
+        except Exception:
+            log.error("session accumulator store unreachable — %s", self._on_error,
+                      exc_info=True, extra={"session_id": session_id})
+            if self._on_error == OnError.FAIL_OPEN:
+                return False, None
+            return True, "session_accumulator: store unreachable — denying (fail_closed)"
+        if score < self._threshold:
             return False, None
-        score = row["risk_score"]
         return True, (
             f"session_accumulator: risk {score:.2f} ≥ {self._threshold} "
             f"— escalation pattern detected across last {self._window} turns"
@@ -227,15 +222,20 @@ class ThreatAccumulator:
         """
         lock = await self._session_lock(session_id)
         async with lock:
-            await self._record_locked(session_id, text, status, categories,
-                                      density, turn_risk)
+            try:
+                await self._record_locked(session_id, text, status, categories,
+                                          density, turn_risk)
+            except Exception:
+                # The verdict is already decided; a turn that cannot be
+                # recorded must not take the boundary down with it. The next
+                # check() sees the store failure for itself.
+                log.error("session accumulator could not record turn",
+                          exc_info=True, extra={"session_id": session_id})
 
     async def reset(self, session_id: str) -> None:
         """Clear all state for a session. Call on session end."""
-        db = await self._conn()
-        await db.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
-        await db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-        await db.commit()
+        await self._kv.delete(_SESSION_PREFIX + session_id)
+        await self._log.delete(_TURNS_PREFIX + session_id)
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -248,55 +248,66 @@ class ThreatAccumulator:
         density: float = 0.0,
         turn_risk: float = 0.0,
     ) -> None:
-        db   = await self._conn()
         now  = time.time()
         h    = _hash(text)
-        cats = json.dumps(sorted(set(categories)))
-        bgrams = json.dumps(sorted(f"{a} {b}" for a, b in _bigrams(text)))
+        cats = sorted(set(categories))
+        bgrams = sorted(f"{a} {b}" for a, b in _bigrams(text))
 
-        await db.execute(
-            "INSERT OR IGNORE INTO sessions(session_id, risk_score, updated_at) "
-            "VALUES(?, 0.0, ?)",
-            (session_id, now),
-        )
+        turn_payload = json.dumps({
+            "text_hash":   h,
+            "bigram_json": bgrams,
+            "status":      status,
+            "categories":  cats,
+            "density":     density,
+            "turn_risk":   turn_risk,
+        }).encode()
+        await self._log.append(_TURNS_PREFIX + session_id, turn_payload)
 
-        async with db.execute(
-            "SELECT COALESCE(MAX(turn_index), -1) + 1 FROM turns WHERE session_id = ?",
-            (session_id,),
-        ) as cur:
-            row = await cur.fetchone()
-        turn_idx = row[0]
-
-        await db.execute(
-            "INSERT INTO turns(session_id, ts, text_hash, bigram_json, status, "
-            "categories, turn_index, density, turn_risk) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (session_id, now, h, bgrams, status, cats, turn_idx, density, turn_risk),
-        )
-
-        async with db.execute(
-            "SELECT text_hash, bigram_json, status, density, turn_risk FROM turns "
-            "WHERE session_id = ? ORDER BY turn_index DESC LIMIT ?",
-            (session_id, self._window),
-        ) as cur:
-            window = await cur.fetchall()
+        window_raw = await self._log.tail(_TURNS_PREFIX + session_id, self._window)
+        window = [json.loads(row) for row in window_raw]
 
         score = self._compute_score(window, self._sim, self._density_threshold)
 
-        await db.execute(
-            "UPDATE sessions SET risk_score = ?, updated_at = ? WHERE session_id = ?",
-            (score, now, session_id),
-        )
+        session_key = _SESSION_PREFIX + session_id
+        await self._kv.put(session_key, json.dumps({
+            "risk_score": score,
+            "updated_at": now,
+        }).encode())
 
+        if now >= self._next_sweep:
+            self._next_sweep = now + _SWEEP_INTERVAL_S
+            try:
+                await self._sweep_stale_sessions(now)
+            except Exception:
+                # The turn itself was recorded; only expiry failed.
+                log.error("session accumulator expiry sweep failed",
+                          exc_info=True)
+
+    async def _sweep_stale_sessions(self, now: float) -> None:
+        """Delete every session (kv row + its turn log) whose kv row is
+        older than ttl_hours. Whole-session expiry — see module docstring.
+        """
         cutoff = now - self._ttl
-        await db.execute("DELETE FROM turns WHERE session_id IN "
-                         "(SELECT session_id FROM sessions WHERE updated_at < ?)", (cutoff,))
-        await db.execute("DELETE FROM sessions WHERE updated_at < ?", (cutoff,))
-        await db.commit()
+        for key in await self._kv.list(_SESSION_PREFIX):
+            raw = await self._kv.get(key)
+            if raw is None:
+                continue
+            try:
+                updated_at = _number(json.loads(raw)["updated_at"])
+            except (ValueError, KeyError, TypeError):
+                # One unreadable row must not keep every other session from
+                # expiring; check() reports it as a store failure for its own session.
+                log.warning("session row unreadable — skipped by sweep",
+                            extra={"key": key})
+                continue
+            if updated_at < cutoff:
+                session_id = key[len(_SESSION_PREFIX):]
+                await self._kv.delete(key)
+                await self._log.delete(_TURNS_PREFIX + session_id)
 
     def _compute_score(
         self,
-        window: list,       # rows: (text_hash, bigram_json, status, density, turn_risk), newest first
+        window: list[dict],  # parsed turn payloads, newest first
         sim_threshold: float,
         density_threshold: float = 0.05,
     ) -> float:
@@ -330,8 +341,8 @@ class ThreatAccumulator:
         # Reframe: current turn (window[0]) is bad AND similar to previous (window[1]).
         reframe = False
         if window[0]["status"] in ("warn", "block") and len(window) >= 2:
-            cur_bgrams  = frozenset(json.loads(window[0]["bigram_json"]))
-            prev_bgrams = frozenset(json.loads(window[1]["bigram_json"]))
+            cur_bgrams  = frozenset(window[0]["bigram_json"])
+            prev_bgrams = frozenset(window[1]["bigram_json"])
             if _jaccard(cur_bgrams, prev_bgrams) >= sim_threshold:
                 reframe = True
 

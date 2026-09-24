@@ -58,6 +58,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ShaiTransport`, so a manifest's `allowed_urls`/`allowed_methods` are always
   enforced. `shai mcp onboard` is the one untokened connection; it still gets
   the URL and method checks and an audited `NetworkAuditEvent` per request.
+- **The crescendo accumulator, the session-execution-budget enforcer, and the
+  signed pattern rule table are backed by a `StateStore` adapter instead of a
+  hardcoded backend.** `session.backend`/`session.path` are replaced by
+  `session.store` (required when `session.enabled`); `patterns_db.store` is
+  new and backs signed rules specifically, while `patterns_db.path` now backs
+  only the heuristic-candidate cache; a new `session_budget:` block (default
+  `store: {name: memory}`) configures the budget enforcer's storage. `SQLite`
+  and in-process `memory` adapters ship today.
+- **`SessionBudget.check()` and `.reset()` are now async.** Both await the
+  configured store; a store failure follows the block's new `on_error`
+  (`fail_closed` by default), denying the tool call rather than raising.
 
 ### Added
 - **MCP connect requests carry a connect token.** With connectivity enabled,
@@ -75,6 +86,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as the standard denial. Each check emits one `tool_dispatch_check` audit event, and
   `scan_tool_result` takes the call's `token_id`, so the gate, check and result
   events join on one id.
+- **`StateStore` adapter group.** A `KVStore`/`LogStore` Protocol pair, with
+  `sqlite` and `memory` adapters, resolved the same way scanners and audit
+  sinks are and reported in the startup attestation's `adapters` list. Wired
+  today to the crescendo accumulator, the session-budget enforcer, and the
+  signed pattern rule table.
 
 ### Removed
 - **`harness.connectivity.default_allowed_urls`.** Its only caller derived a

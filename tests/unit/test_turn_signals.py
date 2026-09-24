@@ -587,10 +587,13 @@ class TestAccumulatorTurnRisk:
         """A turn with turn_risk >= RISK_HIGH raises the accumulator score
         similarly to a real BLOCK, even if status was 'allow'."""
         pytest.importorskip("aiosqlite")
+        import json
+
+        from harness.adapters.state_store.sqlite_store import SQLiteStore
         from harness.boundaries.session_accumulator import ThreatAccumulator
 
         acc = ThreatAccumulator(
-            db_path=str(tmp_path / "sessions.db"),
+            SQLiteStore(path=str(tmp_path / "sessions.db")),
             window_size=5,
             escalation_threshold=0.99,   # very high so we test raw score
         )
@@ -605,23 +608,23 @@ class TestAccumulatorTurnRisk:
                 turn_risk=0.75,   # above RISK_HIGH
             )
 
-        # Session risk score should reflect the high-turn-risk contribution
-        db = await acc._conn()
-        async with db.execute(
-            "SELECT risk_score FROM sessions WHERE session_id = 'sess1'"
-        ) as cur:
-            row = await cur.fetchone()
-        assert row["risk_score"] > 0.30   # significantly elevated
+        # Session risk score should reflect the high-turn-risk contribution —
+        # read back through the store abstraction, not raw SQL.
+        raw = await acc._kv.get("session:sess1")
+        assert json.loads(raw)["risk_score"] > 0.30   # significantly elevated
 
         await acc.close()
 
     async def test_low_turn_risk_no_effect(self, tmp_path):
         """A turn with low turn_risk does not raise the score."""
         pytest.importorskip("aiosqlite")
+        import json
+
+        from harness.adapters.state_store.sqlite_store import SQLiteStore
         from harness.boundaries.session_accumulator import ThreatAccumulator
 
         acc = ThreatAccumulator(
-            db_path=str(tmp_path / "sessions.db"),
+            SQLiteStore(path=str(tmp_path / "sessions.db")),
             window_size=5,
         )
 
@@ -634,12 +637,8 @@ class TestAccumulatorTurnRisk:
                 turn_risk=0.10,   # below RISK_HIGH
             )
 
-        db = await acc._conn()
-        async with db.execute(
-            "SELECT risk_score FROM sessions WHERE session_id = 'sess2'"
-        ) as cur:
-            row = await cur.fetchone()
-        assert row["risk_score"] == 0.0    # nothing contributed
+        raw = await acc._kv.get("session:sess2")
+        assert json.loads(raw)["risk_score"] == 0.0    # nothing contributed
 
         await acc.close()
 

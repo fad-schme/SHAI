@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import os
 
@@ -19,6 +20,28 @@ def _signing_secret(env_var: str) -> bytes | None:
         return None
     return value.encode()
 
+
+def _rules_store(db_path: str):
+    """A standalone SQLite-backed store for `--db <path>`, outside any
+    harness.yaml — CLI tooling operates on an arbitrary DB file, not a
+    configured `store:` ref. asyncio.run() at each command's call site
+    spins up its own short-lived event loop; these are one-shot CLI
+    invocations, not a hot path.
+    """
+    from harness.adapters.state_store.sqlite_store import SQLiteStore
+    return SQLiteStore(path=db_path)
+
+
+async def _with_store(db_path: str, op):
+    """Run `op(store)` and close the store — an unclosed aiosqlite connection
+    keeps its worker thread, and the process, alive."""
+    store = _rules_store(db_path)
+    try:
+        return await op(store)
+    finally:
+        await store.close()
+
+
 def cmd_patterns_apply(args) -> int:
     secret = _signing_secret(args.secret)
     if secret is None:
@@ -26,7 +49,8 @@ def cmd_patterns_apply(args) -> int:
 
     from harness.patterns.store import apply_bundle
     try:
-        count = apply_bundle(args.bundle, args.db, secret)
+        count = asyncio.run(_with_store(
+            args.db, lambda store: apply_bundle(args.bundle, store, secret)))
         console.write(f"applied {count} patterns to {args.db}")
         return 0
     except Exception as e:
@@ -36,7 +60,7 @@ def cmd_patterns_apply(args) -> int:
 
 def cmd_patterns_list(args) -> int:
     from harness.patterns.store import list_rules
-    rules = list_rules(args.db)
+    rules = asyncio.run(_with_store(args.db, list_rules))
     if not rules:
         console.write("no patterns in database")
         return 0
@@ -54,14 +78,15 @@ def cmd_patterns_verify(args) -> int:
         return 1
 
     from harness.patterns.store import verify_all
-    valid, invalid = verify_all(args.db, secret)
+    valid, invalid = asyncio.run(
+        _with_store(args.db, lambda store: verify_all(store, secret)))
     console.write(f"valid: {valid}  invalid: {invalid}")
     return 0 if invalid == 0 else 1
 
 
 def cmd_candidates_list(args) -> int:
+    from harness.patterns.candidates_store import list_candidates
     from harness.patterns.fingerprint import fingerprint_from_json
-    from harness.patterns.store import list_candidates
 
     min_hits = 1 if getattr(args, "all", False) else 0
     candidates = list_candidates(args.db, status=args.status, min_hits=min_hits)
@@ -89,7 +114,7 @@ def cmd_candidates_list(args) -> int:
 
 
 def cmd_candidates_update(args) -> int:
-    from harness.patterns.store import set_candidate_status
+    from harness.patterns.candidates_store import set_candidate_status
     ok = set_candidate_status(args.db, args.id, args.action)
     if ok:
         console.write(f"candidate {args.id} → {args.action}")

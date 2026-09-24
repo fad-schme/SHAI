@@ -11,19 +11,19 @@ from harness.boundaries._scan import (
 from harness.core.context import AgentContext
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
+from harness.patterns.candidates_store import (
+    init_db,
+    list_candidates,
+    load_promoted_candidates,
+    set_candidate_status,
+    upsert_candidate,
+)
 from harness.patterns.fingerprint import (
     extract_fingerprint,
     extract_skeleton,
     fingerprint_from_json,
     fingerprint_to_json,
     lsh_jaccard,
-)
-from harness.patterns.store import (
-    init_db,
-    list_candidates,
-    load_promoted_candidates,
-    set_candidate_status,
-    upsert_candidate,
 )
 
 CTX = AgentContext(agent_id="test")
@@ -294,3 +294,13 @@ class TestReadHook:
         )]
         result = _check_promoted_candidates("some text", findings, state)
         assert len(result) == len(findings)
+
+
+def test_unreadable_candidate_cache_recovers_to_none_and_says_so(tmp_path, caplog):
+    import logging
+
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"this is not a sqlite database" * 50)
+    with caplog.at_level(logging.DEBUG, logger="harness.patterns.candidates_store"):
+        assert load_promoted_candidates(db) == []
+    assert "unreadable" in caplog.text

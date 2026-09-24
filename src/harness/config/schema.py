@@ -20,6 +20,7 @@ from harness.connectivity.config import ConnectivityConfig
 from harness.core.types import (
     SCANNER_NAMES,
     SINK_NAMES,
+    STORE_NAMES,
     OnError,
     ScanAction,
     Severity,
@@ -73,6 +74,17 @@ def _known_scanners(refs: list[AdapterRef]) -> list[AdapterRef]:
     return refs
 
 
+def _known_store(ref: AdapterRef) -> AdapterRef:
+    """A subsystem's `store:` ref must name a built-in state-store backend.
+
+    Unlike scanners/sinks, each subsystem declares exactly one store — there
+    is nothing to fan out over, so this validates a single AdapterRef rather
+    than a list.
+    """
+    _reject_unknown([ref], STORE_NAMES, "state store")
+    return ref
+
+
 def _known_sinks(refs: list[AdapterRef]) -> list[AdapterRef]:
     """At least one sink, and every name a built-in.
 
@@ -94,6 +106,11 @@ def _known_sinks(refs: list[AdapterRef]) -> list[AdapterRef]:
 # include the gate's layer-7 argument scanners — is this type, so one check
 # covers them all.
 ScannerRefs = Annotated[list[AdapterRef], AfterValidator(_known_scanners)]
+
+# A subsystem's single state-store selection. No default anywhere it is used
+# — see StateStore ticket 01: assuming a particular backend is exactly what
+# this type exists to stop.
+StoreRef = Annotated[AdapterRef, AfterValidator(_known_store)]
 
 
 
@@ -117,29 +134,50 @@ class NormalizationConfig(BaseModel, frozen=True, extra="forbid"):
     max_expansion_bytes: int = 8388608
 
 
+def _store_on_error(value: OnError) -> OnError:
+    """A state store either is reachable or is not: there is no degraded
+    verdict for a call the store could not answer, so `degrade` (a scanner
+    outcome) is not a valid store `on_error`."""
+    if value == OnError.DEGRADE:
+        raise ValueError("on_error must be 'fail_closed' or 'fail_open' for a state store, not 'degrade'")
+    return value
+
+
 class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
     """Cross-turn threat accumulator — detects crescendo / multi-turn escalation.
 
-    SQLite-backed: risk scores persist across process restarts so a slow
-    crescendo that spans hours is still detected.
+    Backed by a state-store adapter (see StoreRef): risk scores persist
+    across process restarts, and across process replicas when `store` names
+    a backend shared between them, so a slow crescendo spanning hours or
+    spread across a fleet is still detected.
 
-    Disabled by default — requires explicit opt-in because it creates a
-    SQLite file at `path` and runs a DB check on every scan_input call.
-    Enable in harness.yaml once the deployment path is configured.
+    Disabled by default — requires explicit opt-in because it runs a store
+    check on every scan_input call. Enable in harness.yaml once `store` is
+    configured.
+
+    `store` has no default: which backend a security signal lives in is an
+    operator decision, not an assumption this schema should make for them.
+    Required only when `enabled` — see `_enabled_needs_store`.
 
     on_escalation:
       block — hard stop (default); scanners never run for this turn
       flag  — WARN verdict; content passes through; audit event emitted
+
+    on_error: what happens when the configured store is unreachable.
+      fail_closed (default) — treat as escalated; matches every other
+        boundary control's default posture (Invariant-adjacent — see
+        python-conventions.md's boundary contract).
+      fail_open — treat as not escalated; content passes through.
     """
     enabled:              bool  = False
-    backend:              str   = "sqlite"
-    path:                 str   = "state/sessions.db"
+    store:                StoreRef | None = None
     escalation_threshold: float = 0.70
     window_size:          int   = 10
     reframe_similarity:   float = 0.72
     density_threshold:    float = 0.05
     ttl_hours:            float = 72.0
     on_escalation:        str   = "block"   # "block" | "flag"
+    on_error:              Annotated[OnError, AfterValidator(_store_on_error)] = OnError.FAIL_CLOSED
 
     @field_validator("on_escalation")
     @classmethod
@@ -147,6 +185,12 @@ class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
         if v not in ("block", "flag"):
             raise ValueError("on_escalation must be 'block' or 'flag'")
         return v
+
+    @model_validator(mode="after")
+    def _enabled_needs_store(self) -> ThreatAccumulatorConfig:
+        if self.enabled and self.store is None:
+            raise ValueError("session.store is required when session.enabled is true")
+        return self
 
 
 def _refs(*names: str) -> list[AdapterRef]:
@@ -384,18 +428,52 @@ class PatternsDBConfig(BaseModel, frozen=True, extra="forbid"):
     never fatal: a tampered row must not take the harness down, and the bundled
     YAML catalog stays active regardless.
 
-    `path` also backs the heuristic-candidate cache — both tables live in the
-    same DB file the CLI writes.
+    `store` backs the signed-rule table only. The heuristic-candidate cache
+    stays on `path`, a direct SQLite file — unlike the rule table, its reads
+    and writes run inside run_scan(), the synchronous-helper pipeline shared
+    by every scan boundary, and moving it behind the (async) StateStore
+    Protocol would force that shared pipeline async. Keeping it as its own,
+    explicitly-scoped exception was the smaller, safer change; see
+    patterns/candidates_store.py.
     """
     enabled: bool = False
-    path:    str  = "state/patterns.db"
+    store:   StoreRef | None = None
+    path:    str  = "state/patterns.db"   # heuristic-candidate cache only
     secret:  str  = ""    # secret://ENV_VAR resolved at startup
 
     @model_validator(mode="after")
     def _enabled_needs_secret(self) -> PatternsDBConfig:
         if self.enabled and not self.secret:
             raise ValueError("patterns_db.secret is required when patterns_db is enabled")
+        if self.enabled and self.store is None:
+            raise ValueError("patterns_db.store is required when patterns_db is enabled")
         return self
+
+
+class SessionBudgetConfig(BaseModel, frozen=True, extra="forbid"):
+    """State-store backend for the session-execution-budget enforcer.
+
+    The enforcer itself always runs (step counter, per-prompt fan-out, loop
+    detection) — what's configured here is only where its per-session state
+    lives, not whether it's active; that's governed per-agent by each
+    agent's execution limits.
+
+    `store` has no default *within this block*: if an operator writes
+    `session_budget:` at all, `store` must be explicit — same "no assumed
+    backend" posture as session/patterns_db's `store`, see StoreRef. But
+    unlike those two, this block itself is not gated behind an `enabled`
+    flag (the enforcer always runs), so omitting the whole `session_budget:`
+    block entirely falls back to the `memory` backend on HarnessConfig —
+    the sensible default for a single-process deployment with no
+    multi-replica consistency need, and the only way to keep declaring this
+    block optional for every config that doesn't care.
+
+    on_error: what happens when the configured store is unreachable.
+      fail_closed (default) — deny the tool call.
+      fail_open — allow the tool call, budget state not recorded for it.
+    """
+    store:     StoreRef
+    on_error:  Annotated[OnError, AfterValidator(_store_on_error)] = OnError.FAIL_CLOSED
 
 
 class ToolResultScanConfig(BoundaryConfig):
@@ -606,6 +684,11 @@ class HarnessConfig(BaseModel, frozen=True, extra="forbid"):
     tenant_id:       str = "default"
     normalization:        NormalizationConfig      = Field(default_factory=NormalizationConfig)
     session:              ThreatAccumulatorConfig  = Field(default_factory=ThreatAccumulatorConfig)
+    # Enforcer always runs; omitted block defaults to the in-process backend
+    # (see SessionBudgetConfig) rather than being required.
+    session_budget:  SessionBudgetConfig = Field(
+        default_factory=lambda: SessionBudgetConfig(store=AdapterRef(name="memory"))
+    )
     scan_input:      BoundaryConfig = Field(
         default_factory=lambda: BoundaryConfig(scanners=_refs(*RECOMMENDED_INPUT_SCANNERS))
     )

@@ -16,11 +16,13 @@ from harness.adapters.scanners.heuristic_scan import HeuristicScanner
 from harness.adapters.scanners.injection_scan import InjectionScanner
 from harness.adapters.scanners.mcp_metadata_scanner import MCPMetadataScanner
 from harness.adapters.scanners.regex_pii import RegexPIIScanner
+from harness.adapters.state_store.memory_store import InMemoryStore
+from harness.adapters.state_store.sqlite_store import SQLiteStore
 from harness.core.errors import ConfigError
 from harness.policy.rules import RuleBasedPolicy
 
 if TYPE_CHECKING:
-    from harness.config.schema import NormalizationConfig, PolicyConfig
+    from harness.config.schema import AdapterRef, NormalizationConfig, PolicyConfig
     from harness.policy.engine import PolicyEngine
 
 
@@ -96,6 +98,24 @@ _SINK_FACTORIES: dict[str, Any] = {
         "harness.adapters.audit_sinks.file", fromlist=["FileSink"]
     ).FileSink(**cfg),
 }
+
+# Same contract for state stores: keys == core.types.STORE_NAMES. Each
+# subsystem (session accumulator, patterns DB, session budget) resolves its
+# own `store:` ref independently through this table — see _build_store.
+_STORE_FACTORIES: dict[str, Any] = {
+    "sqlite": lambda cfg: SQLiteStore(**cfg),
+    "memory": lambda cfg: InMemoryStore(**cfg),
+}
+
+
+def _build_store(ref: AdapterRef):
+    """Resolve one subsystem's `store:` ref into a bundled adapter.
+
+    Returns an object with `.kv` (KVStore) and, for adapters that support
+    it, `.log` (LogStore) — see state_store/base.py. The schema has already
+    rejected any name outside _STORE_FACTORIES (core.types.STORE_NAMES).
+    """
+    return _STORE_FACTORIES[ref.name](ref.config)
 
 
 def _build_text_scanners(

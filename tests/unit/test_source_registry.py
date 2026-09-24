@@ -592,6 +592,7 @@ def _minimal_config_kwargs() -> dict:
         scan_input={},
         scan_output={},
         connectivity={"token_secret": "test-connectivity-secret"},
+        session_budget={"store": {"name": "memory"}},
     )
 
 

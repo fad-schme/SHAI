@@ -5,6 +5,7 @@ Agent tools are resolved once at load_agent() time — no per-turn overhead.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
@@ -188,6 +189,8 @@ class SHAI:
         rate_limiter: RateLimiter | None,
         source_registry: SourceRegistry,
         connectivity_secret: bytes,
+        session_budget_store,
+        session_store,
         mcp_required_flags: dict[str, bool] | None = None,
         mcp_baseline_gate: McpBaselineGate | None = None,
         mcp_policy_rules: dict[str, list[RuleConfig]] | None = None,
@@ -220,21 +223,29 @@ class SHAI:
             irreversible_quorum=_approvals_cfg.irreversible_quorum,
         )
         self._rate_limiter              = rate_limiter
-        self._session_budget            = SessionBudget()
+        self._session_budget            = SessionBudget(
+            session_budget_store,
+            on_error=config.session_budget.on_error,
+        )
         self._threat_accumulator: ThreatAccumulator | None = (
             ThreatAccumulator(
-                db_path=config.session.path,
+                session_store,
                 escalation_threshold=config.session.escalation_threshold,
                 window_size=config.session.window_size,
                 reframe_similarity=config.session.reframe_similarity,
                 ttl_hours=config.session.ttl_hours,
                 on_escalation=config.session.on_escalation,
                 density_threshold=config.session.density_threshold,
+                on_error=config.session.on_error,
             )
             if config.session.enabled else None
         )
         # Per-agent ExecutionLimits — populated at load_agent() time
         self._agent_limits: dict[str, ExecutionLimits] = {}
+        # In-flight SessionBudget.reset() per deregistered agent — see
+        # _forget_agent. Held so the task is neither collected mid-run nor
+        # left unobserved, and so re-registering the same id can wait for it.
+        self._pending_budget_resets: dict[str, asyncio.Task] = {}
         self._tool_result_scanners      = tool_result_scanners
         self._source_registry           = source_registry
         # required flags for MCP sources built from manifests — keyed by
@@ -274,8 +285,9 @@ class SHAI:
         from harness.maintenance import Maintenance
         self._maintenance = Maintenance(self)
         # Per-instance scan state: circuit breakers, promoted-candidate cache.
-        # Shares patterns_db.path — signed rules and heuristic candidates are two
-        # tables in the one DB file the CLI writes.
+        # patterns_db.path is the heuristic-candidate SQLite file specifically
+        # — signed rules live behind patterns_db.store instead (see
+        # patterns/store.py vs patterns/candidates_store.py).
         self._scan_state = ScanState(config.patterns_db.path)
 
     # ── Construction ──────────────────────────────────────────────────────
@@ -314,27 +326,36 @@ class SHAI:
         # failure inside compile_rules_incrementally. The bundled YAML catalog
         # stays active regardless.
         db_extra_rules: dict[str, list] = {}
+        rules_store = None
+        patterns_db_rows = None
         if config.patterns_db.enabled:
             from harness.adapters.scanners.injection_scan import compile_rules_incrementally
-            from harness.patterns.store import load_verified_rules
+            from harness.patterns.store import list_rules, load_verified_rules
 
             db_secret = config.patterns_db.secret.encode()
+            rules_store = wiring._build_store(config.patterns_db.store)
 
-            for scanner_name, catalog in wiring._DB_CATALOG_FOR_SCANNER.items():
-                raw_rules = load_verified_rules(
-                    config.patterns_db.path, db_secret, catalog=catalog
-                )
-                if raw_rules:
-                    compiled = compile_rules_incrementally(
-                        raw_rules, source=f"patterns_db[{catalog}]"
+            # Everything the startup needs from this store is read here, and
+            # the store is closed however this block ends: an unclosed
+            # aiosqlite connection keeps the process alive after a failed start.
+            try:
+                for scanner_name, catalog in wiring._DB_CATALOG_FOR_SCANNER.items():
+                    raw_rules = await load_verified_rules(
+                        rules_store, db_secret, catalog=catalog
                     )
-                    if compiled:
-                        db_extra_rules[scanner_name] = compiled
+                    if raw_rules:
+                        compiled = compile_rules_incrementally(
+                            raw_rules, source=f"patterns_db[{catalog}]"
+                        )
+                        if compiled:
+                            db_extra_rules[scanner_name] = compiled
+                patterns_db_rows = await list_rules(rules_store)
+            finally:
+                await rules_store.close()
             log.info(
                 "signed pattern DB loaded",
                 extra={
                     "op":       "from_yaml",
-                    "path":     config.patterns_db.path,
                     "catalogs": len(db_extra_rules),
                     "rules":    sum(len(r) for r in db_extra_rules.values()),
                 },
@@ -476,6 +497,15 @@ class SHAI:
             if rl_cfg.enabled else None
         )
 
+        # State stores: built here (like scanners/sinks/policy) rather than
+        # inside __init__, so the actual wired objects — not a throwaway
+        # second instance — are what attestation below reports. See
+        # attestation.py: "Adapter identity comes from the objects the
+        # config actually built."
+        session_budget_store = wiring._build_store(config.session_budget.store)
+        session_store = (
+            wiring._build_store(config.session.store) if config.session.enabled else None
+        )
         instance = cls(
             config=config,
             agent_registry=agent_registry,
@@ -490,6 +520,8 @@ class SHAI:
             rate_limiter=rate_limiter,
             source_registry=source_registry,
             connectivity_secret=connectivity_secret,
+            session_budget_store=session_budget_store,
+            session_store=session_store,
             mcp_required_flags=mcp_required_flags,
             mcp_baseline_gate=mcp_baseline_gate,
             mcp_policy_rules=mcp_policy_rules,
@@ -515,8 +547,14 @@ class SHAI:
                     *mcp_metadata_scanners,
                 ],
                 sinks=sinks,
+                stores={
+                    "session_budget": session_budget_store,
+                    "session":        session_store,
+                    "patterns_db":    rules_store,
+                },
                 policy=policy,
                 sources=resolved_sources,
+                patterns_db_rows=patterns_db_rows,
             ),
         ))
         log.info("harness startup attested",
@@ -624,6 +662,10 @@ class SHAI:
                 overrides[tool.name] = tool
         self._source_overrides[cfg.id] = overrides
 
+        pending = self._pending_budget_resets.get(cfg.id)
+        if pending is not None:
+            await asyncio.wait([pending])
+
         self._agent_tools[cfg.id] = self._resolve_tools(cfg)
         self._agent_limits[cfg.id] = self._build_execution_limits(cfg)
         log.info(message,
@@ -646,7 +688,32 @@ class SHAI:
         self._agent_limits.pop(agent_id, None)
         if self._rate_limiter is not None:
             self._rate_limiter.reset(agent_id)
-        self._session_budget.reset(agent_id)
+        # SessionBudget.reset() is async (it awaits the state store) but this
+        # method stays synchronous, so Maintenance.deregister_agent does not
+        # become async for every caller over one cleanup call. It runs as a
+        # task on the caller's loop, held in _pending_budget_resets:
+        # _wire_agent awaits it before an agent with the same id is wired
+        # again, so the reset can never zero a re-registered agent's counters.
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self._session_budget.reset(agent_id)
+            )
+        except RuntimeError:
+            log.warning(
+                "no running event loop — session budget state for "
+                "deregistered agent not cleared",
+                extra={"agent_id": agent_id, "op": "forget_agent"},
+            )
+            return
+        self._pending_budget_resets[agent_id] = task
+        task.add_done_callback(partial(self._budget_reset_done, agent_id))
+
+    def _budget_reset_done(self, agent_id: str, task: asyncio.Task) -> None:
+        if self._pending_budget_resets.get(agent_id) is task:
+            del self._pending_budget_resets[agent_id]
+        if not task.cancelled() and task.exception() is not None:
+            log.error("session budget reset failed for deregistered agent",
+                      exc_info=task.exception(), extra={"agent_id": agent_id})
 
     def tools_for(self, ctx: AgentContext) -> list[Tool]:
         """The tools this context can reach the gate's per-call layers with.
@@ -827,7 +894,7 @@ class SHAI:
             # and SessionBudget resets the fan-out counter. Tool-only flows
             # that never call scan_input carry no signals — fan-out stays off.
             prompt_id = ctx.turn_signals.turn_id if ctx.turn_signals else None
-            allowed, reason = self._session_budget.check(
+            allowed, reason = await self._session_budget.check(
                 ctx.agent_id, session_id, name, args, limits,
                 prompt_id=prompt_id,
             )
@@ -1190,9 +1257,14 @@ class SHAI:
                 await self._threat_accumulator.close()
             except Exception as e:
                 # Broad catch is deliberate: shutdown continues regardless of
-                # what the session DB does on the way out.
+                # what the session store does on the way out.
                 log.warning("threat accumulator close failed",
                             extra={"error": str(e), "op": "close"})
+        try:
+            await self._session_budget.close()
+        except Exception as e:
+            log.warning("session budget store close failed",
+                        extra={"error": str(e), "op": "close"})
 
     async def get_source(self, name: str) -> ToolSource:
         """Return a registered source by name.

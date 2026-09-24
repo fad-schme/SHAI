@@ -6,6 +6,15 @@ connectivity:
   token_secret: "secret://SHAI_TOKEN_SECRET"
 tenant_id: "shai-demo"
 
+# Storage for the tool-call gate's session-execution-budget enforcer
+# (step counter, per-prompt fan-out, loop detection). Required — no default
+# backend is assumed. `memory` is recommended here: this sits on every
+# tool call's pre-checks, and a single-process demo has no multi-replica
+# consistency need that would justify a networked/durable backend instead.
+session_budget:
+  store:
+    name: memory
+
 scan_input:
   block_at: high
   action: block               # block | alert | redact

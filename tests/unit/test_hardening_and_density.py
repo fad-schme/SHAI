@@ -5,12 +5,12 @@ import pytest
 
 from harness.boundaries.session_accumulator import ThreatAccumulator
 from harness.core.types import Severity
-from harness.patterns.fingerprint import extract_fingerprint, fingerprint_to_json
-from harness.patterns.store import (
+from harness.patterns.candidates_store import (
     list_candidates,
     set_candidate_status,
     upsert_candidate,
 )
+from harness.patterns.fingerprint import extract_fingerprint, fingerprint_to_json
 
 # ── Item 3: Candidates table hardening ────────────────────────────────────
 
@@ -98,12 +98,19 @@ class TestCandidatesMinHits:
 
 # ── Item 1: Cross-turn density tracking ──────────────────────────────────
 
+async def _risk_score(acc: ThreatAccumulator, session_id: str) -> float:
+    import json
+    raw = await acc._kv.get(f"session:{session_id}")
+    return json.loads(raw)["risk_score"]
+
+
 class TestDensityTracking:
 
     @pytest.fixture
     async def acc(self, tmp_path):
+        from harness.adapters.state_store.sqlite_store import SQLiteStore
         a = ThreatAccumulator(
-            db_path=str(tmp_path / "sessions.db"),
+            SQLiteStore(path=str(tmp_path / "sessions.db")),
             escalation_threshold=0.70,
             window_size=5,
             density_threshold=0.05,
@@ -124,11 +131,10 @@ class TestDensityTracking:
         escalated, reason = await acc.check("sess2")
         # Density alone adds WEIGHT_DENSITY (0.25) which is below escalation_threshold (0.70)
         # But combined with other signals it contributes
-        # Let's check the score directly
-        db = await acc._conn()
-        async with db.execute("SELECT risk_score FROM sessions WHERE session_id = 'sess2'") as cur:
-            row = await cur.fetchone()
-        assert row["risk_score"] >= 0.25  # density signal fired
+        # Let's check the score directly, via the store abstraction rather
+        # than a raw SQL read — no assumption the backend is SQLite.
+        risk_score = await _risk_score(acc, "sess2")
+        assert risk_score >= 0.25  # density signal fired
 
     async def test_density_plus_blocks_escalates(self, acc):
         # Turns with both high density AND blocks — should escalate
@@ -141,10 +147,7 @@ class TestDensityTracking:
     async def test_density_signal_not_triggered_on_zero(self, acc):
         for i in range(5):
             await acc.record("sess4", f"clean text {i}", "allow", [], density=0.0)
-        db = await acc._conn()
-        async with db.execute("SELECT risk_score FROM sessions WHERE session_id = 'sess4'") as cur:
-            row = await cur.fetchone()
-        assert row["risk_score"] == 0.0
+        assert await _risk_score(acc, "sess4") == 0.0
 
     async def test_density_decays_with_window(self, acc):
         # 3 high-density turns followed by 5 normal turns
@@ -153,10 +156,7 @@ class TestDensityTracking:
         for i in range(5):
             await acc.record("sess5", f"normal {i}", "allow", [], density=0.01)
         # Window is 5, so only the last 5 (normal) are in scope
-        db = await acc._conn()
-        async with db.execute("SELECT risk_score FROM sessions WHERE session_id = 'sess5'") as cur:
-            row = await cur.fetchone()
-        assert row["risk_score"] < 0.25  # density signal should have decayed out
+        assert await _risk_score(acc, "sess5") < 0.25  # density signal decayed out
 
 
 class TestExtractDensity:

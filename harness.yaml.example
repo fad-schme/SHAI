@@ -15,21 +15,39 @@ normalization:
   max_depth: 2            # recursion depth for nested encodings
   max_expansion_bytes: 8388608  # cap on de-obfuscated material per scan
 
+# ── Session-execution-budget enforcer ─────────────────────────────────────
+# Step counter, per-prompt fan-out, and loop detection on the tool-call
+# gate's pre-checks. Per-agent limits are set in each agent's own config;
+# `store` only says where this enforcer's per-session counters live.
+# Required — no backend is assumed. `memory` is recommended for a
+# single-process deployment: this runs on every tool call, and a networked
+# backend here adds latency with no benefit unless replicas of the same
+# agent need to see each other's counters.
+session_budget:
+  store:
+    name: memory
+  on_error: fail_closed        # fail_closed | fail_open
+
 # ── Cross-turn threat accumulator ─────────────────────────────────────────
 # Detects crescendo attacks: escalation distributed across turns where each
 # individual turn stays below per-turn scanner thresholds.
-# SQLite-backed — risk scores persist across process restarts.
+# `store` backs both the per-session risk score and the per-turn history —
+# sqlite persists both across process restarts and across replicas that
+# share the same file/backend.
 # Pass conversation_id on AgentContext to scope per-conversation; falls back
 # to agent_id when omitted.
 session:
   enabled: true           # disabled by default — opt in explicitly
-  backend: sqlite
-  path: state/sessions.db
+  store:
+    name: sqlite
+    config:
+      path: state/sessions.db
   escalation_threshold: 0.70   # risk score at which the session is blocked
   window_size: 10              # sliding window of turns to evaluate
   reframe_similarity: 0.72    # bigram Jaccard threshold for reframe detection
   ttl_hours: 72               # session state retention
   on_escalation: block        # block | flag
+  on_error: fail_closed       # fail_closed | fail_open — store unreachable
 
 # ── Input scanning ────────────────────────────────────────────────────────
 scan_input:

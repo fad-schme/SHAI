@@ -18,6 +18,7 @@ def _minimal() -> dict:
         "scan_input":  {},
         "scan_output": {},
         "connectivity": {"token_secret": "test-connectivity-secret"},
+        "session_budget": {"store": {"name": "memory"}},
         "policy":      {},
         "audit_sinks": [{"name": "stdout"}],
     }

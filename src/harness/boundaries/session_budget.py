@@ -16,16 +16,34 @@ Every control counts something SHAI observes directly at its own boundary.
 Each session is identified by (agent_id, session_id). Budgets are
 per-session and are cleaned up when reset() is called (e.g. on session end).
 
+Persistence
+-----------
+Backed by a state-store adapter (see adapters/state_store/base.py) via its
+`.kv` facet, rather than a hardcoded in-process dict — same storage model as
+the crescendo accumulator. The recommended default backend is `memory`: this
+sits on the tool-call gate's pre-checks, so a networked backend here adds
+latency to every tool call in a deployment with no multi-replica need.
+
+A store failure (adapter raises) follows `on_error`: `fail_closed` (default)
+denies the call; `fail_open` allows it without recording budget state for it.
+
 Not a Scanner — called directly by the SHAI facade in check_tool_call.
 Returns (allowed: bool, reason: str | None).
 """
 from __future__ import annotations
 
+import asyncio
 import json
-import threading
-from collections import deque
+import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from harness.core.types import OnError
+
+if TYPE_CHECKING:
+    from harness.adapters.state_store.base import StateStore
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,19 +74,12 @@ class ExecutionLimits:
         )
 
 
-class _SessionState:
-    """Mutable state for one (agent_id, session_id) pair."""
+def _fingerprint(tool_name: str, args: dict[str, Any]) -> list[str]:
+    """Return a sorted list of 'key=value' strings representing this call.
 
-    def __init__(self) -> None:
-        self.steps: int = 0
-        self.prompt_calls: int = 0       # resets when prompt_id changes
-        self.current_prompt_id: str | None = None
-        # deque of arg fingerprints (frozensets of "key=value" strings)
-        self.recent_fingerprints: deque[frozenset] = deque()
-
-
-def _fingerprint(tool_name: str, args: dict[str, Any]) -> frozenset:
-    """Return a frozenset of 'key=value' strings representing this call.
+    A sorted list rather than a frozenset because the fingerprint is
+    persisted as JSON — the store never sees a frozenset. `_jaccard` below
+    reconstructs a frozenset for the actual comparison.
 
     Values are truncated to avoid unbounded memory on large payloads.
     """
@@ -79,10 +90,10 @@ def _fingerprint(tool_name: str, args: dict[str, Any]) -> frozenset:
         except Exception:
             raw = str(v)
         items.add(f"{k}={raw[:128]}")
-    return frozenset(items)
+    return sorted(items)
 
 
-def _jaccard(a: frozenset, b: frozenset) -> float:
+def _jaccard(a: list[str], b: list[str]) -> float:
     """Similarity of two call fingerprints.
 
     Two empty sets score 1.0 here, unlike the identically-named helper in
@@ -92,30 +103,56 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
     are text bigrams, where empty-vs-empty means nothing was said and no
     similarity should be claimed.
     """
-    if not a and not b:
+    fa, fb = frozenset(a), frozenset(b)
+    if not fa and not fb:
         return 1.0
-    intersection = len(a & b)
-    union = len(a | b)
+    intersection = len(fa & fb)
+    union = len(fa | fb)
     return intersection / union if union else 0.0
 
 
+def _new_state() -> dict[str, Any]:
+    """A session's starting state. A fresh value each time: `recent_fingerprints`
+    is mutated in place, so a shared template would carry one session's calls
+    into every session that starts after it."""
+    return {
+        "steps": 0,
+        "prompt_calls": 0,
+        "current_prompt_id": None,
+        "recent_fingerprints": [],
+    }
+
+
 class SessionBudget:
-    """Thread-safe session-level execution budget enforcer.
+    """State-store-backed session-level execution budget enforcer.
 
     One instance per SHAI facade, shared across all agents and sessions.
     Each session is keyed by (agent_id, session_id).
     """
 
-    def __init__(self) -> None:
-        # {(agent_id, session_id): _SessionState}
-        self._sessions: dict[tuple[str, str], _SessionState] = {}
-        self._lock = threading.Lock()
+    def __init__(self, store: StateStore, *, on_error: OnError = OnError.FAIL_CLOSED) -> None:
+        """`store` bundles `.kv` (KVStore) — see adapters/state_store/base.py.
+        Constructed and injected by the caller (core/wiring.py).
+        """
+        self._store = store   # kept for close() and test introspection
+        self._kv = store.kv
+        self._on_error = on_error
+        # Per-session asyncio locks — serialise concurrent calls on the same
+        # session without blocking unrelated sessions on the same store.
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()
+
+    async def _lock_for(self, key: str) -> asyncio.Lock:
+        async with self._locks_lock:
+            if key not in self._locks:
+                self._locks[key] = asyncio.Lock()
+            return self._locks[key]
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────────────────────────────────
 
-    def check(
+    async def check(
         self,
         agent_id: str,
         session_id: str,
@@ -137,87 +174,115 @@ class SessionBudget:
         Returns (allowed, deny_reason).  deny_reason is None when allowed=True.
         Records the call regardless of outcome (step counter always increments
         on an allowed call — denied calls are not counted toward budget).
+
+        A store failure follows `on_error` — see class docstring.
         """
         if not limits.any_enabled():
             return True, None
 
-        key = (agent_id, session_id)
-        with self._lock:
-            if key not in self._sessions:
-                self._sessions[key] = _SessionState()
-            state = self._sessions[key]
-
-            # ── Reset per-prompt counter when turn changes ─────────────────
-            if prompt_id is not None and prompt_id != state.current_prompt_id:
-                state.current_prompt_id = prompt_id
-                state.prompt_calls = 0
-
-            # ── 1. Step counter ────────────────────────────────────────────
-            if limits.max_steps is not None and state.steps >= limits.max_steps:
-                return False, (
-                    f"session budget exceeded: {state.steps} steps reached "
-                    f"max_steps={limits.max_steps}"
+        key = f"{agent_id}:{session_id}"
+        lock = await self._lock_for(key)
+        async with lock:
+            try:
+                return await self._check_locked(key, tool_name, args, limits, prompt_id)
+            except Exception:
+                log.error(
+                    "session budget store unreachable — %s",
+                    self._on_error,
+                    exc_info=True,
+                    extra={"agent_id": agent_id, "session_id": session_id},
                 )
+                if self._on_error == OnError.FAIL_OPEN:
+                    return True, None
+                return False, "session budget store unreachable — denying (fail_closed)"
 
-            # ── 2. Per-prompt fan-out ──────────────────────────────────────
-            if (
-                prompt_id is not None
-                and limits.max_tool_calls_per_prompt is not None
-                and state.prompt_calls >= limits.max_tool_calls_per_prompt
-            ):
-                return False, (
-                    f"session budget exceeded: prompt has already triggered "
-                    f"{state.prompt_calls} tool calls "
-                    f"(max_tool_calls_per_prompt={limits.max_tool_calls_per_prompt})"
-                )
+    async def _check_locked(
+        self,
+        key: str,
+        tool_name: str,
+        args: dict[str, Any],
+        limits: ExecutionLimits,
+        prompt_id: str | None,
+    ) -> tuple[bool, str | None]:
+        raw = await self._kv.get(key)
+        state = json.loads(raw) if raw is not None else _new_state()
 
-            # ── 3. Loop detection ──────────────────────────────────────────
-            if limits.loop_detection_window > 0:
-                fp = _fingerprint(tool_name, args)
-                for prev in state.recent_fingerprints:
-                    if _jaccard(fp, prev) >= limits.loop_similarity_threshold:
-                        return False, (
-                            f"loop detected: tool '{tool_name}' called with "
-                            f"near-identical arguments within the last "
-                            f"{limits.loop_detection_window} invocations "
-                            f"(similarity≥{limits.loop_similarity_threshold})"
-                        )
+        # ── Reset per-prompt counter when turn changes ─────────────────
+        if prompt_id is not None and prompt_id != state["current_prompt_id"]:
+            state["current_prompt_id"] = prompt_id
+            state["prompt_calls"] = 0
 
-            # ── Record the allowed call ────────────────────────────────────
-            state.steps += 1
-            if prompt_id is not None:
-                state.prompt_calls += 1
+        # ── 1. Step counter ────────────────────────────────────────────
+        # Deny branches below are read-only: a denied call is not counted
+        # toward budget, so nothing is written back to the store for it —
+        # only the reset of the per-prompt counter above (if any) persists,
+        # picked up on the next allowed call for this session.
+        if limits.max_steps is not None and state["steps"] >= limits.max_steps:
+            return False, (
+                f"session budget exceeded: {state['steps']} steps reached "
+                f"max_steps={limits.max_steps}"
+            )
 
-            # Update rolling fingerprint window
-            if limits.loop_detection_window > 0:
-                fp = _fingerprint(tool_name, args)
-                state.recent_fingerprints.append(fp)
-                while len(state.recent_fingerprints) > limits.loop_detection_window:
-                    state.recent_fingerprints.popleft()
+        # ── 2. Per-prompt fan-out ──────────────────────────────────────
+        if (
+            prompt_id is not None
+            and limits.max_tool_calls_per_prompt is not None
+            and state["prompt_calls"] >= limits.max_tool_calls_per_prompt
+        ):
+            return False, (
+                f"session budget exceeded: prompt has already triggered "
+                f"{state['prompt_calls']} tool calls "
+                f"(max_tool_calls_per_prompt={limits.max_tool_calls_per_prompt})"
+            )
 
-            return True, None
+        # ── 3. Loop detection ──────────────────────────────────────────
+        fp = _fingerprint(tool_name, args) if limits.loop_detection_window > 0 else None
+        if fp is not None:
+            for prev in state["recent_fingerprints"]:
+                if _jaccard(fp, prev) >= limits.loop_similarity_threshold:
+                    return False, (
+                        f"loop detected: tool '{tool_name}' called with "
+                        f"near-identical arguments within the last "
+                        f"{limits.loop_detection_window} invocations "
+                        f"(similarity≥{limits.loop_similarity_threshold})"
+                    )
 
-    def reset(self, agent_id: str, session_id: str | None = None) -> None:
+        # ── Record the allowed call ────────────────────────────────────
+        state["steps"] += 1
+        if prompt_id is not None:
+            state["prompt_calls"] += 1
+
+        if fp is not None:
+            state["recent_fingerprints"].append(fp)
+            while len(state["recent_fingerprints"]) > limits.loop_detection_window:
+                state["recent_fingerprints"].pop(0)
+
+        await self._kv.put(key, json.dumps(state).encode())
+        return True, None
+
+    async def reset(self, agent_id: str, session_id: str | None = None) -> None:
         """Clear budget state for a session or all sessions of an agent.
 
-        Call on session end or agent deregistration.
+        Call on session end or agent deregistration. Takes each session's
+        lock, so a reset cannot land in the middle of a check's
+        read-modify-write and be overwritten by it.
         """
-        with self._lock:
-            if session_id is not None:
-                self._sessions.pop((agent_id, session_id), None)
-            else:
-                keys = [k for k in self._sessions if k[0] == agent_id]
-                for k in keys:
-                    del self._sessions[k]
+        if session_id is not None:
+            keys = [f"{agent_id}:{session_id}"]
+        else:
+            keys = await self._kv.list(f"{agent_id}:")
+        for key in keys:
+            async with await self._lock_for(key):
+                await self._kv.delete(key)
 
-    def snapshot(self, agent_id: str, session_id: str) -> dict:
+    async def snapshot(self, agent_id: str, session_id: str) -> dict:
         """Return a read-only snapshot of current budget state.  Used in tests."""
-        key = (agent_id, session_id)
-        with self._lock:
-            state = self._sessions.get(key)
-            if state is None:
-                return {"steps": 0, "prompt_calls": 0}
-            return {
-                "steps":        state.steps,
-                "prompt_calls": state.prompt_calls,
-            }
+        raw = await self._kv.get(f"{agent_id}:{session_id}")
+        if raw is None:
+            return {"steps": 0, "prompt_calls": 0}
+        state = json.loads(raw)
+        return {"steps": state["steps"], "prompt_calls": state["prompt_calls"]}
+
+    async def close(self) -> None:
+        """Close the underlying store. Idempotent — called from SHAI.close()."""
+        await self._store.close()
