@@ -54,6 +54,10 @@ on_escalation actions
 ---------------------
   block — return ScanVerdict(BLOCK); scanners never run
   flag  — return ScanVerdict(WARN);  scanners never run; content passes through
+
+A store that cannot answer check() is not an escalation: check() raises
+StateStoreUnavailable and scan_input applies `session.on_error` instead, so
+`flag` softens real escalations only.
 """
 from __future__ import annotations
 
@@ -65,12 +69,17 @@ import re
 import time
 from typing import TYPE_CHECKING
 
-from harness.core.types import OnError
-
 if TYPE_CHECKING:
     from harness.adapters.state_store.base import StateStore
 
 log = logging.getLogger(__name__)
+
+
+class StateStoreUnavailable(Exception):
+    """The store could not answer `check()` — an adapter error or a damaged
+    row. Distinct from an escalation: what a failure means is the boundary's
+    decision (`session.on_error`), not the accumulator's, so it is reported
+    rather than folded into "escalated"."""
 
 # ── Weights ───────────────────────────────────────────────────────────────
 
@@ -144,7 +153,6 @@ class ThreatAccumulator:
         ttl_hours: float            = 72.0,
         on_escalation: str          = "block",
         density_threshold: float    = 0.05,
-        on_error: OnError            = OnError.FAIL_CLOSED,
     ) -> None:
         """`store` bundles `.kv` (KVStore) and `.log` (LogStore) — see
         adapters/state_store/base.py. Constructed and injected by the
@@ -159,7 +167,6 @@ class ThreatAccumulator:
         self._ttl       = ttl_hours * 3600
         self._action    = on_escalation   # "block" | "flag"
         self._density_threshold = density_threshold
-        self._on_error  = on_error
         self._next_sweep = 0.0
         # Per-session asyncio locks — serialise concurrent turns on same session
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -182,22 +189,19 @@ class ThreatAccumulator:
     async def check(self, session_id: str) -> tuple[bool, str | None]:
         """Read persisted risk score. Called BEFORE run_scan.
 
-        Returns (escalated, reason). One kv get(). A store failure (adapter
-        raises, or the row is unreadable) follows `on_error` and never raises:
-        this runs ahead of scan_input's boundary, which must always return a
-        verdict.
+        Returns (escalated, reason). One kv get(). Raises StateStoreUnavailable
+        when the store cannot answer, so the caller can tell "no escalation"
+        from "could not tell".
         """
         try:
             raw = await self._kv.get(_SESSION_PREFIX + session_id)
             if raw is None:
                 return False, None
             score = _number(json.loads(raw)["risk_score"])
-        except Exception:
-            log.error("session accumulator store unreachable — %s", self._on_error,
+        except Exception as e:
+            log.error("session accumulator store unreachable",
                       exc_info=True, extra={"session_id": session_id})
-            if self._on_error == OnError.FAIL_OPEN:
-                return False, None
-            return True, "session_accumulator: store unreachable — denying (fail_closed)"
+            raise StateStoreUnavailable from e
         if score < self._threshold:
             return False, None
         return True, (
@@ -251,7 +255,7 @@ class ThreatAccumulator:
         now  = time.time()
         h    = _hash(text)
         cats = sorted(set(categories))
-        bgrams = sorted(f"{a} {b}" for a, b in _bigrams(text))
+        bgrams = sorted(_hash(f"{a} {b}") for a, b in _bigrams(text))
 
         turn_payload = json.dumps({
             "text_hash":   h,

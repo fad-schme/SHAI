@@ -33,6 +33,7 @@ Returns (allowed: bool, reason: str | None).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -81,7 +82,10 @@ def _fingerprint(tool_name: str, args: dict[str, Any]) -> list[str]:
     persisted as JSON — the store never sees a frozenset. `_jaccard` below
     reconstructs a frozenset for the actual comparison.
 
-    Values are truncated to avoid unbounded memory on large payloads.
+    Values are truncated to avoid unbounded memory on large payloads, and each
+    item is stored as a short hash: the store is shared, durable state, and
+    argument values do not belong in it. Jaccard only asks whether two items
+    are equal, which a hash answers identically.
     """
     items: set[str] = {f"__tool__={tool_name}"}
     for k, v in args.items():
@@ -90,7 +94,7 @@ def _fingerprint(tool_name: str, args: dict[str, Any]) -> list[str]:
         except Exception:
             raw = str(v)
         items.add(f"{k}={raw[:128]}")
-    return sorted(items)
+    return sorted(hashlib.sha256(i.encode("utf-8", "ignore")).hexdigest()[:16] for i in items)
 
 
 def _jaccard(a: list[str], b: list[str]) -> float:
@@ -109,6 +113,13 @@ def _jaccard(a: list[str], b: list[str]) -> float:
     intersection = len(fa & fb)
     union = len(fa | fb)
     return intersection / union if union else 0.0
+
+
+def _key(agent_id: str, session_id: str) -> str:
+    """The budget kv key. Prefixed: a store may be shared with the
+    accumulator (`session:*`) and the rule table (`catalog:rule`), and an
+    agent named `session` must not land on another subsystem rows."""
+    return f"budget:{agent_id}:{session_id}"
 
 
 def _new_state() -> dict[str, Any]:
@@ -172,15 +183,17 @@ class SessionBudget:
                    which is the case for flows that never call scan_input.
 
         Returns (allowed, deny_reason).  deny_reason is None when allowed=True.
-        Records the call regardless of outcome (step counter always increments
-        on an allowed call — denied calls are not counted toward budget).
+        An allowed call is reserved: it counts toward the step counter,
+        fan-out and loop window until the caller either lets it stand or hands
+        it back with release() because the gate denied it. A call denied here
+        is never counted.
 
         A store failure follows `on_error` — see class docstring.
         """
         if not limits.any_enabled():
             return True, None
 
-        key = f"{agent_id}:{session_id}"
+        key = _key(agent_id, session_id)
         lock = await self._lock_for(key)
         async with lock:
             try:
@@ -260,6 +273,51 @@ class SessionBudget:
         await self._kv.put(key, json.dumps(state).encode())
         return True, None
 
+    async def release(
+        self,
+        agent_id: str,
+        session_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        limits: ExecutionLimits,
+        *,
+        prompt_id: str | None = None,
+    ) -> None:
+        """Hand back a call that check() reserved but the gate then denied.
+
+        The budget counts calls that proceed. A call refused for a missing
+        approval or a policy rule did not run, so it must not use up a step or
+        the fan-out ceiling, and it must not make the retry that follows a
+        grant look like a loop. Undoes exactly what check() recorded; never
+        raises — a store failure here leaves the call counted, the cautious
+        direction, and is logged.
+        """
+        if not limits.any_enabled():
+            return
+        key = _key(agent_id, session_id)
+        async with await self._lock_for(key):
+            try:
+                raw = await self._kv.get(key)
+                if raw is None:
+                    return
+                state = json.loads(raw)
+                state["steps"] = max(0, state["steps"] - 1)
+                if prompt_id is not None and state["current_prompt_id"] == prompt_id:
+                    state["prompt_calls"] = max(0, state["prompt_calls"] - 1)
+                if limits.loop_detection_window > 0:
+                    fp = _fingerprint(tool_name, args)
+                    for i in range(len(state["recent_fingerprints"]) - 1, -1, -1):
+                        if state["recent_fingerprints"][i] == fp:
+                            del state["recent_fingerprints"][i]
+                            break
+                await self._kv.put(key, json.dumps(state).encode())
+            except Exception:
+                log.error(
+                    "session budget release failed — call stays counted",
+                    exc_info=True,
+                    extra={"agent_id": agent_id, "session_id": session_id, "op": "release"},
+                )
+
     async def reset(self, agent_id: str, session_id: str | None = None) -> None:
         """Clear budget state for a session or all sessions of an agent.
 
@@ -268,16 +326,16 @@ class SessionBudget:
         read-modify-write and be overwritten by it.
         """
         if session_id is not None:
-            keys = [f"{agent_id}:{session_id}"]
+            keys = [_key(agent_id, session_id)]
         else:
-            keys = await self._kv.list(f"{agent_id}:")
+            keys = await self._kv.list(_key(agent_id, ""))
         for key in keys:
             async with await self._lock_for(key):
                 await self._kv.delete(key)
 
     async def snapshot(self, agent_id: str, session_id: str) -> dict:
         """Return a read-only snapshot of current budget state.  Used in tests."""
-        raw = await self._kv.get(f"{agent_id}:{session_id}")
+        raw = await self._kv.get(_key(agent_id, session_id))
         if raw is None:
             return {"steps": 0, "prompt_calls": 0}
         state = json.loads(raw)

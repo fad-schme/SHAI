@@ -25,7 +25,7 @@ from harness.audit.emitter import AuditEmitter
 from harness.boundaries._scan import ScanState, run_scan, run_tool_result_scan
 from harness.boundaries.check_tool_call import emit_deny as emit_gate_deny
 from harness.boundaries.check_tool_call import run as run_gate
-from harness.boundaries.session_accumulator import ThreatAccumulator
+from harness.boundaries.session_accumulator import StateStoreUnavailable, ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import build_secrets_provider, load_dict, read_yaml
 from harness.config.schema import HarnessConfig, SourceConfig
@@ -37,7 +37,7 @@ from harness.core.context import AgentContext
 from harness.core.errors import ConfigError, DispatchRefused, NetworkPolicyError
 from harness.core.events import AuditEvent, NetworkAuditEvent, now_ms
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
-from harness.core.types import BoundaryName, Decision, ScanStatus, Transport
+from harness.core.types import BoundaryName, Decision, OnError, ScanStatus, Transport
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, SourceRegistry, ToolSource
@@ -54,6 +54,9 @@ if TYPE_CHECKING:
     from harness.policy.engine import PolicyEngine
 
 log = logging.getLogger(__name__)
+
+# How long close() waits for an in-flight budget reset before giving up on it.
+_CLOSE_WAIT_S = 5.0
 
 
 @dataclass
@@ -236,7 +239,6 @@ class SHAI:
                 ttl_hours=config.session.ttl_hours,
                 on_escalation=config.session.on_escalation,
                 density_threshold=config.session.density_threshold,
-                on_error=config.session.on_error,
             )
             if config.session.enabled else None
         )
@@ -814,12 +816,24 @@ class SHAI:
 
         # Accumulator pre-check: escalated sessions blocked before scanners run.
         if self._threat_accumulator is not None:
-            escalated, reason = await self._threat_accumulator.check(session_id)
+            cfg = self._config.session
+            store_failed = False
+            try:
+                escalated, reason = await self._threat_accumulator.check(session_id)
+            except StateStoreUnavailable:
+                # Not an escalation, so `on_escalation` does not apply: a
+                # store that cannot answer is denied under fail_closed and
+                # ignored under fail_open, whatever `flag` says about real
+                # escalations.
+                store_failed = True
+                escalated = cfg.on_error == OnError.FAIL_CLOSED
+                reason = "session_accumulator: store unreachable — denying (fail_closed)"
             if escalated:
                 from harness.core.events import AuditEvent
-                cfg = self._config.session
-                status = ScanStatus.BLOCK if cfg.on_escalation == "block" else ScanStatus.WARN
-                decision = Decision.BLOCKED if status == ScanStatus.BLOCK else Decision.WARN
+                if store_failed or cfg.on_escalation == "block":
+                    status, decision = ScanStatus.BLOCK, Decision.BLOCKED
+                else:
+                    status, decision = ScanStatus.WARN, Decision.WARN
                 event = AuditEvent.build(
                     boundary=BoundaryName.INPUT_SCAN,
                     decision=decision,
@@ -828,7 +842,9 @@ class SHAI:
                     duration_ms=0,
                     deny_reason=reason,
                     audit_tags=self._audit_tags_for(ctx),
-                    extra={"signals": ["session_escalation"]},
+                    extra={"signals": [
+                        "session_store_unavailable" if store_failed else "session_escalation"
+                    ]},
                 )
                 await self._emitter.emit(event)
                 # Session-escalation short-circuit: clear signals, no downstream boundaries
@@ -854,16 +870,19 @@ class SHAI:
         # for consolidated turn_risk. scan_input BLOCK short-circuits still
         # need to record; do that here for BLOCK only.
         if verdict.status == ScanStatus.BLOCK:
-            if self._threat_accumulator is not None:
-                categories = [f.category for f in verdict.findings]
-                density = wiring._extract_density(verdict)
-                turn_risk = ctx.turn_signals.compute_risk()
-                await self._threat_accumulator.record(
-                    session_id, text, verdict.status.value, categories,
-                    density=density, turn_risk=turn_risk,
-                )
-            # Turn ends here — clear signals
-            ctx._clear_signals()
+            try:
+                if self._threat_accumulator is not None:
+                    categories = [f.category for f in verdict.findings]
+                    density = wiring._extract_density(verdict)
+                    turn_risk = ctx.turn_signals.compute_risk()
+                    await self._threat_accumulator.record(
+                        session_id, text, verdict.status.value, categories,
+                        density=density, turn_risk=turn_risk,
+                    )
+            finally:
+                # Turn ends here - cleared even if record() is cancelled
+                # (Invariant 7).
+                ctx._clear_signals()
 
         return verdict
 
@@ -885,7 +904,8 @@ class SHAI:
 
         # R2: session execution budget check
         limits = self._agent_limits.get(ctx.agent_id)
-        if limits is not None and limits.any_enabled():
+        reserved = limits is not None and limits.any_enabled()
+        if reserved:
             # Same session key as the threat accumulator (scan_input,
             # scan_tool_result) — one spelling of "which session is this".
             session_id = ctx.conversation_id or ctx.agent_id
@@ -901,6 +921,21 @@ class SHAI:
             if not allowed:
                 return await self._deny_pre_gate(reason, name, ctx)
 
+        decision = await self._gate_call(name, args, ctx)
+        if reserved and not decision.allowed:
+            # The budget counts calls that proceed: a call the gate refused
+            # hands its step, fan-out slot and loop-window entry back, so a
+            # retry after an approval is not read as a repeat.
+            await self._session_budget.release(
+                ctx.agent_id, ctx.conversation_id or ctx.agent_id, name, args, limits,
+                prompt_id=ctx.turn_signals.turn_id if ctx.turn_signals else None,
+            )
+        return decision
+
+    async def _gate_call(
+        self, name: str, args: dict[str, Any], ctx: AgentContext
+    ) -> GateDecision:
+        """Everything in check_tool_call after the rate limit and budget."""
         # Pre-gate: agent must be registered — deny with audit event on miss
         try:
             agent_config = self._agent_registry.get(ctx.agent_id)
@@ -1182,16 +1217,17 @@ class SHAI:
         # Accumulator record — moved from scan_input to scan_output so the
         # session score reflects the full-turn consolidated risk, not just
         # the input scan verdict.
-        if self._threat_accumulator is not None:
-            categories = [f.category for f in verdict.findings]
-            density = wiring._extract_density(verdict)
-            await self._threat_accumulator.record(
-                session_id, text, verdict.status.value, categories,
-                density=density, turn_risk=turn_risk,
-            )
-
-        # Clear the turn signal bus — the turn ends here
-        ctx._clear_signals()
+        try:
+            if self._threat_accumulator is not None:
+                categories = [f.category for f in verdict.findings]
+                density = wiring._extract_density(verdict)
+                await self._threat_accumulator.record(
+                    session_id, text, verdict.status.value, categories,
+                    density=density, turn_risk=turn_risk,
+                )
+        finally:
+            # Clear the turn signal bus - the turn ends here, cancelled or not.
+            ctx._clear_signals()
 
         return verdict
 
@@ -1250,21 +1286,38 @@ class SHAI:
         session store — an event emitted during source teardown still has
         somewhere to land.
         """
-        await self._source_registry.close()
-        await self._emitter.close()
-        if self._threat_accumulator is not None:
-            try:
-                await self._threat_accumulator.close()
-            except Exception as e:
-                # Broad catch is deliberate: shutdown continues regardless of
-                # what the session store does on the way out.
-                log.warning("threat accumulator close failed",
-                            extra={"error": str(e), "op": "close"})
         try:
-            await self._session_budget.close()
-        except Exception as e:
-            log.warning("session budget store close failed",
-                        extra={"error": str(e), "op": "close"})
+            # A deregistered agent's budget reset may still be in flight; it
+            # needs the store open, so it gets a bounded chance to finish
+            # first. Inside the try: a cancelled or stuck wait must not skip
+            # the closes below.
+            resets = list(self._pending_budget_resets.values())
+            if resets:
+                _, stuck = await asyncio.wait(resets, timeout=_CLOSE_WAIT_S)
+                for task in stuck:
+                    task.cancel()
+                if stuck:
+                    log.warning("session budget reset did not finish before close",
+                                extra={"op": "close", "pending": len(stuck)})
+            try:
+                await self._source_registry.close()
+            finally:
+                await self._emitter.close()
+        finally:
+            # The stores close whether or not the components above did.
+            if self._threat_accumulator is not None:
+                try:
+                    await self._threat_accumulator.close()
+                except Exception as e:
+                    # Broad catch is deliberate: shutdown continues regardless
+                    # of what the session store does on the way out.
+                    log.warning("threat accumulator close failed",
+                                extra={"error": str(e), "op": "close"})
+            try:
+                await self._session_budget.close()
+            except Exception as e:
+                log.warning("session budget store close failed",
+                            extra={"error": str(e), "op": "close"})
 
     async def get_source(self, name: str) -> ToolSource:
         """Return a registered source by name.

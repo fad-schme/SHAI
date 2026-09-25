@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
@@ -124,7 +125,7 @@ def _build_shai_middleware_class() -> type:
     Called once on first use so the import is lazy — this module stays
     importable without langchain installed.
     """
-    from langchain.agents.middleware import AgentMiddleware
+    from langchain.agents.middleware import AgentMiddleware, hook_config
 
     class ShaiMiddleware(AgentMiddleware):
         """SHAI security middleware for the LangChain Agent Loop (langchain>=0.3).
@@ -156,16 +157,26 @@ def _build_shai_middleware_class() -> type:
             await harness.register_tools(tools)
             return cls(harness=harness, ctx=ctx)
 
-        # ── Sync stubs — required for class inspection at create_agent() ─
-        def before_agent(self, state: Any, runtime: Any = None) -> Any: return None
+        # ── Sync hooks — agent.invoke() runs the same boundaries as ainvoke() ─
+        # Each boundary hook delegates to its async twin, so there is one
+        # implementation of the boundary logic. before_model / after_model /
+        # wrap_model_call carry no boundary; create_agent needs them defined.
+        # can_jump_to: LangChain ignores a hook's jump_to unless the hook
+        # declares its targets, and a blocked input must not reach the model.
+        @hook_config(can_jump_to=["end"])
+        def before_agent(self, state: Any, runtime: Any = None) -> Any:
+            return _run_sync(self.abefore_agent(state, runtime))
         def before_model(self, state: Any, runtime: Any = None) -> Any: return None
         def after_model(self, state: Any, runtime: Any = None) -> Any: return None
-        def after_agent(self, state: Any, runtime: Any = None) -> Any: return None
+        def after_agent(self, state: Any, runtime: Any = None) -> Any:
+            return _run_sync(self.aafter_agent(state, runtime))
         def wrap_model_call(self, request: Any, handler: Any) -> Any: return handler(request)
-        def wrap_tool_call(self, request: Any, handler: Any) -> Any: return handler(request)
+        def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+            return _run_sync(self.awrap_tool_call(request, handler))
 
         # ── Async implementations — called by ainvoke() / astream() ───────
 
+        @hook_config(can_jump_to=["end"])
         async def abefore_agent(self, state: Any, runtime: Any = None) -> Any:
             """scan_input — once before the loop starts."""
             user_text = _last_human_message(state.get("messages", []))
@@ -192,14 +203,18 @@ def _build_shai_middleware_class() -> type:
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
             """check_tool_call + scan_tool_result — around every tool call."""
-            tool_name = _tool_name_from_request(request)
-            tool_args = _tool_args_from_request(request)
+            # The call is request.tool_call — {name, args, id}. request.tool is
+            # None for a name the agent's tool list does not hold, so the name
+            # comes from the call, which the gate must see either way.
+            tool_call = request.tool_call
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
 
             async def _invoke(effective: dict[str, Any]) -> Any:
-                # The handler owns dispatch — substitute the gate's args into
-                # the request rather than calling the tool ourselves.
-                req = (_replace_args_in_request(request, effective)
-                       if effective is not tool_args else request)
+                # The handler owns dispatch — substitute the gate's args into a
+                # copy of the request rather than calling the tool ourselves.
+                req = (request if effective is tool_args
+                       else request.override(tool_call={**tool_call, "args": effective}))
                 return await _await_if_needed(handler(req))
 
             call = await execute_gated_tool_call(
@@ -227,7 +242,7 @@ def _build_shai_middleware_class() -> type:
                 return Command(update={
                     "messages": [ToolMessage(
                         content=message,
-                        tool_call_id=_tool_call_id_from_request(request),
+                        tool_call_id=request.tool_call["id"],
                     )]
                 })
             except ImportError:
@@ -305,41 +320,6 @@ def _last_ai_message(messages: list) -> str | None:
     return None
 
 
-def _tool_name_from_request(request: Any) -> str:
-    if hasattr(request, "name"):
-        return str(request.name)
-    if hasattr(request, "tool"):
-        return str(getattr(request.tool, "name", request.tool))
-    return str(request)
-
-
-def _tool_args_from_request(request: Any) -> dict:
-    for attr in ("args", "input", "kwargs"):
-        val = getattr(request, attr, None)
-        if isinstance(val, dict):
-            return val
-    return {}
-
-
-def _tool_call_id_from_request(request: Any) -> str:
-    return str(getattr(request, "id", getattr(request, "tool_call_id", "")))
-
-
-def _replace_args_in_request(request: Any, new_args: dict) -> Any:
-    try:
-        import copy
-        r = copy.copy(request)
-        for attr in ("args", "input", "kwargs"):
-            if hasattr(r, attr) and isinstance(getattr(r, attr), dict):
-                object.__setattr__(r, attr, new_args)
-                return r
-    # Best-effort mutation of an unknown LangChain request type; on failure the
-    # original request is returned unchanged.
-    except Exception:  # nosec B110
-        pass
-    return request
-
-
 def _extract_result_text(result: Any) -> str | None:
     if result is None:
         return None
@@ -376,6 +356,21 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
         except Exception:  # nosec B110
             pass
     return result
+
+
+def _run_sync(coro: Any) -> Any:
+    """Run a boundary hook to completion from a sync caller.
+
+    A caller already inside an event loop cannot asyncio.run() in its own
+    thread; the hook then runs on a worker thread's loop so the boundary still
+    executes and emits its event instead of being skipped.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 async def _await_if_needed(value: Any) -> Any:

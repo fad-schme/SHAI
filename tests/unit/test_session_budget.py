@@ -186,3 +186,43 @@ def test_each_session_starts_from_its_own_state():
     a, b = _new_state(), _new_state()
     a["recent_fingerprints"].append(["x"])
     assert b["recent_fingerprints"] == []
+
+
+# ── Release of a call the gate denied ─────────────────────────────────────
+
+async def test_release_returns_the_step(budget):
+    limits = _limits(max_steps=1)
+    await budget.check("a", "s", "search", {}, limits)
+    await budget.release("a", "s", "search", {}, limits)
+    allowed, reason = await budget.check("a", "s", "search", {}, limits)
+    assert allowed, reason
+
+
+async def test_release_returns_the_fanout_slot(budget):
+    limits = _limits(max_tool_calls_per_prompt=1)
+    await budget.check("a", "s", "search", {}, limits, prompt_id="p1")
+    await budget.release("a", "s", "search", {}, limits, prompt_id="p1")
+    allowed, reason = await budget.check("a", "s", "search", {}, limits, prompt_id="p1")
+    assert allowed, reason
+
+
+async def test_release_removes_the_call_from_the_loop_window(budget):
+    limits = _limits(loop_detection_window=5, loop_similarity_threshold=0.95)
+    args = {"q": "cats"}
+    await budget.check("a", "s", "search", args, limits)
+    await budget.release("a", "s", "search", args, limits)
+    allowed, reason = await budget.check("a", "s", "search", args, limits)
+    assert allowed, reason
+
+
+async def test_release_leaves_other_calls_counted(budget):
+    limits = _limits(loop_detection_window=5, loop_similarity_threshold=0.95)
+    await budget.check("a", "s", "search", {"q": "cats"}, limits)
+    await budget.check("a", "s", "search", {"q": "dogs"}, limits)
+    await budget.release("a", "s", "search", {"q": "dogs"}, limits)
+    allowed, _ = await budget.check("a", "s", "search", {"q": "cats"}, limits)
+    assert not allowed
+
+
+async def test_release_of_an_unknown_session_is_a_no_op(budget):
+    await budget.release("a", "never-seen", "search", {}, _limits(max_steps=1))

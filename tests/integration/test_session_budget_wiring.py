@@ -243,3 +243,25 @@ async def test_loop_detection_only_config_is_reachable(tmp_path: Path):
     dup = await h.check_tool_call("search_docs", args, ctx)
     assert not dup.allowed
     assert "loop detected" in dup.deny_reason
+
+
+# ── A call the gate denies is not counted ─────────────────────────────────
+
+async def test_gate_denied_call_does_not_use_a_step(tmp_path: Path):
+    """L1 refuses `forbidden`; max_steps=1 is still available to a real call."""
+    h   = await _harness(tmp_path, max_steps=1)
+    ctx = AgentContext(agent_id=AGENT, conversation_id="c1")
+
+    assert not (await h.check_tool_call("forbidden", {}, ctx)).allowed
+    assert (await h.check_tool_call("search_docs", {}, ctx)).allowed
+
+
+async def test_gate_denied_call_is_not_a_loop_on_retry(tmp_path: Path):
+    """A denied call, retried unchanged, is denied by the gate again — not as a loop."""
+    h   = await _harness(tmp_path, loop_detection_window=5)
+    ctx = AgentContext(agent_id=AGENT, conversation_id="c1")
+
+    first  = await h.check_tool_call("forbidden", {"x": 1}, ctx)
+    second = await h.check_tool_call("forbidden", {"x": 1}, ctx)
+    assert not first.allowed and not second.allowed
+    assert "loop detected" not in second.deny_reason

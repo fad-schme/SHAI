@@ -163,11 +163,11 @@ class ThreatAccumulatorConfig(BaseModel, frozen=True, extra="forbid"):
       block — hard stop (default); scanners never run for this turn
       flag  — WARN verdict; content passes through; audit event emitted
 
-    on_error: what happens when the configured store is unreachable.
-      fail_closed (default) — treat as escalated; matches every other
-        boundary control's default posture (Invariant-adjacent — see
-        python-conventions.md's boundary contract).
-      fail_open — treat as not escalated; content passes through.
+    on_error: what happens when the configured store cannot answer. A store
+      failure is not an escalation, so `on_escalation` does not apply to it.
+      fail_closed (default) — the turn is blocked, one audit event, signal
+        `session_store_unavailable`; holds under `on_escalation: flag` too.
+      fail_open — the turn continues to the scanners.
     """
     enabled:              bool  = False
     store:                StoreRef | None = None

@@ -51,6 +51,10 @@ def _sign_row(rule_id: str, catalog: str, payload: str, secret: bytes) -> str:
 
 
 def _verify_row(rule_id: str, catalog: str, payload: str, signature: str, secret: bytes) -> bool:
+    # compare_digest raises on a non-ASCII str and on non-str input; a stored
+    # signature is attacker-shaped data, so anything but ASCII text is simply invalid.
+    if not isinstance(signature, str) or not signature.isascii():
+        return False
     expected = _sign_row(rule_id, catalog, payload, secret)
     return hmac.compare_digest(expected, signature)
 
@@ -72,7 +76,9 @@ def _parse_row(key: str, raw: bytes, secret: bytes) -> dict | None:
         row = json.loads(raw)
         rule_id, catalog = row["rule_id"], row["catalog"]
         payload, signature = row["payload"], row["signature"]
-    except (ValueError, KeyError, TypeError):
+        if not all(isinstance(v, str) for v in (rule_id, catalog, payload)):
+            raise TypeError("signed fields must be strings")
+    except (ValueError, KeyError, TypeError, RecursionError):
         log.warning("pattern row malformed — skipped", extra={"key": key})
         return None
     if key != _key(catalog, rule_id) or not _verify_row(rule_id, catalog, payload, signature, secret):
@@ -138,6 +144,8 @@ async def apply_bundle(bundle_path, store: StateStore, secret: bytes) -> int:
         catalog   = entry["catalog"]
         payload   = entry["payload"]
         signature = entry["signature"]
+        if not all(isinstance(v, str) for v in (rule_id, catalog, payload, signature)):
+            raise ValueError(f"bundle entry has a non-string field: rule_id={rule_id!r}")
         if ":" in catalog:
             raise ValueError(f"catalog may not contain ':': {catalog!r}")
         if not _verify_row(rule_id, catalog, payload, signature, secret):
@@ -168,13 +176,15 @@ async def list_rules(store: StateStore) -> list[dict]:
             continue
         try:
             row = json.loads(raw)
+            if not all(isinstance(row[f], str) for f in ("rule_id", "catalog")):
+                raise TypeError("rule_id and catalog must be strings")
             out.append({
                 "rule_id":    row["rule_id"],
                 "catalog":    row["catalog"],
                 "version":    row["version"],
                 "created_at": row["created_at"],
             })
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, RecursionError):
             log.warning("pattern row malformed — not listed", extra={"key": key})
     out.sort(key=lambda r: (r["catalog"], r["rule_id"]))
     return out

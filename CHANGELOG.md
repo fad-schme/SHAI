@@ -12,6 +12,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`ShaiMiddleware` gates the arguments the tool receives.** It read the tool
+  name, arguments and call id from attributes a LangChain 1.x `ToolCallRequest`
+  does not carry, so the gate evaluated an empty argument set, a redact verdict
+  never reached the tool, and a denial message had no call id. It now reads
+  them from `request.tool_call` and substitutes gate-modified arguments with
+  `request.override()`.
+- **A tool call the gate denies no longer counts toward the session budget.**
+  The budget recorded each call before the gate ran, so a call refused for a
+  missing approval or a policy rule used up a step, a fan-out slot and a loop
+  window entry, and its retry after approval was denied as a loop. A denied
+  call now hands all three back.
 - **A refused `notifications/initialized` fails the MCP connect.**
   `MCPSource` logged the transport's `NetworkPolicyError` on the handshake
   notification at debug level and kept connecting; it now fails the connect
@@ -69,6 +80,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`SessionBudget.check()` and `.reset()` are now async.** Both await the
   configured store; a store failure follows the block's new `on_error`
   (`fail_closed` by default), denying the tool call rather than raising.
+- **`session.on_error` decides what an unreachable accumulator store means.**
+  `fail_closed` (default) blocks the turn and `fail_open` continues to the
+  scanners; neither depends on `session.on_escalation`, which applies to real
+  escalations only.
 
 ### Added
 - **MCP connect requests carry a connect token.** With connectivity enabled,
