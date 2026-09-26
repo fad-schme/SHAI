@@ -48,10 +48,13 @@ function's __name__, __doc__, and type annotations so framework inspection
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import contextvars
 import functools
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+import threading
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +69,64 @@ if TYPE_CHECKING:
     from harness.core.verdicts import ScanVerdict
 
 log = logging.getLogger(__name__)
+
+
+# ── The sync bridge ───────────────────────────────────────────────────────
+# Every integration's sync entry point reaches the async boundaries through
+# run_sync. All coroutines run on ONE long-lived loop: the harness's asyncio
+# primitives (audit-sink and budget locks) bind to the loop that first
+# contends for them, so a loop per call deadlocks under concurrent sync
+# callers.
+
+_bridge_lock = threading.Lock()
+_bridge_loop: asyncio.AbstractEventLoop | None = None
+_bridge_thread: threading.Thread | None = None
+
+
+def _get_bridge_loop() -> asyncio.AbstractEventLoop:
+    global _bridge_loop, _bridge_thread
+    with _bridge_lock:
+        # A dead thread (after fork the child has none) leaves a loop nothing runs.
+        if _bridge_thread is None or not _bridge_thread.is_alive():
+            loop = asyncio.new_event_loop()
+            _bridge_thread = threading.Thread(
+                target=loop.run_forever, name="shai-sync-bridge", daemon=True)
+            _bridge_thread.start()
+            _bridge_loop = loop
+        return _bridge_loop
+
+
+def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Run a coroutine to completion from a sync caller, on the shared loop.
+
+    Callable from any thread, with or without a running loop of its own. The
+    caller's context variables are visible inside the coroutine; its result or
+    exception is returned or raised here. A call made from the bridge loop
+    itself would wait on the loop it is blocking, so it raises instead.
+    """
+    loop = _get_bridge_loop()
+    if threading.current_thread() is _bridge_thread:
+        coro.close()
+        raise RuntimeError(
+            "run_sync called from the bridge loop; await the coroutine instead")
+    outcome: concurrent.futures.Future[Any] = concurrent.futures.Future()
+
+    async def _run() -> None:
+        # Every outcome, BaseException included, goes to the caller: SystemExit
+        # or KeyboardInterrupt escaping a task would stop the loop thread.
+        try:
+            result = await coro
+        except BaseException as exc:
+            outcome.set_exception(exc)
+        else:
+            outcome.set_result(result)
+
+    def _start() -> None:
+        # Runs inside the caller's copied context, so the task inherits it.
+        loop.create_task(_run())
+
+    loop.call_soon_threadsafe(_start, context=contextvars.copy_context())
+    return outcome.result()
 
 
 class ShaiTool:

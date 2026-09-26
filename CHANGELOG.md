@@ -18,6 +18,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   never reached the tool, and a denial message had no call id. It now reads
   them from `request.tool_call` and substitutes gate-modified arguments with
   `request.override()`.
+- **`ShaiMiddleware` runs all four boundaries on a sync `agent.invoke()`.**
+  The sync hooks were pass-through stubs, so a sync run scanned no input, gated
+  no tool call and scanned no result or output; they now run the same
+  boundaries as `ainvoke()` and emit the same events, including when the caller
+  already sits inside an event loop.
+- **Sync integration calls run on one shared event loop.** Each sync entry
+  point started its own loop, so parallel sync tool calls contended for the
+  file audit sink's lock from different loops and hung, and a caller already
+  inside a loop lost its context variables. The LangChain and CrewAI sync
+  paths now share one bridge that runs every coroutine on a single background
+  loop with the caller's context. The LangChain install
+  message names `langchain>=1.0`, the version `ShaiMiddleware` needs.
+- **A blocked input no longer reaches the model under `ShaiMiddleware`.** The
+  `before_agent` hooks returned `jump_to: "end"` without declaring it, so
+  LangChain ignored the jump and ran the model after `scan_input` blocked. The
+  hooks now declare `can_jump_to=["end"]`.
 - **A tool call the gate denies no longer counts toward the session budget.**
   The budget recorded each call before the gate ran, so a call refused for a
   missing approval or a policy rule used up a step, a fan-out slot and a loop

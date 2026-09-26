@@ -13,7 +13,7 @@ Pattern A — wrap_tools() for any LangChain version::
     gated = await wrap_tools([search_docs], harness=harness, ctx=ctx)
     agent = create_react_agent(llm, gated)
 
-Pattern B — ShaiMiddleware for LangChain Agent Loop (langchain>=0.3)::
+Pattern B — ShaiMiddleware for LangChain Agent Loop (langchain>=1.0)::
 
     from harness.integrations.langchain import shai_tool, ShaiMiddleware
     from langchain.agents import create_agent
@@ -40,14 +40,16 @@ LangChain is imported lazily — this module is importable without it installed.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
+import threading
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
     execute_gated_tool_call,
     invoke_tool,
+    run_sync,
     shai_tool,
 )
 
@@ -85,7 +87,7 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
         description: str = getattr(original, "description", "")
 
         def _run(self, *args: Any, **kwargs: Any) -> Any:
-            return asyncio.run(self._arun(*args, **kwargs))
+            return run_sync(self._arun(*args, **kwargs))
 
         async def _arun(self, *args: Any, **kwargs: Any) -> Any:
             tool_args = kwargs or ({"input": args[0]} if args else {})
@@ -117,7 +119,7 @@ async def wrap_tools(
     return [wrap_tool(t, harness=harness, ctx=ctx) for t in tools]
 
 
-# ── Pattern B — ShaiMiddleware (LangChain Agent Loop, langchain>=0.3) ─────
+# ── Pattern B — ShaiMiddleware (LangChain Agent Loop, langchain>=1.0) ─────
 
 def _build_shai_middleware_class() -> type:
     """Build ShaiMiddleware as a true AgentMiddleware subclass.
@@ -128,7 +130,7 @@ def _build_shai_middleware_class() -> type:
     from langchain.agents.middleware import AgentMiddleware, hook_config
 
     class ShaiMiddleware(AgentMiddleware):
-        """SHAI security middleware for the LangChain Agent Loop (langchain>=0.3).
+        """SHAI security middleware for the LangChain Agent Loop (langchain>=1.0).
 
         Wires all four SHAI scan boundaries into create_agent's hook system:
           abefore_agent   -> scan_input
@@ -165,14 +167,18 @@ def _build_shai_middleware_class() -> type:
         # declares its targets, and a blocked input must not reach the model.
         @hook_config(can_jump_to=["end"])
         def before_agent(self, state: Any, runtime: Any = None) -> Any:
-            return _run_sync(self.abefore_agent(state, runtime))
+            return run_sync(self.abefore_agent(state, runtime))
         def before_model(self, state: Any, runtime: Any = None) -> Any: return None
         def after_model(self, state: Any, runtime: Any = None) -> Any: return None
         def after_agent(self, state: Any, runtime: Any = None) -> Any:
-            return _run_sync(self.aafter_agent(state, runtime))
+            return run_sync(self.aafter_agent(state, runtime))
         def wrap_model_call(self, request: Any, handler: Any) -> Any: return handler(request)
         def wrap_tool_call(self, request: Any, handler: Any) -> Any:
-            return _run_sync(self.awrap_tool_call(request, handler))
+            # The sync handler runs the tool; a worker thread keeps it off the
+            # shared bridge loop so parallel tool calls stay parallel.
+            async def _dispatch(req: Any) -> Any:
+                return await _run_in_thread(handler, req)
+            return run_sync(self.awrap_tool_call(request, _dispatch))
 
         # ── Async implementations — called by ainvoke() / astream() ───────
 
@@ -279,20 +285,20 @@ try:
     ShaiMiddleware = _build_shai_middleware_class()
 except ImportError:
     class ShaiMiddleware:  # type: ignore[no-redef]
-        """Placeholder — requires pip install 'langchain>=0.3'."""
+        """Placeholder — requires pip install 'langchain>=1.0'."""
         name = "shai"
 
         def __init__(self, *a: Any, **kw: Any) -> None:
             raise ImportError(
-                "ShaiMiddleware requires langchain>=0.3. "
-                "pip install 'langchain>=0.3' langgraph"
+                "ShaiMiddleware requires langchain>=1.0. "
+                "pip install 'langchain>=1.0' langgraph"
             )
 
         @classmethod
         async def create(cls, tools: Any, *, harness: Any, ctx: Any) -> ShaiMiddleware:
             raise ImportError(
-                "ShaiMiddleware requires langchain>=0.3. "
-                "pip install 'langchain>=0.3' langgraph"
+                "ShaiMiddleware requires langchain>=1.0. "
+                "pip install 'langchain>=1.0' langgraph"
             )
 
 
@@ -358,19 +364,36 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
     return result
 
 
-def _run_sync(coro: Any) -> Any:
-    """Run a boundary hook to completion from a sync caller.
+async def _run_in_thread(fn: Any, *args: Any) -> Any:
+    """Run a sync tool body on a thread of its own, with the caller's context.
 
-    A caller already inside an event loop cannot asyncio.run() in its own
-    thread; the hook then runs on a worker thread's loop so the boundary still
-    executes and emits its event instead of being skipped.
+    A pool would cap concurrent bodies, and a body that runs another sync gated
+    call (an agent used as a tool) waits on a thread it needs itself. Neither the
+    bridge loop's executor, which the audit sinks write through, nor a tool pool
+    is shared.
     """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[Any] = loop.create_future()
+    ctx = contextvars.copy_context()
+
+    def settle(result: Any, exc: BaseException | None) -> None:
+        if done.done():                         # the awaiting task was cancelled
+            return
+        if exc is not None:
+            done.set_exception(exc)
+        else:
+            done.set_result(result)
+
+    def body() -> None:
+        try:
+            result = ctx.run(fn, *args)
+        except BaseException as exc:
+            loop.call_soon_threadsafe(settle, None, exc)
+        else:
+            loop.call_soon_threadsafe(settle, result, None)
+
+    threading.Thread(target=body, name="shai-tool").start()
+    return await done
 
 
 async def _await_if_needed(value: Any) -> Any:

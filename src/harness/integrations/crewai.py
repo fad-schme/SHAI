@@ -21,13 +21,13 @@ CrewAI is imported lazily.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
     make_gated_tool,
+    run_sync,
     shai_tool,
 )
 
@@ -52,7 +52,7 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
     _gated_async = make_gated_tool(tool, harness=harness, ctx=ctx, tool_name=tool_name)
 
     def _gated_sync(**kwargs: Any) -> Any:
-        return asyncio.run(_gated_async(**kwargs))
+        return run_sync(_gated_async(**kwargs))
 
     try:
         from crewai.tools import StructuredTool

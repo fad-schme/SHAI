@@ -7,6 +7,9 @@ test double happens to carry.
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +23,7 @@ from langgraph.types import Command
 from harness.core.context import AgentContext
 from harness.core.harness import SHAI
 from harness.core.types import Transport
+from harness.integrations import base
 from harness.integrations.langchain import ShaiMiddleware
 from harness.tools.tool import ArgumentRule, Tool
 
@@ -38,13 +42,15 @@ policy_rules:
 """
 
 
-async def _build(tmp_path: Path) -> tuple[SHAI, AgentContext]:
+async def _build(
+    tmp_path: Path, audit_sink: str = "  - name: stdout\n",
+) -> tuple[SHAI, AgentContext]:
     cfg = tmp_path / "h.yaml"
     cfg.write_text(
         "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
         "scan_input:\n  scanners:\n    - name: injection_scan\n"
         "scan_output:\n  scanners:\n    - name: injection_scan\n"
-        "audit_sinks:\n  - name: stdout\n"
+        "audit_sinks:\n" + audit_sink
     )
     agent = tmp_path / "pay_agent.yaml"
     agent.write_text(AGENT_YAML)
@@ -231,3 +237,103 @@ async def test_async_invoke_blocks_injected_input_before_the_model(tmp_path: Pat
 
     assert "blocked by the security policy" in result["messages"][-1].content
     assert _boundaries(events) == ["input_scan", "output_scan"]
+
+
+def test_concurrent_sync_tool_calls_complete_with_the_file_audit_sink(tmp_path: Path):
+    """Parallel tool calls on a sync agent run boundaries from several threads
+    at once; the file sink holds an asyncio.Lock across an executor await."""
+    log = (tmp_path / "audit.jsonl").as_posix()
+    h, ctx = asyncio.run(_build(
+        tmp_path, audit_sink=f"  - name: file\n    config:\n      path: {log}\n"))
+    mw = ShaiMiddleware(harness=h, ctx=ctx)
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        for _ in range(10):
+            try:
+                mw.wrap_tool_call(_request("pay", {"amount": 1, "to": "a"}),
+                                  lambda r: ToolMessage(content="ok", tool_call_id="c"))
+            except BaseException as e:  # noqa: BLE001 - surfaced by the assert below
+                errors.append(e)
+
+    threads = [threading.Thread(target=work, daemon=True) for _ in range(4)]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + 60
+    for t in threads:
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    assert not any(t.is_alive() for t in threads), "sync tool calls deadlocked"
+    assert errors == []
+    gate_events = [line for line in Path(log).read_text().splitlines()
+                   if '"boundary": "tool_call_gate"' in line]
+    assert len(gate_events) == 40
+
+
+def test_sync_tool_bodies_that_call_gated_tools_do_not_starve_the_audit_sink(tmp_path: Path):
+    """As many concurrent tool bodies as asyncio's default executor has workers,
+    each making a nested gated call, must not exhaust the pool the file sink
+    writes through."""
+    workers = min(32, (os.cpu_count() or 1) + 4)
+    log = (tmp_path / "audit.jsonl").as_posix()
+    h, ctx = asyncio.run(_build(
+        tmp_path, audit_sink=f"  - name: file\n    config:\n      path: {log}\n"))
+    mw = ShaiMiddleware(harness=h, ctx=ctx)
+    all_holding = threading.Barrier(workers)
+
+    def tool_body(_request: Any) -> ToolMessage:
+        all_holding.wait(timeout=30)
+        base.run_sync(h.check_tool_call("pay", {"amount": 1, "to": "a"}, ctx))
+        return ToolMessage(content="ok", tool_call_id="c")
+
+    def call() -> None:
+        mw.wrap_tool_call(_request("pay", {"amount": 1, "to": "a"}), tool_body)
+
+    threads = [threading.Thread(target=call, daemon=True) for _ in range(workers)]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + 60
+    for t in threads:
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    assert not any(t.is_alive() for t in threads), "nested gated calls deadlocked"
+
+
+def test_sync_tool_bodies_that_run_another_sync_gated_call_are_not_capped(tmp_path: Path):
+    """40 tool bodies (more than any thread pool would hold) run at once, each
+    running a nested sync gated call, as an agent used as a tool does."""
+    bodies = 40
+    log = (tmp_path / "audit.jsonl").as_posix()
+    h, ctx = asyncio.run(_build(
+        tmp_path, audit_sink=f"  - name: file\n    config:\n      path: {log}\n"))
+    mw = ShaiMiddleware(harness=h, ctx=ctx)
+    all_running = threading.Barrier(bodies)
+    errors: list[BaseException] = []
+
+    def inner(_request: Any) -> ToolMessage:
+        return ToolMessage(content="in", tool_call_id="c")
+
+    def outer(_request: Any) -> ToolMessage:
+        all_running.wait(timeout=30)
+        mw.wrap_tool_call(_request_for_pay(), inner)
+        return ToolMessage(content="out", tool_call_id="c")
+
+    def call() -> None:
+        try:
+            mw.wrap_tool_call(_request_for_pay(), outer)
+        except BaseException as e:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(e)
+
+    threads = [threading.Thread(target=call, daemon=True) for _ in range(bodies)]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + 60
+    for t in threads:
+        t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    assert not any(t.is_alive() for t in threads), "nested sync gated calls deadlocked"
+    assert errors == []
+
+
+def _request_for_pay() -> ToolCallRequest:
+    return _request("pay", {"amount": 1, "to": "a"})

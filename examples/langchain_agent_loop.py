@@ -1,6 +1,6 @@
 """langchain_agent_loop.py — SHAI + LangChain Agent Loop (create_agent)
 
-Uses the LangChain Agent Loop (langchain>=0.3) with ShaiMiddleware.
+Uses the LangChain Agent Loop (langchain>=1.0) with ShaiMiddleware.
 SHAI wires into the official middleware API — no manual loop needed.
 
   ShaiMiddleware hooks:
@@ -14,7 +14,7 @@ Configuration:
 
 Install:
     pip install shai-harness
-    pip install "langchain>=0.3" langgraph langchain-ollama langchain-core
+    pip install "langchain>=1.0" langgraph langchain-ollama langchain-core
 
 Run:
     python examples/langchain_agent_loop.py
@@ -100,7 +100,7 @@ async def main() -> None:
         from langchain_ollama import ChatOllama
     except ImportError as e:
         print(f"\nMissing dependency: {e}")
-        print('Install:  pip install "langchain>=0.3" langgraph langchain-ollama langchain-core')
+        print('Install:  pip install "langchain>=1.0" langgraph langchain-ollama langchain-core')
         sys.exit(1)
 
     from harness import SHAI
