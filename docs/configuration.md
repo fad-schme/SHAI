@@ -433,7 +433,7 @@ A malformed value (a non-list `owners`, an unparseable date, an unknown `delegat
 Declare inline. Each subagent must be a **strict subset** of the parent's capabilities — narrower `allowed_tags`, narrower `allowed_tool_names`. Validated at `load_agent()` time; a config that gives a subagent a tag the parent doesn't have is a startup error.
 
 ```yaml
-subagents:
+sub_agents:
   - id: researcher
     allowed_tool_names: [search_docs]
     allowed_tags: [read]

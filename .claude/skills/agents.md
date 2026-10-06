@@ -15,6 +15,19 @@ id: orchestrator_agent          # snake_case: ^[a-z][a-z0-9_]*$, unique within h
 display_name: "Orchestrator"    # optional, human-readable
 version: "1.0.0"                # optional
 
+# Optional NHI profile: stored and returned by maintenance.registered_agents(),
+# never enforced. Omit any or all.
+description: "Triages inbound mail"
+owners: [alice@example.com]
+sponsors: [bob@example.com]
+environment: production
+review_due: 2026-12-01
+delegation_mode: autonomous     # or on_behalf_of_user
+credential_refs:                # names only, never secret values
+  - name: outlook_token
+    expires_at: 2027-01-15
+    rotated_at: 2026-07-01
+
 # Tools this agent may call — hard gate L1, cannot be overridden by policy
 allowed_tool_names:
   - search_docs
