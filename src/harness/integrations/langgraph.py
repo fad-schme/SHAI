@@ -45,6 +45,7 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from harness.core.errors import AuditEmissionError
 from harness.integrations.base import (  # shai_tool re-exported
     execute_gated_tool_call,
     invoke_tool,
@@ -144,6 +145,11 @@ class HarnessToolNode:
                     tool_args=args,
                     invoke=invoke,
                 )
+            except AuditEmissionError:
+                # Every sink failed: decisions can no longer be recorded, so the
+                # run stops here rather than continuing with the sink's error
+                # text handed to the model as a tool result.
+                raise
             except Exception as exc:
                 # One failing tool must not abort the rest of the batch.
                 log.error("tool execution error",

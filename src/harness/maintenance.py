@@ -98,8 +98,19 @@ class Maintenance:
         things under near-identical names. This one reflects live state — an
         agent appears after `load_agent()` and disappears after
         `deregister_agent()`, whatever is on disk.
+
+        Each definition is a deep copy: the gate reads the stored one, so a
+        returned list that could be edited in place would edit L1.
         """
-        return self._h._agent_registry.list()
+        return [c.model_copy(deep=True) for c in self._h._agent_registry.list()]
+
+    def registered_agent(self, agent_id: str) -> AgentConfig:
+        """One registered agent's full definition, as `registered_agents()` holds it.
+
+        A deep copy, for the reason given there. Raises AgentNotRegisteredError
+        for an id that is not registered.
+        """
+        return self._h._agent_registry.get(agent_id).model_copy(deep=True)
 
     # ── Kill switch ───────────────────────────────────────────────────────
 

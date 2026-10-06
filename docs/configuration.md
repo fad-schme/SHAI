@@ -241,7 +241,7 @@ activate, and nothing else.
 
 Rules are evaluated in declaration order. **First match wins.** No match → implicit `allow`.
 
-For the full match-field vocabulary (`tool_names`, `tool_tags`, `transport`, `agent_ids`, `sub_agent_ids`, `source_tags`, and the `any`/`all`/`not` combinators), see [`.claude/skills/policy.md`](../.claude/skills/policy.md).
+For the full match-field vocabulary (`tool_names`, `tool_tags`, `transport`, `agent_ids`, `sub_agent_ids`, and the `any`/`all`/`not` combinators), see [`.claude/skills/policy.md`](../.claude/skills/policy.md).
 
 #### Forbidden tag combinations
 
@@ -409,6 +409,25 @@ limits:
   max_tool_calls_per_prompt: 5
 ```
 
+### Non-human-identity profile (optional)
+
+An agent definition can carry the data an identity provider or NHI inventory needs. All fields are optional, and SHAI applies no rule to them: they are stored with the definition and returned by `harness.maintenance.registered_agents()` (all agents) and `harness.maintenance.registered_agent(agent_id)` (one agent; an unregistered id raises `AgentNotRegisteredError`), so an agent without them is gated and audited exactly as an agent with them.
+
+```yaml
+description: "Answers support tickets from the knowledge base"
+owners: [alice@example.com]
+sponsors: [bob@example.com]
+environment: production
+review_due: 2026-12-01
+delegation_mode: autonomous          # or on_behalf_of_user
+credential_refs:                     # names only, never secret values
+  - name: slack_bot_token
+    expires_at: 2027-01-15
+    rotated_at: 2026-07-01
+```
+
+A malformed value (a non-list `owners`, an unparseable date, an unknown `delegation_mode`, a credential reference without a `name`) is rejected when the file is parsed. Changing only these fields of a loaded agent is applied with `reload_agent()`, like any other definition change.
+
 ### Subagents
 
 Declare inline. Each subagent must be a **strict subset** of the parent's capabilities — narrower `allowed_tags`, narrower `allowed_tool_names`. Validated at `load_agent()` time; a config that gives a subagent a tag the parent doesn't have is a startup error.
@@ -444,8 +463,9 @@ match:
   transport: [mcp]                  # local | mcp | skill
   agent_ids: [orchestrator]
   sub_agent_ids: [researcher]
-  source_tags: [tier_a]
 ```
+
+`source_tags` matches sources and belongs in `policy.source_rules`.
 
 **Combinators** — `any`, `all`, `not`:
 

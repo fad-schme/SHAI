@@ -111,7 +111,8 @@ credentials:
 ### `ConfigError: agent config validation failed: policy_rules → X → match → source_name`
 
 `source_name` is not a valid match field in `RuleMatchConfig`.
-Valid fields: `tool_tags`, `tool_names`, `transport`, `agent_ids`, `sub_agent_ids`, `source_tags`.
+Valid fields: `tool_tags`, `tool_names`, `transport`, `agent_ids`, `sub_agent_ids`.
+`source_tags` matches sources and belongs in `policy.source_rules`.
 
 ```yaml
 # Wrong

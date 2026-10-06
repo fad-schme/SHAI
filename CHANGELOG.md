@@ -12,6 +12,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **An agent rule that names `source_tags` is rejected at load.** The tool
+  matcher does not read `source_tags`, so such a rule matched every tool call:
+  a deny rule denied all of them. `load_agent()` now fails with the rule id, for
+  the agent and its sub-agents, at any depth of `any` / `all` / `not`; source
+  rules in `policy.source_rules` keep the field.
+- **`HarnessToolNode` stops on a total audit outage.** It caught
+  `AuditEmissionError` like a tool failure, handed the sink's error text to the
+  model and carried on with the batch. The error now propagates; every other
+  tool exception is still isolated per call.
+- **A recovered argument scanner is probed again under steady traffic.** Gate
+  layer 7 recorded every call it denied for an open circuit breaker as another
+  scanner failure, which restarted the breaker's recovery clock; while calls
+  arrived faster than the recovery window, every `sensitive` tool stayed denied
+  after the scanner was healthy. A denial for an open breaker now changes
+  nothing, and the first call after the window probes the scanner.
 - **`ShaiMiddleware` gates the arguments the tool receives.** It read the tool
   name, arguments and call id from attributes a LangChain 1.x `ToolCallRequest`
   does not carry, so the gate evaluated an empty argument set, a redact verdict
@@ -102,6 +117,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   escalations only.
 
 ### Added
+- **Agent definitions can carry a non-human-identity profile.** Optional
+  `description`, `owners`, `sponsors`, `environment`, `review_due`,
+  `delegation_mode` and `credential_refs` (names and dates, never secret values)
+  are stored with the definition and returned by
+  `maintenance.registered_agents()` and the new `maintenance.registered_agent(id)`,
+  ready for an identity provider or NHI inventory. Nothing requires or reads them: gating is identical with or without.
 - **MCP connect requests carry a connect token.** With connectivity enabled,
   the SSE open, `initialize`, `notifications/initialized` and `tools/list`
   each carry a token minted from the source's onboarding approval, re-checked

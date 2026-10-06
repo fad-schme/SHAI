@@ -295,11 +295,17 @@ async def run(
                 return canonicalize_config(text, normalization).views
             return [text]
 
+        class _BreakerOpen(Exception):
+            """The scanner was skipped because its breaker is open. A skip is
+            not a scanner failure: recording it as one restarts the breaker's
+            recovery clock, so under steady traffic a recovered scanner would
+            never be probed."""
+
         async def _guarded_arg_scan(configured: ConfiguredScanner, views: list[str]) -> Any:
             scanner = configured.scanner
             breaker = _state.get_breaker(scanner)
             if breaker.is_open:
-                raise RuntimeError(f"circuit breaker open for scanner '{scanner.name}'")
+                raise _BreakerOpen(f"circuit breaker open for scanner '{scanner.name}'")
             result = await _scan_views(scanner, views, ctx)
             breaker.record_success()
             return result
@@ -329,7 +335,8 @@ async def run(
                         views = _arg_views(text)
                     result = await _guarded_arg_scan(configured, views)
                 except Exception as exc:
-                    _state.get_breaker(scanner).record_failure()
+                    if not isinstance(exc, _BreakerOpen):
+                        _state.get_breaker(scanner).record_failure()
                     log.error(
                         "arg scanner failed — denying (fail-closed)",
                         extra={"scanner": scanner.name, "tool": name,

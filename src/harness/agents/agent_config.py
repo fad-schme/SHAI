@@ -6,9 +6,10 @@ principle of least privilege at load_agent() time, not at gate time.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from datetime import date
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from harness.core.errors import SubAgentNotDeclaredError
 
@@ -67,6 +68,38 @@ class RuleConfig(BaseModel, frozen=True, extra="forbid"):
         return self
 
 
+def _names_source_tags(match: Any) -> bool:
+    """True when a match, or any any/all/not expression inside it, names source_tags."""
+    # Inline expressions are parsed the way the matcher parses them
+    # (RuleMatchConfig accepts `not` and `not_`), so no spelling slips past.
+    if isinstance(match, dict):
+        try:
+            match = RuleMatchConfig.model_validate(match)
+        except ValidationError:
+            return False        # not a match expression; the matcher rejects it
+    if not isinstance(match, RuleMatchConfig):
+        return False
+    if match.source_tags:
+        return True
+    nested = [*match.any, *match.all]
+    if match.not_ is not None:
+        nested.append(match.not_)
+    return any(_names_source_tags(n) for n in nested)
+
+
+def _reject_source_scoped(rules: list[RuleConfig], owner: str) -> None:
+    # _match_tool never reads source_tags, so a tool rule naming it has nothing
+    # to compare against and matches every tool call: a narrowing rule that
+    # widens. Source rules (policy.source_rules) are where the field belongs.
+    for rule in rules:
+        if _names_source_tags(rule.match):
+            raise ValueError(
+                f"{owner}policy_rules[{rule.id!r}]: match field source_tags is "
+                f"source-scoped and cannot match a tool call. Use it in "
+                f"policy.source_rules."
+            )
+
+
 class SubAgentConfig(BaseModel, frozen=True, extra="forbid"):
     """One subagent declared inside a parent's agent-xx.yaml."""
     id:                 str
@@ -88,11 +121,30 @@ class SubAgentConfig(BaseModel, frozen=True, extra="forbid"):
         return v
 
 
+class CredentialRef(BaseModel, frozen=True, extra="forbid"):
+    """A credential an agent uses, referenced by name. Never holds a secret value."""
+    name:       str = Field(min_length=1)
+    expires_at: date | None = None
+    rotated_at: date | None = None
+
+
 class AgentConfig(BaseModel, frozen=True, extra="forbid"):
     """Complete agent profile loaded from agent-xx.yaml."""
     id:                 str
     display_name:       str | None = None
     version:            str | None = None
+
+    # Non-human-identity profile. Declarative metadata for an operator's NHI
+    # inventory or identity provider: stored and returned by
+    # maintenance.registered_agents(), never read by a boundary, the gate or
+    # the registry. Every field is optional; none changes a decision.
+    description:     str | None = None
+    owners:          list[str] = Field(default_factory=list)
+    sponsors:        list[str] = Field(default_factory=list)
+    environment:     str | None = None
+    review_due:      date | None = None
+    delegation_mode: Literal["autonomous", "on_behalf_of_user"] | None = None
+    credential_refs: list[CredentialRef] = Field(default_factory=list)
 
     allowed_tool_names: list[str]
     allowed_tags:       list[str]
@@ -145,6 +197,13 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
         if v not in _VALID_LOG_LEVELS:
             raise ValueError(f"log_level must be one of {_VALID_LOG_LEVELS}, got: {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def _tool_rules_are_tool_scoped(self) -> AgentConfig:
+        _reject_source_scoped(self.policy_rules, "")
+        for sub in self.sub_agents:
+            _reject_source_scoped(sub.policy_rules, f"sub_agent '{sub.id}': ")
+        return self
 
     @model_validator(mode="after")
     def _validate_sub_agents(self) -> AgentConfig:

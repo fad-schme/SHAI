@@ -33,8 +33,10 @@ match:
   tool_names: [search_docs, fetch_doc]  # tool name is ANY of these
   agent_ids: [orchestrator]       # agent_id is ANY of these
   sub_agent_ids: [research_sub]   # sub_agent_id is ANY of these
-  source_tags: [external_mcp]     # source has ANY of these tags
 ```
+
+`source_tags` matches sources and belongs in `policy.source_rules` (see
+`suppress` below).
 
 **Multiple fields = AND:**
 ```yaml

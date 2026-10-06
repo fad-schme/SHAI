@@ -650,3 +650,98 @@ async def test_l7_cancellation_propagates_after_emitting():
     assert len(sink.events) == 1
     assert sink.events[0].decision == Decision.DENY
     assert "cancelled" in sink.events[0].deny_reason
+
+
+# ── L7: an open breaker's denial is not a scanner failure ────────────────
+#
+# A call denied because the scanner's breaker is open used to be recorded as one
+# more failure, which restarted the recovery clock: while calls kept arriving
+# faster than the window, the breaker never reached its probe state and a
+# scanner that had recovered stayed unreachable.
+
+from harness.adapters.scanners.base import ScanResult  # noqa: E402
+from harness.boundaries._scan import ScanState  # noqa: E402
+
+_WINDOW = 1.5
+
+
+class _SwitchScanner:
+    name = "switch_scanner"
+
+    def __init__(self) -> None:
+        self.fail = True
+
+    async def scan(self, text, ctx):
+        if self.fail:
+            raise RuntimeError("scanner down")
+        return ScanResult(findings=[])
+
+
+class _L7Breaker:
+    """A layer-7 gate over one switchable scanner, a shared ScanState, and a
+    controllable breaker clock."""
+
+    def __init__(self, monkeypatch) -> None:
+        self.now = 1000.0
+        monkeypatch.setattr("harness.adapters.circuit_breaker.time.monotonic", lambda: self.now)
+        self.scanner = _SwitchScanner()
+        self.state = ScanState()
+        self.breaker = self.state.get_breaker(self.scanner)
+        self.breaker._failure_threshold = 2
+        self.breaker._base_recovery = self.breaker._current_recovery = _WINDOW
+        self.breaker._max_recovery = 10 * _WINDOW
+        self.agent = make_agent(allowed_tool_names=["send_email"],
+                                allowed_tags=["read", "internal", "external_write", "sensitive"])
+        self.tools, self.sink, self.emitter, self.policy = setup()
+
+    async def call(self):
+        return await check_tool_call.run(
+            "send_email", {"body": "hello"}, AgentContext(agent_id="test_agent"),
+            agent_config=self.agent, tools=self.tools, policy=self.policy,
+            arg_scanners=[ConfiguredScanner(scanner=self.scanner)],
+            emitter=self.emitter, tenant_id="test",
+            scan_args_for_tags=frozenset({"sensitive"}),
+            scan_state=self.state,
+        )
+
+
+async def test_l7_a_call_denied_by_an_open_breaker_leaves_the_breaker_untouched(monkeypatch):
+    g = _L7Breaker(monkeypatch)
+    for _ in range(2):
+        assert (await g.call()).allowed is False        # two real failures open it
+    assert g.breaker.is_open
+    count, opened_at = g.breaker._failure_count, g.breaker._opened_at
+
+    g.now += 0.4
+    events_before = len(g.sink.events)
+    assert (await g.call()).allowed is False            # denied for the open breaker
+    assert len(g.sink.events) == events_before + 1      # one gate event, still fail-closed
+    assert (g.breaker._failure_count, g.breaker._opened_at) == (count, opened_at)
+
+
+async def test_l7_a_recovered_scanner_is_probed_after_the_window_despite_steady_traffic(monkeypatch):
+    g = _L7Breaker(monkeypatch)
+    for _ in range(2):
+        await g.call()                                  # open at t0
+    g.scanner.fail = False                              # the scanner recovers
+
+    allowed_at = None
+    for _ in range(8):                                  # a call every 0.4s, window 1.5s
+        g.now += 0.4
+        if (await g.call()).allowed:
+            allowed_at = g.now
+            break
+
+    assert allowed_at is not None, "breaker never reached its probe state under steady traffic"
+    assert allowed_at - 1000.0 >= _WINDOW
+    assert not g.breaker.is_open
+
+
+async def test_l7_a_failed_half_open_probe_reopens_with_the_doubled_timeout(monkeypatch):
+    g = _L7Breaker(monkeypatch)
+    for _ in range(2):
+        await g.call()
+    g.now += _WINDOW + 0.1                              # window elapsed: next call is the probe
+    assert (await g.call()).allowed is False            # scanner still down
+    assert g.breaker.is_open
+    assert g.breaker._current_recovery == 2 * _WINDOW

@@ -148,3 +148,96 @@ def test_rule_deny_with_reason_ok():
     }])
     a = AgentConfig.model_validate(data)
     assert a.policy_rules[0].reason == "not allowed"
+
+
+# ── A tool rule cannot name a source-scoped field ────────────────────────
+#
+# _match_tool never reads source_tags, so a rule whose match names only it has
+# nothing to compare and matches every tool call. Rejected at load, the mirror
+# of PolicyConfig rejecting tool-scoped fields on a source rule.
+
+_DENY_BY_SOURCE = {"source_tags": ["external"]}
+
+
+def _rule(match: dict) -> dict:
+    return {"id": "by_source", "match": match, "action": "deny", "reason": "no"}
+
+
+@pytest.mark.parametrize("match", [
+    _DENY_BY_SOURCE,
+    {"tool_names": ["search_docs"], "source_tags": ["external"]},
+    {"any": [{"source_tags": ["external"]}]},
+    {"all": [{"tool_tags": ["read"]}, {"source_tags": ["external"]}]},
+    {"not": {"source_tags": ["external"]}},
+    {"any": [{"not": {"source_tags": ["external"]}}]},
+    {"not_": {"source_tags": ["external"]}},
+    {"any": [{"not_": {"source_tags": ["external"]}}]},
+    {"all": [{"tool_tags": ["read"]}, {"not_": {"source_tags": ["external"]}}]},
+], ids=["top-level", "with-tool-field", "any", "all", "not", "nested",
+        "not_-top-level", "not_-in-any", "not_-in-all"])
+def test_agent_rule_naming_source_tags_is_rejected(match):
+    with pytest.raises(ValidationError, match="by_source.*source_tags"):
+        AgentConfig.model_validate(_minimal(policy_rules=[_rule(match)]))
+
+
+def test_sub_agent_rule_naming_source_tags_is_rejected():
+    sub = {"id": "child", "allowed_tool_names": ["search_docs"], "allowed_tags": ["read"],
+           "policy_rules": [_rule(_DENY_BY_SOURCE)]}
+    with pytest.raises(ValidationError, match="child.*by_source.*source_tags"):
+        AgentConfig.model_validate(_minimal(sub_agents=[sub]))
+
+
+def test_agent_rules_using_only_tool_fields_still_load():
+    match = {"tool_names": ["search_docs"], "tool_tags": ["read"], "transport": ["local"],
+             "agent_ids": ["test_agent"], "sub_agent_ids": ["child"]}
+    a = AgentConfig.model_validate(_minimal(policy_rules=[_rule(match)]))
+    assert a.policy_rules[0].id == "by_source"
+
+
+# ── NHI profile: optional metadata, never enforced ────────────────────────
+
+_PROFILE = {
+    "description": "Answers support tickets",
+    "owners": ["alice@example.com"],
+    "sponsors": ["bob@example.com"],
+    "environment": "production",
+    "review_due": "2026-12-01",
+    "delegation_mode": "on_behalf_of_user",
+    "credential_refs": [
+        {"name": "slack_bot_token", "expires_at": "2027-01-15", "rotated_at": "2026-07-01"},
+        {"name": "db_password"},
+    ],
+}
+
+
+def test_profile_defaults_when_absent():
+    a = AgentConfig.model_validate(_minimal())
+    assert a.description is None and a.environment is None
+    assert a.review_due is None and a.delegation_mode is None
+    assert a.owners == [] and a.sponsors == [] and a.credential_refs == []
+
+
+def test_profile_fields_parse():
+    a = AgentConfig.model_validate(_minimal(**_PROFILE))
+    assert a.owners == ["alice@example.com"]
+    assert a.review_due.isoformat() == "2026-12-01"
+    assert a.delegation_mode == "on_behalf_of_user"
+    assert [c.name for c in a.credential_refs] == ["slack_bot_token", "db_password"]
+    assert a.credential_refs[0].expires_at.isoformat() == "2027-01-15"
+    assert a.credential_refs[1].expires_at is None
+
+
+@pytest.mark.parametrize("bad", [
+    {"owners": "alice@example.com"},
+    {"sponsors": "bob"},
+    {"review_due": "next quarter"},
+    {"delegation_mode": "semi_autonomous"},
+    {"credential_refs": [{"expires_at": "2027-01-15"}]},
+    {"credential_refs": [{"name": ""}]},
+    {"credential_refs": [{"name": "t", "expires_at": "soon"}]},
+    {"credential_refs": [{"name": "t", "secret": "hunter2"}]},
+    {"unknown_profile_key": "x"},
+])
+def test_malformed_profile_rejected(bad):
+    with pytest.raises(ValidationError):
+        AgentConfig.model_validate(_minimal(**bad))
