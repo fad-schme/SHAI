@@ -42,7 +42,7 @@ connectivity:
 `enabled` key to switch one off — a config that names one is rejected. What an
 operator chooses is which scanners run and what each one does with a finding.
 
-All four scan boundaries share the same shape:
+All five scan boundaries share the same shape:
 
 ```yaml
 scan_input:
@@ -343,8 +343,10 @@ Catches crescendo attacks — sessions where each turn stays under threshold but
 ```yaml
 session:
   enabled: true                          # off by default
-  backend: sqlite
-  path: state/sessions.db
+  store:
+    name: sqlite
+    config:
+      path: state/sessions.db
   escalation_threshold: 0.70
   window_size: 10
   on_escalation: block                   # block | flag

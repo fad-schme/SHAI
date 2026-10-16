@@ -81,6 +81,16 @@ document-tuned catalog (`patterns_for_doc.yaml`).
 **Limits:** detection covers the catalog patterns and the heuristic signals;
 the signed pattern DB extends the catalogs over time.
 
+- Normalization separates a payload glued to its carrier text where the join
+  is lower→upper, digit→upper, acronym→capitalised word, or digit→letter.
+- `instruction_override` covers sixteen languages beyond `fr`/`es`/`de`/`zh`;
+  the other rule kinds cover those four. False-positive rates in the sixteen
+  are unmeasured, so a deployment with significant non-English traffic reviews
+  its block rates.
+- Tool-result content that `scan_tool_result` allows keeps that verdict
+  wherever the application places it. The application decides whether
+  retrieved text enters the system position.
+
 ---
 
 ### ASI02 — Tool Misuse and Exploitation
@@ -106,6 +116,11 @@ raises `DispatchRefused` on refusal. The gate, token check and
 `scan_tool_result` events join on one `token_id`.
 
 **Limits:** the operator's config defines what each agent may do, and the gate enforces exactly that.
+
+- `user_origin` on an argument denies a call whose value entered the turn
+  through a tool result, so the operator declares it where the user names the
+  value (a recipient, a grantee). On an argument the agent resolves from
+  something it read, it denies ordinary work.
 
 ---
 
@@ -211,7 +226,7 @@ fan-out, feedback loops, repeated identical actions.
 detection denies a call whose fingerprint is within
 `loop_similarity_threshold` of the last `loop_detection_window` calls.
 `RateLimiter` provides per-tool and per-window call caps. Revocation denies one
-agent at the pre-gate — in process or via `shai agent revoke` — while the
+agent at the pre-gate — in process or via `shai agents revoke` — while the
 others keep running, persists across restarts, and takes effect within
 `cache_ttl_seconds`. Every decision emits an audit event, so a cascade can be
 traced.
@@ -253,3 +268,9 @@ operator's config (see ASI02). Revocation stops a registered agent's actions
 `boundary`, `decision`, `adapters`, and structured metadata. Every event is
 HMAC-SHA256 signed with a single operator-supplied secret. Redaction is applied
 to text before it leaves the scan boundary.
+
+**Limits:** `audit_signing.secret` is one key. `AuditEvent` carries no key
+identifier and `shai audit verify` takes one secret, so a retired key verifies
+the segment it signed; operators rotate at a file boundary and keep each
+retired key with its segment. The file sink retains `max_bytes` ×
+`backup_count` of records (default 100 MB × 10).

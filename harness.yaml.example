@@ -79,7 +79,7 @@ scan_file:
     - name: jailbreak_scan
     - name: regex_pii
 
-# ── Tool result scanning (indirect injection) — T6 ───────────────────────
+# ── Tool result scanning (indirect injection) ───────────────────────
 scan_tool_result:
   block_at: high
   action: block       # block | alert
@@ -139,7 +139,7 @@ audit_sinks:
   #   config:
   #     path: ./logs/audit.jsonl
 
-# ── Audit signing — T8 ───────────────────────────────────────────────────
+# ── Audit signing ───────────────────────────────────────────────────
 # HMAC-SHA256 signs every audit event. secret:// resolved from env var.
 audit_signing:
   enabled: false

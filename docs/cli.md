@@ -53,7 +53,7 @@ shai validate
 #   source_rules:  0
 #   audit_sinks:   ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
-#   session:       enabled=True  backend=sqlite  threshold=0.7  window=50  on_escalation=block
+#   session:       enabled=True  store=sqlite  threshold=0.7  window=50  on_escalation=block
 #   boundaries:
 #     scan_input:       always on  block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
 #     scan_file:        always on  block_at=high   scanners=['injection_scan', 'jailbreak_scan', 'regex_pii']

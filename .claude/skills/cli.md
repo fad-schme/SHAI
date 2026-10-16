@@ -85,12 +85,13 @@ shai validate
 #   source_rules:  1
 #   audit_sinks:   ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
-#   session:       enabled=True  backend=sqlite  threshold=0.7  window=50  on_escalation=block
+#   session:       enabled=True  store=sqlite  threshold=0.7  window=50  on_escalation=block
 #   boundaries:
-#     scan_input:       enabled=True   block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
-#     scan_output:      enabled=True   block_at=high   scanners=['regex_pii']
-#     scan_tool_result: enabled=True   block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
-#     scan_file:        enabled=False
+#     scan_input:       always on  block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
+#     scan_file:        always on  block_at=high   scanners=['injection_scan', 'jailbreak_scan', 'regex_pii']
+#     scan_output:      always on  block_at=high   scanners=['regex_pii']
+#     scan_tool_result: always on  block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
+#     scan_mcp_metadata: always on  block_at=medium  scanners=['mcp_metadata_scan']
 ```
 
 **Flags:**

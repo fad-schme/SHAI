@@ -19,7 +19,7 @@ connectivity:
 
 ## Scan boundaries
 
-All four scan boundaries share the same shape. **There is no `enabled` key** —
+All five scan boundaries share the same shape. **There is no `enabled` key** —
 a boundary cannot be switched off, and naming it fails config load. An omitted
 block runs SHAI's recommended scanners for that boundary; `scanners: []` leaves
 the built-in backstop alone; `action: alert` watches without blocking.

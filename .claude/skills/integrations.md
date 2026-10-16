@@ -115,7 +115,7 @@ Denied calls raise `ToolException` — the agent sees the denial and continues.
 
 ---
 
-## LangChain Agent Loop — ShaiMiddleware (langchain>=0.3)
+## LangChain Agent Loop — ShaiMiddleware (langchain>=1.0)
 
 Wires SHAI into `create_agent`'s middleware system. Cleanest integration
 for LangChain Agent Loop users.
@@ -148,7 +148,7 @@ with harness.collect_events() as events:
 - `awrap_tool_call` → `check_tool_call` + `scan_tool_result`
 - `aafter_agent` → `scan_output`
 
-Requires `pip install "langchain>=0.3" langgraph`.
+Requires `pip install "langchain>=1.0" langgraph`.
 
 ---
 
@@ -265,7 +265,7 @@ agent = Agent(name="assistant", tools=gated)
 | Scenario | Use |
 |---|---|
 | LangGraph with any LLM | `HarnessToolNode` |
-| LangChain Agent Loop (`create_agent`, v0.3+) | `ShaiMiddleware` |
+| LangChain Agent Loop (`create_agent`, v1.0+) | `ShaiMiddleware` |
 | LangChain classic (`create_react_agent`) | `wrap_tools` |
 | Anthropic SDK raw loop | `gated_dispatch` |
 | Any framework with manual tool dispatch | `check_tool_call` + `dispatch_scope` + `scan_tool_result` directly |

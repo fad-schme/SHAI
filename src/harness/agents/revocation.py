@@ -9,7 +9,7 @@ handle, useless to an operator watching an agent misbehave.
 This module is that trigger. Two operator surfaces write the same file:
 
     SHAI.maintenance.revoke_agent("billing_agent")   # in-process, applies immediately
-    shai agent revoke billing_agent        # separate process
+    shai agents revoke billing_agent        # separate process
 
 A CLI cannot reach another process's memory, so a file is the medium between
 them. The gate reads it at the pre-gate behind a bounded cache, and

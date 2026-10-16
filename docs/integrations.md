@@ -47,7 +47,7 @@ Tools discovered from an MCP source can't declare either — the manifest has no
 | Your framework | Use |
 |---|---|
 | LangGraph | `HarnessToolNode` — drop-in replacement for `ToolNode` |
-| LangChain Agent Loop (`create_agent`, v0.3+) | `ShaiMiddleware` — cleanest integration |
+| LangChain Agent Loop (`create_agent`, v1.0+) | `ShaiMiddleware` — cleanest integration |
 | LangChain classic (any version) | `wrap_tools()` |
 | Anthropic SDK raw loop | `gated_dispatch` + `make_tool_result_from_denial` |
 | CrewAI | `wrap_tools()` |
@@ -126,7 +126,7 @@ app = graph.compile()
 
 `HarnessToolNode` handles `check_tool_call` and `scan_tool_result` on every dispatch. Denied calls surface to the LLM as a tool error — the agent can try something else.
 
-## LangChain Agent Loop (v0.3+)
+## LangChain Agent Loop (v1.0+)
 
 ```python
 from harness.integrations.langchain import ShaiMiddleware, shai_tool
@@ -152,7 +152,7 @@ with harness.collect_events() as events:
 - `awrap_tool_call` → `check_tool_call` + `scan_tool_result`
 - `aafter_agent` → `scan_output`
 
-Requires `pip install "langchain>=0.3" langgraph`.
+Requires `pip install "langchain>=1.0" langgraph`.
 
 ## LangChain classic
 

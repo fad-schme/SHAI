@@ -347,7 +347,7 @@ class RevocationConfig(BaseModel, frozen=True, extra="forbid"):
 
     path:
         JSON file holding the revoked agent ids. Written by
-        `SHAI.maintenance.revoke_agent()` and by `shai agent revoke`, read by the gate.
+        `SHAI.maintenance.revoke_agent()` and by `shai agents revoke`, read by the gate.
         A file is the medium because the CLI runs in its own process and cannot
         reach the harness's memory. Empty (default) disables revocation.
 
