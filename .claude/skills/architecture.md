@@ -75,7 +75,7 @@ computes the consolidated turn risk from `TurnSignals` and blocks the turn at
 
 ### MCP Governance — `scan_mcp_metadata`
 
-Runs at MCP connection time before any tool is registered. Scans tool names, descriptions, and argument schemas. `block_at: medium` default — metadata injection has a near-zero false-positive rate.
+Runs at MCP connection time before any tool is registered. Scans tool names, descriptions, and argument schemas. `block_at: medium` is the default, stricter than other boundaries, because tool metadata describes a tool and instruction-like text in it is a strong injection signal.
 
 ---
 

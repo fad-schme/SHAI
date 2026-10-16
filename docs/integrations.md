@@ -59,9 +59,8 @@ Every wrapper on this page runs the same contract: `check_tool_call` before
 dispatch, `scan_tool_result` on what comes back. You never call either
 yourself, and there is no longer an entry point that runs only half of it.
 
-Result scanning only does something when the boundary is on:
-`scan_tool_result.enabled` defaults to `false`, and `config/harness.yaml`
-ships it as `true`.
+`scan_tool_result` always runs: an omitted block runs SHAI's recommended
+scanners, and `scanners:` in `config/harness.yaml` chooses which ones.
 
 **MCP tools need no local callable.** When a gated tool resolves to an MCP
 source, the call is routed to that source with the gate's `dispatch_token`

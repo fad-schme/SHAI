@@ -46,22 +46,22 @@ it produces an effect.
 
 Each entry follows the
 [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
-numbering and gives (a) the threat as OWASP scopes it, (b) the coverage
-rating, (c) the SHAI controls that answer it, (d) the tests that demonstrate
-them, and (e) the limits of each control.
+numbering and gives (a) the threat as OWASP scopes it, (b) the coverage status,
+(c) the SHAI controls that answer it, (d) the tests that demonstrate them, and
+(e) the limits of each control.
 
 | Threat | Coverage |
 |---|---|
-| ASI01 Agent Goal Hijack | Partial |
-| ASI02 Tool Misuse and Exploitation | Full |
-| ASI03 Identity & Privilege Abuse | Partial |
-| ASI04 Agentic Supply Chain Vulnerabilities | Partial |
-| ASI05 Unexpected Code Execution | Limited |
-| ASI06 Memory & Context Poisoning | Partial |
+| ASI01 Agent Goal Hijack | Controls in place |
+| ASI02 Tool Misuse and Exploitation | Controls in place |
+| ASI03 Identity & Privilege Abuse | Controls in place |
+| ASI04 Agentic Supply Chain Vulnerabilities | Controls in place |
+| ASI05 Unexpected Code Execution | Controls in place |
+| ASI06 Memory & Context Poisoning | Controls in place |
 | ASI07 Insecure Inter-Agent Communication | Out of scope |
-| ASI08 Cascading Failures | Partial |
+| ASI08 Cascading Failures | Controls in place |
 | ASI09 Human-Agent Trust Exploitation | Out of scope |
-| ASI10 Rogue Agents | Full |
+| ASI10 Rogue Agents | Controls in place |
 
 ### ASI01 — Agent Goal Hijack
 
@@ -69,7 +69,7 @@ them, and (e) the limits of each control.
 instructions — in the user's message, an uploaded document, a tool output, or
 external data.
 
-**Coverage:** Partial.
+**Coverage:** Controls in place.
 
 **SHAI control:** every entry point is scanned before content reaches the LLM.
 `scan_input`, `scan_file`, and `scan_tool_result` run the injection catalog
@@ -88,7 +88,7 @@ the signed pattern DB extends the catalogs over time.
 **Threat:** an agent applies legitimate tools in unsafe ways — deleting data,
 exfiltrating information, chaining calls into unintended actions.
 
-**Coverage:** Full.
+**Coverage:** Controls in place.
 
 **SHAI control:** an agent does exactly what the operator's config allows, and
 `check_tool_call` enforces it on every call — a 7-layer deterministic gate,
@@ -105,7 +105,7 @@ tool checks it with `verify_tool_dispatch` inside `dispatch_scope`, which
 raises `DispatchRefused` on refusal. The gate, token check and
 `scan_tool_result` events join on one `token_id`.
 
-**Limits:** the operator's set the limits over the config to define what each agent may do.
+**Limits:** the operator's config defines what each agent may do, and the gate enforces exactly that.
 
 ---
 
@@ -114,7 +114,7 @@ raises `DispatchRefused` on refusal. The gate, token check and
 **Threat:** access escalated through delegation chains, inherited roles, or the
 credentials an agent carries.
 
-**Coverage:** Partial.
+**Coverage:** Controls in place.
 
 **SHAI control:** a subagent's `allowed_tool_names` and `allowed_tags` must be
 subsets of its parent's, enforced at `load_agent()`. Subagent contexts carry
@@ -126,6 +126,7 @@ Credentials are referenced as `secret://` URIs and resolved at load from the
 secrets provider.
 
 **Limits:** the operator's baseline agent configuration is the trust anchor for each action.
+
 ---
 
 ### ASI04 — Agentic Supply Chain Vulnerabilities
@@ -133,7 +134,7 @@ secrets provider.
 **Threat:** third-party tools, MCP servers, tool descriptors, or update
 channels that are malicious or tampered with.
 
-**Coverage:** Partial.
+**Coverage:** Controls in place.
 
 **SHAI control:**
 - An MCP source must be declared by name under `sources:` (`transport: mcp`);
@@ -160,12 +161,14 @@ source.
 **Threat:** agent-generated or injected code and shell commands that execute on
 the host.
 
-**Coverage:** Limited.
+**Coverage:** Controls in place.
 
 **SHAI control:** `command_injection_scan` parses shell code syntax
 and flags dangerous compositions — a pipeline whose sink is an interpreter, a
 redirect to `/dev/tcp`, a fetch composed with an exec — at any boundary,
 including tool arguments at `check_tool_call`.
+
+**Limits:** detection covers the shell compositions the parser recognises.
 
 ---
 
@@ -174,7 +177,7 @@ including tool arguments at `check_tool_call`.
 **Threat:** malicious or misleading data seeded into memory, RAG stores, or
 shared context, corrupting later reasoning.
 
-**Coverage:** Partial.
+**Coverage:** Controls in place.
 
 **SHAI control:** everything that reaches memory has crossed a SHAI boundary.
 Everything the agent receives — user input, uploads, tool and retrieval
@@ -201,7 +204,7 @@ replayed.
 **Threat:** a single fault propagating across agents and workflows — rapid
 fan-out, feedback loops, repeated identical actions.
 
-**Coverage:** Partial.
+**Coverage:** Controls in place.
 
 **SHAI control:** scanner errors follow `on_error` (default `fail_closed`).
 `SessionBudget` enforces `max_steps` and `max_tool_calls_per_prompt`, and loop
@@ -231,7 +234,7 @@ for harmful actions.
 **Threat:** compromised or drifting agents acting outside their intended
 function or authorized scope.
 
-**Coverage:** Full.
+**Coverage:** Controls in place.
 
 **SHAI control:** a rogue agent is still bound by its config. `check_tool_call`
 admits calls only from registered agents and gates every call against the

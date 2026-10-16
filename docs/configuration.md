@@ -16,6 +16,9 @@ For the exhaustive field-by-field schemas see [`.claude/skills/harness-yaml.md`]
 ```yaml
 version: 1
 tenant_id: "my-deployment"
+
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"
 ```
 
 `tenant_id` is stamped on every audit event. Set it to something that identifies this deployment in your SIEM.

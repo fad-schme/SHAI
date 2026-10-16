@@ -51,7 +51,6 @@ session:
 
 # ── Input scanning ────────────────────────────────────────────────────────
 scan_input:
-  enabled: true
   block_at: high
   # on_error: what happens when a scanner raises an exception.
   #   fail_closed — treat as BLOCK (default, correct security posture)
@@ -72,7 +71,6 @@ scan_input:
 # FileScanner handles MIME, size, PDF JS, EXIF, ZIP, and Office macros.
 # The configured scanners below run over extracted text.
 scan_file:
-  enabled: false
   block_at: high
   action: block       # block | alert
   max_size_mb: 50
@@ -83,7 +81,6 @@ scan_file:
 
 # ── Tool result scanning (indirect injection) — T6 ───────────────────────
 scan_tool_result:
-  enabled: false
   block_at: high
   action: block       # block | alert
   scanners:
@@ -107,7 +104,6 @@ check_tool_call:
     - sensitive
 
 scan_mcp_metadata:
-  enabled: true
   block_at: medium      # medium is correct — metadata injection is high signal
   action: block
   scanners:
@@ -115,7 +111,6 @@ scan_mcp_metadata:
 
 # ── Output scanning ───────────────────────────────────────────────────────
 scan_output:
-  enabled: true
   block_at: high
   action: block       # block | alert
   on_error: fail_closed
@@ -150,42 +145,35 @@ audit_signing:
   enabled: false
   secret: "secret://AUDIT_SIGNING_KEY"
 
+# ── Connectivity ──────────────────────────────────────────────────────────
+# Required. Every allowed tool call is minted a dispatch token signed with
+# `token_secret`, and every MCP source runs through ShaiTransport.
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"
+  token_ttl_seconds: 15
+  token_policy: strict          # strict | audit
+
 # ── Tool sources ──────────────────────────────────────────────────────────
-# Sources declare where tools come from. MCP sources connect to external
-# servers; local sources expose already-registered tools to agents by name.
-# Credentials are resolved via SecretsProvider (secret:// URIs).
+# Sources declare where tools come from. An MCP source is named here and its
+# manifest (url, allowed_urls, credentials, tags, tool specs) is resolved from
+# `<mcp_manifests_dir>/<name>.yaml`. Local sources expose already-registered
+# tools to agents by name.
+#
+# mcp_manifests_dir: ./mcp/
+# mcp_baseline:
+#   path: state/mcp_baseline.db
+#   secret: "secret://SHAI_MCP_BASELINE_KEY"
 #
 # sources:
-#   # Option A — use a pre-built connector manifest (recommended)
 #   - name: slack
-#     connector: slack          # loads manifest: url, allowed_urls, tags, tool specs
-#     credentials:
-#       token: "secret://SLACK_BOT_TOKEN"
-#
-#   - name: github
-#     connector: github
-#     credentials:
-#       token: "secret://GITHUB_TOKEN"
-#
-#   - name: notion
-#     connector: notion
-#     credentials:
-#       token: "secret://NOTION_TOKEN"
-#
-#   # Option B — manual configuration (full control)
-#   - name: slack_mcp
 #     transport: mcp
-#     url: "https://mcp.slack.com/sse"
-#     credentials:
-#       token: "secret://SLACK_MCP_TOKEN"
 #     tags:
 #       - external_mcp
 #       - messaging
 #     required: true   # default — failed connection raises ConfigError at startup
 #
-#   - name: analytics_mcp
+#   - name: analytics
 #     transport: mcp
-#     url: "https://analytics.internal/sse"
 #     required: false  # optional — failure is logged and skipped, not fatal
 #
 #   - name: docs_local

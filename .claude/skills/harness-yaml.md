@@ -10,6 +10,9 @@ The operator config file. One per deployment. Loaded once at startup via
 ```yaml
 version: 1                    # always 1
 tenant_id: "my-deployment"    # stamped on every audit event
+
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"
 ```
 
 ---

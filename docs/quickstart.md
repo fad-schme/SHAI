@@ -58,12 +58,8 @@ scan_tool_result:
     - name: injection_scan
     - name: identity_spoof_scan   # catches fabricated-approval in poisoned tool results
 
-policy:
-  rules:
-    - id: allow_local
-      match:
-        transport: [local]
-      action: allow
+connectivity:
+  token_secret: "secret://SHAI_TOKEN_SECRET"
 
 audit_sinks:
   - name: file
@@ -94,7 +90,7 @@ policy_rules:
     action: allow
 ```
 
-Agent rules stack on top of harness rules — they don't replace them. Agent rules are evaluated first; the first `deny` wins. So even though the harness allows all local tools, `send_email` is denied for this agent because its `external_write` tag matches an agent-scoped `deny`.
+Tool rules live in the agent's `policy_rules:`; the first `deny` wins. `send_email` is denied for this agent because its `external_write` tag matches `deny_write`.
 
 ## 4 — Wire it up
 
