@@ -162,8 +162,7 @@ webhook URL, a callback, a fetch target — where the destination isn't fixed
 by the manifest at all. For that, give the tool's `ArgumentRule` a
 `scope_policy`: it canonicalizes the argument value as a URL (case, IDNA,
 and IP-literal-encoding differences folded to what the network stack would
-actually dial — see the ASI02 limits in `THREAT_MODEL.md`) and denies
-the call unless the resulting host is in scope.
+actually dial) and denies the call unless the resulting host is in scope.
 
 Argument rules are declared in code, on the tool. Neither agent YAML nor an
 MCP manifest has a field for them.
@@ -304,16 +303,12 @@ Two properties make this worth relying on:
 The limit worth knowing:
 
 - **Only tools that dispatch through `ShaiTransport` are covered** — the same
-  boundary as everything else on this page. A code-execution tool shelling out
-  to `curl` is outside it.
+  boundary as everything else on this page.
 
 The TTL is the containment latency. Raising `token_ttl_seconds` to reduce
 re-issuance overhead raises the window during which an already-issued token
 still works.
 
-### What it does not protect
-
-- Non-MCP outbound calls that don't go through `ShaiTransport`. `subprocess.run("curl ...")` in a code-execution tool is invisible. Network egress control at the infrastructure layer is the right place for that.
 
 ## What next
 

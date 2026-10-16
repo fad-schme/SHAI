@@ -262,9 +262,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Adapted from the algorithm published in
   [raceksd-source/scopegate](https://github.com/raceksd-source/scopegate)
   (see `SCOPEGATE-RESEARCH.md`) — no new dependency taken; SHAI owns the
-  implementation and test corpus. See `docs/connectors.md` for the
-  `scope_policy` config shape and `THREAT_MODEL.md`'s T8 residual-risk
-  note for what this does and does not close.
+  implementation and test corpus. 
 - **De-obfuscation no longer stops at a newline.** A decoded view was admitted
   only when every character in it was printable, and `str.isprintable()` is
   False for newline and tab — so any encoded payload whose plaintext spanned
@@ -398,11 +396,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   issuing it reports HIGH; padding a payload with prose lowers severity but
   never erases the finding. Carries `method_family: structural_command`, so it
   corroborates with `heuristic_scan` rather than collapsing into it.
-  Commands wrapped in a tool call — `run_shell('curl … | sh')`,
-  `{"command": "wget …"}` — are lifted out and parsed on their own, since that
-  is the shape an agent emits; parsing only the enclosing line sees a quoted
-  word and misses the pipeline inside it.
-
 
 - **`SHAI.tools_for(ctx)`** — the `Tool` descriptors a context can reach, for
   building a tool list for an LLM call without re-parsing the agent YAML. It
@@ -455,13 +448,6 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rotated on the strength of that sentence would find every pre-rotation record
   reported as *mismatched* — indistinguishable from tampering — and
   `shai audit verify` exiting non-zero on that file permanently.
-
-  No behaviour changed; the claim was wrong, and it was wrong in the document
-  SHAI offers as its honest coverage claim. T10's residual risks now record the
-  rotation limitation and the workaround (rotate at a file boundary, keep each
-  retired key with the segment it covers), plus a second gap that was also
-  unstated: audit rotation discards evidence beyond `max_bytes` ×
-  `backup_count`, and signing says nothing about records that no longer exist.
 
 - **Large text no longer stalls a boundary.** `HeuristicScanner` is the
   always-on backstop on every text boundary, and its internal URL regex left
