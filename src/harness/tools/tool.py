@@ -5,12 +5,19 @@ The harness gates; the agent dispatches. Tool is part of the public API.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from harness.connectivity.scope import check_scope_policy
+from harness.core.errors import ConfigError
 from harness.core.types import Irreversibility, Transport
+
+# A tool carrying this tag reaches the filesystem and must declare which of
+# its arguments are paths (Tool.path_args) so the gate has something to check.
+FS_TAG = "fs"
+
+PathAccess = Literal["read", "write"]
 
 
 class ScopeRulePolicy(BaseModel, frozen=True):
@@ -180,6 +187,10 @@ class Tool(BaseModel, frozen=True):
     # of signed ApprovalGrants on ctx.approvals before the gate will pass.
     irreversibility: Irreversibility = Irreversibility.REVERSIBLE
 
+    # Arguments that name filesystem paths, each with the access the tool needs
+    # on it. The gate resolves these against the calling agent's allowed_paths.
+    path_args: dict[str, PathAccess] = Field(default_factory=dict)
+
     @field_validator("name")
     @classmethod
     def _non_empty_name(cls, v: str) -> str:
@@ -209,3 +220,17 @@ class Tool(BaseModel, frozen=True):
     # tools that are equal still agree on these three fields.
     def __hash__(self) -> int:
         return hash((self.name, self.transport, tuple(sorted(self.tags))))
+
+
+def require_path_args(tool: Tool) -> None:
+    """Refuse a filesystem tool that leaves its path arguments undeclared.
+
+    Without the declaration the gate has no argument to check, so tagging a
+    tool `fs` and omitting `path_args` would skip the check instead of failing.
+    Applies to every tool whatever its source.
+    """
+    if FS_TAG in tool.tags and not tool.path_args:
+        raise ConfigError(
+            f"tool '{tool.name}' is tagged '{FS_TAG}' but declares no path_args",
+            op="register_tool",
+        )

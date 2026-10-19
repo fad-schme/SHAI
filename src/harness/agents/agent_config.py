@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from harness.core.errors import SubAgentNotDeclaredError
+from harness.core.path_scope import is_absolute, is_within
 
 if TYPE_CHECKING:
     pass
@@ -100,11 +101,34 @@ def _reject_source_scoped(rules: list[RuleConfig], owner: str) -> None:
             )
 
 
+class AllowedPaths(BaseModel, frozen=True, extra="forbid"):
+    """Filesystem paths an agent may read and write.
+
+    Entries are absolute files or directories; a directory covers everything
+    beneath it. A `write` entry also grants read on the same path. An agent
+    with no entries has no filesystem access.
+    """
+    read:  list[str] = Field(default_factory=list)
+    write: list[str] = Field(default_factory=list)
+
+    @field_validator("read", "write")
+    @classmethod
+    def _absolute_entries(cls, v: list[str], info: Any) -> list[str]:
+        for entry in v:
+            if not entry or "\x00" in entry or not is_absolute(entry):
+                raise ValueError(
+                    f"allowed_paths.{info.field_name} entries must be absolute "
+                    f"paths without NUL bytes, got: {entry!r}"
+                )
+        return v
+
+
 class SubAgentConfig(BaseModel, frozen=True, extra="forbid"):
     """One subagent declared inside a parent's agent-xx.yaml."""
     id:                 str
     allowed_tool_names: list[str]
     allowed_tags:       list[str]
+    allowed_paths:      AllowedPaths = Field(default_factory=AllowedPaths)
     sources:            list[str] = Field(default_factory=list)
     policy_rules:       list[RuleConfig] = Field(default_factory=list)
 
@@ -148,6 +172,7 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
 
     allowed_tool_names: list[str]
     allowed_tags:       list[str]
+    allowed_paths:      AllowedPaths = Field(default_factory=AllowedPaths)
     sources:            list[str] = Field(default_factory=list)
     policy_rules:       list[RuleConfig] = Field(default_factory=list)
     sub_agents:         list[SubAgentConfig] = Field(default_factory=list)
@@ -229,6 +254,22 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
                     f"sub_agent '{sub.id}': allowed_tags contains tags not in "
                     f"parent allowed_tags: {sorted(extra_tags)}"
                 )
+
+            # A parent `write` entry also grants read, so a subagent `read`
+            # entry may sit under either; a subagent `write` entry only under
+            # a parent `write` entry.
+            parent_write = self.allowed_paths.write
+            parent_read = [*self.allowed_paths.read, *parent_write]
+            for mode, entries, covering in (
+                ("read", sub.allowed_paths.read, parent_read),
+                ("write", sub.allowed_paths.write, parent_write),
+            ):
+                outside = [e for e in entries if not any(is_within(e, p) for p in covering)]
+                if outside:
+                    raise ValueError(
+                        f"sub_agent '{sub.id}': allowed_paths.{mode} contains paths "
+                        f"not inside the parent's {mode} paths: {sorted(outside)}"
+                    )
 
         return self
 

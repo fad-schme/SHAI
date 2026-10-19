@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import IO, TYPE_CHECKING, Any
 
 from harness.adapters.scanners.base import ConfiguredScanner
 from harness.adapters.scanners.rate_limiter import RateLimiter
@@ -28,25 +29,34 @@ from harness.boundaries.check_tool_call import run as run_gate
 from harness.boundaries.session_accumulator import StateStoreUnavailable, ThreatAccumulator
 from harness.boundaries.session_budget import ExecutionLimits, SessionBudget
 from harness.config.loader import build_secrets_provider, load_dict, read_yaml
+from harness.config.protected_paths import protected_paths
 from harness.config.schema import HarnessConfig, SourceConfig
 from harness.connectivity.token import NonceStore, TokenError, verify_token
 from harness.core import wiring
 from harness.core.approval import ApprovalPolicy
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
-from harness.core.errors import ConfigError, DispatchRefused, NetworkPolicyError
+from harness.core.errors import (
+    AgentNotRegisteredError,
+    ConfigError,
+    DispatchRefused,
+    NetworkPolicyError,
+    SubAgentNotDeclaredError,
+)
 from harness.core.events import AuditEvent, NetworkAuditEvent, now_ms
+from harness.core.governed_fs import LinkRefused, open_resolved
+from harness.core.path_scope import FS_DENY_REASON, check_path
 from harness.core.turn_signals import RISK_HIGH, TurnSignals
 from harness.core.types import BoundaryName, Decision, OnError, ScanStatus, Transport
 from harness.core.verdicts import GateDecision, ScanVerdict
 from harness.tools.registry import ToolRegistry
 from harness.tools.source import LocalSource, SourceRegistry, ToolSource
-from harness.tools.tool import Tool
+from harness.tools.tool import Tool, require_path_args
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
-    from harness.agents.agent_config import SubAgentConfig
+    from harness.agents.agent_config import AllowedPaths, SubAgentConfig
     from harness.core.events import AnyAuditEvent
     from harness.maintenance import Maintenance
     from harness.mcp.gate import McpBaselineGate
@@ -69,6 +79,10 @@ class _DispatchScope:
     token:  str | None
     ctx:    AgentContext
     checks: list[dict[str, Any]] = field(default_factory=list)
+    # What `SHAI.fs.open` re-checks a path against: the calling agent's grant
+    # (None when the agent is not registered) and the protected set.
+    allowed:   AllowedPaths | None = None
+    protected: tuple[str, ...] = ()
 
 
 _dispatch_scope: ContextVar[_DispatchScope | None] = ContextVar(
@@ -281,6 +295,8 @@ class SHAI:
         # ShaiTransport holds its own for its source; a token is bound to one
         # source, so no token can be consumed in both.
         self._dispatch_nonces     = NonceStore()
+        # Governed file access for local tools: valid only inside dispatch_scope.
+        self.fs = SimpleNamespace(open=self._fs_open)
         # Operational surface — agent admin, kill switch, scanner inspection.
         # Off the per-turn path and reached as `harness.maintenance`, so the
         # facade below carries only what a turn actually calls.
@@ -410,6 +426,7 @@ class SHAI:
         tool_registry   = ToolRegistry()
         agent_registry  = AgentRegistry(
             forbidden_tag_combinations=config.policy.forbidden_tag_sets(),
+            protected_paths=protected_paths(config, config_path=path),
         )
 
         # Build SourceRegistry: local sources straight from config.sources
@@ -557,6 +574,7 @@ class SHAI:
                 policy=policy,
                 sources=resolved_sources,
                 patterns_db_rows=patterns_db_rows,
+                protected=agent_registry.protected_paths,
             ),
         ))
         log.info("harness startup attested",
@@ -655,6 +673,10 @@ class SHAI:
         # evaluates policy against the fully-enriched tag set.
         overrides: dict[str, Tool] = {}
         for tool in source_tools:
+            # Checked before the registry attempt below: its catch-all treats any
+            # failure as a tag mismatch, and an `fs` tag merged in from the source
+            # config must not turn a refused tool into a per-agent override.
+            require_path_args(tool)
             try:
                 self._tool_registry.register(tool)
                 # Registered cleanly (new tool from MCP or first registration)
@@ -998,6 +1020,7 @@ class SHAI:
             normalization=self._config.normalization,
             scan_state=self._scan_state,
             manifest_rules=self._mcp_policy_rules.get(source_name),
+            protected_paths=self._agent_registry.protected_paths,
         )
 
         # Record gate outcome to TurnSignals for downstream boundaries
@@ -1090,7 +1113,11 @@ class SHAI:
         or raised — each check the tool ran emits exactly one AuditEvent
         (boundary=tool_dispatch_check), before any exception leaves the block.
         """
-        scope = _DispatchScope(token=gate.dispatch_token, ctx=ctx)
+        scope = _DispatchScope(
+            token=gate.dispatch_token, ctx=ctx,
+            allowed=self._allowed_paths_for(ctx),
+            protected=self._agent_registry.protected_paths,
+        )
         reset = _dispatch_scope.set(scope)
         try:
             yield
@@ -1105,6 +1132,72 @@ class SHAI:
                     audit_tags=self._audit_tags_for(ctx),
                     **check,
                 ))
+
+    def _allowed_paths_for(self, ctx: AgentContext) -> AllowedPaths | None:
+        """The grant of the profile the gate resolves for `ctx`, or None when the
+        agent or subagent is not registered."""
+        try:
+            effective = self._agent_registry.get(ctx.agent_id)
+            if ctx.sub_agent_id is not None:
+                effective = effective.get_sub_agent(ctx.sub_agent_id)
+        except (AgentNotRegisteredError, SubAgentNotDeclaredError):
+            return None
+        return effective.allowed_paths
+
+    def _fs_open(self, path: str, mode: str = "r", **kwargs: Any) -> IO[Any]:
+        """`open()` for a governed local tool.
+
+        Valid only inside dispatch_scope. Resolves `path` again against the
+        calling agent's grant and the protected set, with the same function the
+        gate uses, then opens the resolved location, refusing a final component
+        that became a link since. Raises DispatchRefused on refusal; the check's
+        audit event is emitted by dispatch_scope and carries no path.
+        """
+        start = now_ms()
+        scope = _dispatch_scope.get()
+        if scope is None:
+            log.warning("governed file open refused — no dispatch scope",
+                        extra={"tenant_id": self._tenant_id})
+            raise DispatchRefused(
+                "no dispatch scope — the file was not opened inside dispatch_scope",
+                op="fs_open",
+            )
+        access = "write" if set(mode) & set("wax+") else "read"
+        if scope.allowed is None:
+            resolved, rule = None, f"outside_{access}"
+        else:
+            resolved, rule = check_path(
+                path, access, read=scope.allowed.read, write=scope.allowed.write,
+                protected=scope.protected,
+            )
+        reason = FS_DENY_REASON[rule] if rule else None
+        handle = None
+        try:
+            if resolved is not None:
+                try:
+                    handle = open_resolved(resolved, mode, **kwargs)
+                except LinkRefused:
+                    reason = "path is a link"
+        finally:
+            # An ordinary file error (missing file, permissions) propagates to
+            # the tool, but the approved check still emits its one event.
+            scope.checks.append({
+                "tool_name":   None,
+                "transport":   None,
+                "token_id":    None,
+                "deny_reason": reason,
+                "duration_ms": now_ms() - start,
+                "extra":       {"check": "fs_open", "access": access,
+                                **({"fs_rule": rule} if rule else {})},
+            })
+        if reason:
+            ctx = scope.ctx
+            log.warning("governed file open refused",
+                        extra={"op": "fs_open", "access": access, "reason": reason,
+                               "tenant_id": self._tenant_id, **ctx.to_log_fields()})
+            raise DispatchRefused(reason, op="fs_open", agent_id=ctx.agent_id,
+                                  sub_agent_id=ctx.sub_agent_id, tenant_id=self._tenant_id)
+        return handle
 
     def verify_tool_dispatch(self, tool_name: str) -> None:
         """Refuse the running local tool call unless the gate authorised it.

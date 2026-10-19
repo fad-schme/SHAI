@@ -395,6 +395,11 @@ allowed_tags:
   - internal
   - external_write
 
+# Filesystem paths this agent may read and write; no block means no filesystem access
+allowed_paths:
+  read:  [/srv/workspace, /srv/reference]
+  write: [/srv/workspace/out]
+
 # Sources to activate (declared in harness.yaml)
 sources:
   - slack_mcp
@@ -454,6 +459,14 @@ sub_ctx = harness.scope_context_for_subagent(ctx, "researcher")
 ```
 
 The returned context has `allowed_tags` narrowed to the intersection of parent and subagent.
+
+### Filesystem paths
+
+`allowed_paths` lists the absolute files and directories an agent may read and write; a directory covers everything beneath it, and a `write` entry also grants read. An agent with no `allowed_paths` has no filesystem access. A subagent's entries must sit inside the parent's for the same mode, and a violation is a startup error at `load_agent()`.
+
+The gate enforces the grant at layer 2. For each argument a tool declares in `path_args`, it resolves the value to its real location (`..` segments and symlinks resolved, resolved again on every call) and denies the call unless that location sits inside the agent's grant for the access the tool needs. A relative path, a URI such as `file://...`, a NUL byte or a path the platform cannot resolve is denied. The denial reason names the argument and never the path; the audit event's `extra.fs_rule` says which control refused it (`protected`, `outside_read` or `outside_write`).
+
+SHAI's own files are off limits to every agent. They come from the harness config with no operator input: audit sink files, the pattern DB, the MCP baseline store, the MCP manifests directory, the revocation file, the session and budget stores, the harness config file, and each agent definition file. A relative path in the config resolves against the process working directory. An `allowed_paths` entry that equals, contains, or sits inside one of them fails at `load_agent()`, so a broad grant such as `/srv` cannot cover `/srv/state`, and a call whose path argument resolves into one is denied whatever the grant says.
 
 ## Policy rule reference (essential subset)
 

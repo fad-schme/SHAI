@@ -61,7 +61,7 @@ from typing import TYPE_CHECKING, Any
 from harness.core.errors import DispatchRefused
 from harness.core.types import Irreversibility, Transport
 from harness.core.verdicts import GateDecision
-from harness.tools.tool import ArgumentRule, Tool
+from harness.tools.tool import ArgumentRule, PathAccess, Tool
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
@@ -150,6 +150,7 @@ class ShaiTool:
         description:     str | None = None,
         argument_rules:  list[ArgumentRule] | None = None,
         irreversibility: Irreversibility = Irreversibility.REVERSIBLE,
+        path_args:       dict[str, PathAccess] | None = None,
     ) -> None:
         self._fn          = fn
         self._is_async    = asyncio.iscoroutinefunction(fn)
@@ -161,6 +162,7 @@ class ShaiTool:
         self.description     = description or (inspect.getdoc(fn) or "")
         self.argument_rules  = list(argument_rules or [])
         self.irreversibility = irreversibility
+        self.path_args       = dict(path_args or {})
 
         # Preserve introspection attributes for framework schema generation
         functools.update_wrapper(self, fn)
@@ -188,6 +190,7 @@ class ShaiTool:
             description=self.description,
             argument_rules=self.argument_rules,
             irreversibility=self.irreversibility,
+            path_args=self.path_args,
         )
 
     # ── Callable protocol ─────────────────────────────────────────────────
@@ -250,6 +253,7 @@ def shai_tool(
     description:     str | None = None,
     argument_rules:  list[ArgumentRule] | None = None,
     irreversibility: Irreversibility = Irreversibility.REVERSIBLE,
+    path_args:       dict[str, PathAccess] | None = None,
 ) -> Callable[[Callable], ShaiTool]:
     """Decorator that creates a ShaiTool from a plain function.
 
@@ -277,6 +281,10 @@ def shai_tool(
                      IRREVERSIBLE deny until a quorum of signed ApprovalGrants
                      is present on the context; REVERSIBLE (the default) is
                      waved through.
+        path_args:   Arguments that name filesystem paths, each mapped to the
+                     access the tool needs on it ("read" or "write"). The gate
+                     checks them against the agent's allowed_paths. A tool
+                     tagged "fs" must declare them.
 
     Returns a ShaiTool that can be passed to:
         - HarnessToolNode.create(tools, harness, ctx)
@@ -306,6 +314,7 @@ def shai_tool(
             description=description,
             argument_rules=argument_rules,
             irreversibility=irreversibility,
+            path_args=path_args,
         )
     return decorator
 

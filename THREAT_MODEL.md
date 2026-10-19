@@ -115,6 +115,16 @@ tool checks it with `verify_tool_dispatch` inside `dispatch_scope`, which
 raises `DispatchRefused` on refusal. The gate, token check and
 `scan_tool_result` events join on one `token_id`.
 
+The operator grants each agent the filesystem paths it may read and write
+(`allowed_paths`). For every path argument a tool declares (`path_args`), L2
+resolves the value to its real location, symlinks and `..` included, and denies
+it unless it sits inside the agent's grant for the access the tool needs. An
+agent with no grant has no filesystem access, and a subagent's grant sits
+inside its parent's. SHAI's own files (audit sinks, pattern DB, MCP baseline
+and manifests, revocation file, state stores, config and agent definitions)
+are derived from the config; no grant can overlap them and no call can reach
+them.
+
 **Limits:** the operator's config defines what each agent may do, and the gate enforces exactly that.
 
 - `user_origin` on an argument denies a call whose value entered the turn

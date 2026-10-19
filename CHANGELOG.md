@@ -117,6 +117,34 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   escalations only.
 
 ### Added
+- **Agents declare the paths they may read and write.** `allowed_paths` in `agent.yaml` takes `read` and `write` lists of absolute files or directories; an agent with no block has no filesystem access, and a subagent's entries must sit inside the parent's, checked at `load_agent()`.
+- **MCP tools declare their path arguments in the manifest.** `path_args` on a
+  manifest tool entry is carried onto the registered tool, so the gate checks
+  those arguments against the agent's grant and the protected set like a local
+  tool's; it is covered by the manifest hash.
+- **`shai validate` and `shai harness inspect` show filesystem paths.** `validate`
+  prints the protected set; both print the paths each agent and subagent may
+  read and write.
+- **A path denial records which rule fired, and startup attests the protected set.**
+  The gate's deny event carries `extra.fs_rule` (`protected`, `outside_read` or
+  `outside_write`) and never the path; the startup event carries the count and
+  digest of the protected set so two deployments can be compared.
+- **Governed tools open files with `harness.fs.open`.** Valid only inside
+  `dispatch_scope`, it re-checks the path against the agent's grant and the
+  protected set at the moment of use and refuses a link in the final component;
+  each call emits one `tool_dispatch_check` event with no path.
+- **SHAI's own files are off limits to every agent.** The audit sinks, pattern DB,
+  MCP baseline and manifests, revocation file, state stores, config and agent
+  definition files are protected, derived from the config. A grant overlapping
+  them fails `load_agent()` and a path argument resolving into them is denied.
+- **The gate checks path arguments against the agent's `allowed_paths`.** At layer 2,
+  each argument a tool declares in `path_args` is resolved to its real location
+  (symlinks and `..` included) and denied unless it sits inside the agent's read
+  or write grant; an agent with no grant is denied every path.
+- **Tools declare which arguments are filesystem paths.** `path_args` on `Tool` and
+  `@shai_tool` maps each path argument to `read` or `write`; a tool tagged `fs`
+  that declares none is refused at registration, including when a source merges
+  the tag onto it.
 - **Agent definitions can carry a non-human-identity profile.** Optional
   `description`, `owners`, `sponsors`, `environment`, `review_due`,
   `delegation_mode` and `credential_refs` (names and dates, never secret values)
@@ -259,10 +287,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   link-local/multicast/reserved/unspecified destination always needs the
   same explicit opt-in `allowed_cidrs` requires elsewhere.
 
-  Adapted from the algorithm published in
-  [raceksd-source/scopegate](https://github.com/raceksd-source/scopegate)
-  (see `SCOPEGATE-RESEARCH.md`) — no new dependency taken; SHAI owns the
-  implementation and test corpus. 
+
 - **De-obfuscation no longer stops at a newline.** A decoded view was admitted
   only when every character in it was printable, and `str.isprintable()` is
   False for newline and tab — so any encoded payload whose plaintext spanned

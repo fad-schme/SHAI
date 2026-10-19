@@ -163,6 +163,7 @@ def build_config_attestation(
     config: HarnessConfig,
     sources: Sequence[SourceConfig],
     patterns_db_rows: list[dict] | None = None,
+    protected: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The part of the attestation derivable from config alone.
 
@@ -176,6 +177,10 @@ def build_config_attestation(
 
     `patterns_db_rows`: see _patterns_db's `rows` — passed through from
     build_attestation, which already has them from an async context.
+
+    `protected`: the canonical protected set (harness.config.protected_paths).
+    Only its count and digest are attested, so two startups can be compared
+    without the event carrying a path.
     """
     from harness import __version__
 
@@ -185,6 +190,7 @@ def build_config_attestation(
         "shai_version":  __version__,
         "mcp_manifests": _mcp_manifests(config),
         "patterns_db":  _patterns_db(config, rows=patterns_db_rows),
+        "protected_paths": {"count": len(protected), "digest": _digest_of(sorted(protected))},
         "policy": {
             # Source-activation rules — which sources this harness lets
             # activate. Per-tool-call policy is the agent's own config and,
@@ -219,6 +225,7 @@ def build_attestation(
     policy: object,
     sources: Sequence[SourceConfig],
     patterns_db_rows: list[dict] | None = None,
+    protected: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Build the `extra` payload of the SYSTEM/STARTUP audit event.
 
@@ -254,5 +261,6 @@ def build_attestation(
         "adapters": [components[k] for k in sorted(components)],
         **build_config_attestation(
             config=config, sources=sources, patterns_db_rows=patterns_db_rows,
+            protected=protected,
         ),
     }

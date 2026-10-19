@@ -300,7 +300,7 @@ class MCPSourceParams:
     harness.mcp.discovery builds this from a harness.mcp.manifest.MCPManifest
     with credentials already resolved.
 
-    tool_specs: tool_name → {"description": str, "tags": [...]}, the
+    tool_specs: tool_name → {"description": str, "tags": [...], "path_args": {...}}, the
                 manifest's own declared content for each tool. Used at
                 registration time in place of the live tools/list response —
                 see MCPSource._fetch_tools. The manifest's per-tool `action`
@@ -428,7 +428,8 @@ class MCPSource:
         # connection. Every other connect-phase request carries one, minted
         # from the source's onboarding approval immediately before the request.
         self._mint_connect_token = mint_connect_token
-        # Manifest's declared per-tool content — tool_name → {description, tags}.
+        # Manifest's declared per-tool content — tool_name → {description, tags,
+        # path_args}.
         # Authoritative for registration (see _fetch_tools) — the manifest, not
         # the live tools/list response, is the source of truth for what the LLM sees.
         self._tool_specs:                 dict = dict(params.tool_specs)
@@ -809,6 +810,7 @@ class MCPSource:
                 transport=Transport.MCP,
                 description=description,
                 source_name=self.name,
+                path_args=spec.get("path_args", {}),
             ))
 
         log.debug("mcp tools fetched",

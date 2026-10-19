@@ -1,11 +1,16 @@
 """argument_policy — deterministic argument-level gate.
 
-Two checks called by check_tool_call after tool lookup, before Layer 2.
+Three checks called by check_tool_call after tool lookup. The first two make up
+Layer 2.
 
   1. check_argument_rules  — evaluates ArgumentRule declarations on the tool.
                              First violation raises ArgumentViolationError.
 
-  2. check_irreversibility — enforces the tool's blast-radius classification
+  2. check_path_args       — resolves each path argument the tool declares and
+                             requires it to sit inside the agent's allowed_paths.
+                             First violation raises ArgumentViolationError.
+
+  3. check_irreversibility — enforces the tool's blast-radius classification
                              against signed approval grants. Returns the
                              approvers, or raises IrreversibleActionError.
 
@@ -15,11 +20,14 @@ check_tool_call catches both errors and converts them to _deny().
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, NoReturn
 
+from harness.agents.agent_config import AllowedPaths
 from harness.core.approval import ApprovalError, ApprovalPolicy, verify_grants
 from harness.core.context import AgentContext
 from harness.core.errors import ArgumentViolationError, IrreversibleActionError
+from harness.core.path_scope import FS_DENY_REASON, FsRule, check_path
 from harness.core.types import Irreversibility
 from harness.tools.tool import Tool
 
@@ -52,6 +60,53 @@ def check_argument_rules(
                 agent_id=ctx.agent_id,
                 op="argument_rule",
             )
+
+
+def check_path_args(
+    tool: Tool,
+    args: dict[str, Any],
+    allowed: AllowedPaths,
+    protected: Sequence[str],
+    ctx: AgentContext,
+) -> None:
+    """Require every declared path argument to resolve outside the protected set
+    and inside the agent's grant.
+
+    A `write` need is met only by a write entry; a `read` need by a read or a
+    write entry. An absent or None argument is not checked. A value that cannot
+    be resolved is denied. Grant entries are resolved on every call with the
+    same function as the argument, so a symlinked root matches what it points to.
+
+    The violation names the argument, never its value (Invariant 3).
+    """
+    for arg, access in tool.path_args.items():
+        value = args.get(arg)
+        if value is None:
+            continue
+        _, rule = check_path(
+            value, access, read=allowed.read, write=allowed.write, protected=protected,
+        )
+        if rule is not None:
+            _deny_path(tool, arg, rule, ctx)
+
+
+def _deny_path(tool: Tool, arg: str, rule: FsRule, ctx: AgentContext) -> NoReturn:
+    log.warning(
+        "path argument denied",
+        extra={
+            "op": "path_arg",
+            "tool_name": tool.name,
+            "arg": arg,
+            "fs_rule": rule,
+            **ctx.to_log_fields(),
+        },
+    )
+    raise ArgumentViolationError(
+        f"argument rule violation on '{tool.name}': argument '{arg}' {FS_DENY_REASON[rule]}",
+        agent_id=ctx.agent_id,
+        op="path_arg",
+        fs_rule=rule,
+    )
 
 
 def check_irreversibility(

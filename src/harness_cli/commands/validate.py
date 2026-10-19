@@ -7,8 +7,10 @@ from pathlib import Path
 
 from harness.agents.registry import AgentRegistry
 from harness.config.loader import load_yaml
+from harness.config.protected_paths import protected_paths
 from harness.core.errors import ConfigError, HarnessError
 from harness_cli.console import console
+from harness_cli.paths import agent_path_lines
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -68,6 +70,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "  execution_budget: " + (", ".join(active) if active else "none configured")
     )
 
+    protected = protected_paths(config, config_path=config_path, agents_dir=args.agents_dir)
+    console.write(f"  protected_paths: {len(protected)}")
+    for path in protected:
+        console.write(f"    {path}")
+
     if args.agents_dir is None:
         console.write(
             "\nAgent validation skipped; use --agents-dir DIR to include agent YAML files."
@@ -89,6 +96,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     async def _validate_agents() -> tuple[int, int]:
         reg = AgentRegistry(
             forbidden_tag_combinations=config.policy.forbidden_tag_sets(),
+            protected_paths=protected,
         )
         ok = fail = 0
         for path in agent_files:
@@ -99,6 +107,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 console.write(
                     f"OK  (tools={len(cfg.allowed_tool_names)}, sub_agents={subs})"
                 )
+                for line in agent_path_lines(cfg):
+                    console.write(f"      {line}")
                 ok += 1
             except HarnessError as e:
                 console.error(f"FAIL\n    Error: {e}")

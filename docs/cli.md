@@ -44,7 +44,10 @@ them.
 
 The one command you'll run most. It validates `harness.yaml` and its inline
 policy rules. When `--agents-dir` is supplied, it also validates every agent
-YAML file in that directory, then prints a concise configuration summary.
+YAML file in that directory, then prints a concise configuration summary. The
+summary lists the protected paths SHAI derives from the config, and under each
+agent the paths it may read and write; an agent whose `allowed_paths` overlaps
+a protected path fails.
 
 ```bash
 shai validate
@@ -97,7 +100,8 @@ Offline listing of what a config declares — boundaries and their scanners,
 audit sinks, policy rule count and digest, pattern-DB state, local sources,
 every MCP source declared under `sources:` (id, redacted url, content
 digest — whether or not it currently has a valid baseline; approval state
-is a runtime concern, not shown here), and (with `--agents-dir`) every agent.
+is a runtime concern, not shown here), and (with `--agents-dir`) every agent
+with the paths it and its subagents may read and write.
 
 ```bash
 shai harness inspect --config prod.yaml --agents-dir config/agents

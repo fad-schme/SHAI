@@ -27,6 +27,10 @@ Schema
         tags: [external_write, messaging]
         action: block   # enforced — compiles to a deny rule the gate evaluates
                         # ahead of every operator rule (see MCPToolSpec.action)
+      - name: read_file
+        tags: [fs]
+        path_args: {path: read}   # enforced — the gate checks these arguments
+                                  # against the agent's allowed_paths
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from harness.connectivity.token import _canonicalize_url
 from harness.core.errors import ConfigError
+from harness.tools.tool import PathAccess
 
 
 class MCPArgumentSpec(BaseModel, frozen=True, extra="forbid"):
@@ -63,6 +68,13 @@ class MCPToolSpec(BaseModel, frozen=True, extra="forbid"):
     restriction, not an affirmative grant, so an operator rule denying the
     tool still denies. The manifest adds denials; it never removes them.
 
+    path_args names the arguments that are filesystem paths, each with the
+    access the tool needs (`read` or `write`), and is enforced: it is carried
+    onto the registered Tool, so the gate checks those arguments against the
+    protected set and the calling agent's allowed_paths exactly as it does for a
+    local tool. A tool tagged `fs` must declare it. It is part of the manifest's
+    bytes, so changing it changes the hash and the source needs re-onboarding.
+
     arguments/timeout_seconds are optional and purely informational — read
     only by the readiness heuristic (harness.mcp.readiness), never by
     registration or the approval gate.
@@ -71,6 +83,7 @@ class MCPToolSpec(BaseModel, frozen=True, extra="forbid"):
     description:     str = ""
     tags:            list[str] = Field(default_factory=list)
     action:          Literal["allow", "block"] = "allow"
+    path_args:       dict[str, PathAccess] = Field(default_factory=dict)
     arguments:       list[MCPArgumentSpec] = Field(default_factory=list)
     timeout_seconds: int | None = None
 

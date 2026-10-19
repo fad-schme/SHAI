@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from harness.core.errors import (
     AgentNotRegisteredError,
     ConfigError,
 )
+from harness.core.path_scope import canonicalize_path, is_within
 
 log = logging.getLogger(__name__)
 
@@ -40,10 +42,18 @@ class AgentRegistry:
         self,
         *,
         forbidden_tag_combinations: list[frozenset[str]] | None = None,
+        protected_paths: tuple[str, ...] = (),
     ) -> None:
         self._agents: dict[str, AgentConfig] = {}
         self._lock = threading.Lock()
         self._forbidden_tags = list(forbidden_tag_combinations or [])
+        self._protected = list(protected_paths)
+
+    @property
+    def protected_paths(self) -> tuple[str, ...]:
+        """The canonical protected set: what the harness config names, plus
+        every agent definition file this registry has loaded."""
+        return tuple(self._protected)
 
     def register(self, item: AgentConfig) -> bool:
         """True = newly registered. False = identical already existed.
@@ -51,6 +61,7 @@ class AgentRegistry:
         Raises ConfigError if allowed_tags contains a forbidden combination.
         """
         self._check_forbidden_tags(item)
+        self._check_protected_paths(item)
         with self._lock:
             existing = self._agents.get(item.id)
             if existing is None:
@@ -104,6 +115,7 @@ class AgentRegistry:
         Raises ConfigError on invalid file or schema.
         """
         config = await asyncio.to_thread(self._parse, Path(path))
+        self._protect_file(path)
         self.register(config)
         log.info("agent loaded", extra={"agent_id": config.id, "path": str(path)})
         return config
@@ -116,8 +128,10 @@ class AgentRegistry:
         """
         config = await asyncio.to_thread(self._parse, Path(path))
         # reload() replaces in place and does not go through register(), so the
-        # forbidden-combination check has to be repeated here.
+        # forbidden-combination and protected-path checks have to be repeated here.
         self._check_forbidden_tags(config)
+        self._protect_file(path)
+        self._check_protected_paths(config)
         with self._lock:
             if config.id not in self._agents:
                 raise AgentNotRegisteredError(
@@ -150,6 +164,39 @@ class AgentRegistry:
                     f"combination {sorted(combo)}",
                     op="load_agent",
                 )
+
+    def _protect_file(self, path: str | Path) -> None:
+        """Add an agent definition file to the protected set. The file was just
+        read, so a path that cannot be resolved here is not a way around the
+        check."""
+        resolved = canonicalize_path(os.path.abspath(path))
+        if resolved is not None and resolved not in self._protected:
+            self._protected.append(resolved)
+
+    def _check_protected_paths(self, item: AgentConfig) -> None:
+        """Reject an agent whose grant equals, contains, or sits inside a
+        protected path. A broad grant such as `/srv` must not silently cover
+        `/srv/state`.
+
+        Only the agent's own entries are checked: a subagent's are inside its
+        parent's (Invariant 4), so an overlap below the parent is an overlap at
+        the parent.
+        """
+        for mode, entries in (("read", item.allowed_paths.read), ("write", item.allowed_paths.write)):
+            for entry in entries:
+                grant = canonicalize_path(entry)
+                if grant is None:
+                    raise ConfigError(
+                        f"agent '{item.id}': allowed_paths.{mode} entry {entry!r} cannot be resolved",
+                        op="load_agent",
+                    )
+                for protected in self._protected:
+                    if is_within(grant, protected) or is_within(protected, grant):
+                        raise ConfigError(
+                            f"agent '{item.id}': allowed_paths.{mode} entry {entry!r} "
+                            f"overlaps a protected SHAI path ({protected})",
+                            op="load_agent",
+                        )
 
     @staticmethod
     def _parse(path: Path) -> AgentConfig:

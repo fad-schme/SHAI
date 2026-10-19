@@ -82,6 +82,20 @@ manifest's hash through `shai mcp onboard`, and an operator rule in
 restriction, not an affirmative grant — an operator rule denying that tool
 still denies it. The manifest adds denials; it never removes them.
 
+A tool that reaches the filesystem names its path arguments in the manifest,
+each with the access it needs:
+
+```yaml
+  - name: read_file
+    tags: [fs]
+    path_args: {path: read}   # or write
+```
+
+The gate checks those arguments against the protected set and the calling
+agent's `allowed_paths`, exactly as for a local tool. A tool tagged `fs` must
+declare `path_args`; the source is refused at load otherwise. `path_args` is
+part of the manifest's hash, so changing it requires re-onboarding.
+
 At `SHAI.from_yaml()`, each declared `transport: mcp` source's manifest is
 resolved, hashed, and checked against the signed baseline store — a live
 source is built only for a name whose hash matches an approved record. An

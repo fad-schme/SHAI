@@ -23,10 +23,12 @@ from typing import Any
 
 from harness.agents.agent_config import AgentConfig
 from harness.config.loader import load_yaml
+from harness.config.protected_paths import protected_paths
 from harness.config.schema import HarnessConfig, SourceConfig
 from harness.core.attestation import build_config_attestation
 from harness.core.errors import HarnessError
 from harness_cli.console import console
+from harness_cli.paths import agent_path_lines
 
 # Scan boundaries only — check_tool_call has no `enabled` flag (the gate always
 # runs) and is reported separately.
@@ -48,15 +50,18 @@ def _load(args: argparse.Namespace) -> tuple[HarnessConfig, list[SourceConfig], 
     except (HarnessError, ValueError) as e:
         console.error(f"Error: {e}")
         return None
+    agents_dir = getattr(args, "agents_dir", None)
     return config, sources, _load_agents(
-        getattr(args, "agents_dir", None),
+        agents_dir,
         config.policy.forbidden_tag_sets(),
+        protected_paths(config, config_path=config_path, agents_dir=agents_dir),
     )
 
 
 def _load_agents(
     agents_dir: str | None,
     forbidden_tags: list[frozenset[str]],
+    protected: tuple[str, ...],
 ) -> list[AgentConfig]:
     if not agents_dir:
         return []
@@ -67,7 +72,7 @@ def _load_agents(
 
     async def _read() -> list[AgentConfig]:
         from harness.agents.registry import AgentRegistry
-        registry = AgentRegistry(forbidden_tag_combinations=forbidden_tags)
+        registry = AgentRegistry(forbidden_tag_combinations=forbidden_tags, protected_paths=protected)
         loaded: list[AgentConfig] = []
         for path in sorted(directory.glob("*.yaml")):
             try:
@@ -86,7 +91,12 @@ def cmd_harness_inspect(args: argparse.Namespace) -> int:
     if loaded is None:
         return 1
     config, sources, agents = loaded
-    att = build_config_attestation(config=config, sources=sources)
+    att = build_config_attestation(
+        config=config, sources=sources,
+        protected=protected_paths(
+            config, config_path=args.config, agents_dir=getattr(args, "agents_dir", None),
+        ),
+    )
 
     console.write(f"SHAI {att['shai_version']}  |  tenant: {config.tenant_id}")
     console.write(f"config: {args.config}")
@@ -140,6 +150,8 @@ def cmd_harness_inspect(args: argparse.Namespace) -> int:
                 f"sources={','.join(agent.sources) or '-'}  "
                 f"subagents={len(agent.sub_agents)}"
             )
+            for line in agent_path_lines(agent):
+                console.write(f"      {line}")
 
     return 0
 

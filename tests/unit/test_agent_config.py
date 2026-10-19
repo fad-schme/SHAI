@@ -241,3 +241,105 @@ def test_profile_fields_parse():
 def test_malformed_profile_rejected(bad):
     with pytest.raises(ValidationError):
         AgentConfig.model_validate(_minimal(**bad))
+
+
+# ── allowed_paths ──────────────────────────────────────────────────────────
+
+def _sub(**kw) -> dict:
+    base = {"id": "sub", "allowed_tool_names": ["search_docs"], "allowed_tags": ["read"]}
+    base.update(kw)
+    return base
+
+
+def test_allowed_paths_default_is_no_access():
+    a = AgentConfig.model_validate(_minimal())
+    assert a.allowed_paths.read == []
+    assert a.allowed_paths.write == []
+
+
+def test_allowed_paths_both_modes_parse():
+    a = AgentConfig.model_validate(_minimal(
+        allowed_paths={"read": ["/srv/workspace"], "write": ["/srv/workspace/out"]},
+    ))
+    assert a.allowed_paths.read == ["/srv/workspace"]
+    assert a.allowed_paths.write == ["/srv/workspace/out"]
+
+
+@pytest.mark.parametrize("bad", ["relative/dir", "", "../up", "C:drive_relative", "a\x00b"])
+def test_allowed_paths_non_absolute_or_malformed_entry_rejected(bad):
+    with pytest.raises(ValidationError, match="allowed_paths"):
+        AgentConfig.model_validate(_minimal(allowed_paths={"read": [bad]}))
+
+
+def test_allowed_paths_non_list_rejected():
+    with pytest.raises(ValidationError):
+        AgentConfig.model_validate(_minimal(allowed_paths={"read": "/srv"}))
+
+
+def test_allowed_paths_unknown_mode_rejected():
+    with pytest.raises(ValidationError):
+        AgentConfig.model_validate(_minimal(allowed_paths={"delete": ["/srv"]}))
+
+
+def test_subagent_paths_inside_parent_load():
+    a = AgentConfig.model_validate(_minimal(
+        allowed_paths={"read": ["/srv/ref"], "write": ["/srv/out"]},
+        sub_agents=[_sub(allowed_paths={"read": ["/srv/ref/sub"], "write": ["/srv/out/x"]})],
+    ))
+    assert a.sub_agents[0].allowed_paths.read == ["/srv/ref/sub"]
+
+
+def test_subagent_equal_to_parent_entry_loads():
+    AgentConfig.model_validate(_minimal(
+        allowed_paths={"read": ["/srv/ref"]},
+        sub_agents=[_sub(allowed_paths={"read": ["/srv/ref"]})],
+    ))
+
+
+def test_subagent_read_inside_parent_write_loads():
+    AgentConfig.model_validate(_minimal(
+        allowed_paths={"write": ["/srv/out"]},
+        sub_agents=[_sub(allowed_paths={"read": ["/srv/out/sub"]})],
+    ))
+
+
+def test_subagent_read_outside_parent_rejected():
+    data = _minimal(
+        allowed_paths={"read": ["/srv/ref"]},
+        sub_agents=[_sub(allowed_paths={"read": ["/srv/other"]})],
+    )
+    with pytest.raises(ValidationError, match=r"sub_agent 'sub'.*allowed_paths\.read"):
+        AgentConfig.model_validate(data)
+
+
+def test_subagent_write_covered_only_by_parent_read_rejected():
+    data = _minimal(
+        allowed_paths={"read": ["/srv/ref"]},
+        sub_agents=[_sub(allowed_paths={"write": ["/srv/ref"]})],
+    )
+    with pytest.raises(ValidationError, match=r"allowed_paths\.write"):
+        AgentConfig.model_validate(data)
+
+
+def test_subagent_paths_under_parent_with_none_rejected():
+    data = _minimal(sub_agents=[_sub(allowed_paths={"read": ["/srv/ref"]})])
+    with pytest.raises(ValidationError, match=r"allowed_paths\.read"):
+        AgentConfig.model_validate(data)
+
+
+def test_subagent_sibling_prefix_of_parent_rejected():
+    data = _minimal(
+        allowed_paths={"read": ["/srv/ref"]},
+        sub_agents=[_sub(allowed_paths={"read": ["/srv/ref-evil"]})],
+    )
+    with pytest.raises(ValidationError, match=r"allowed_paths\.read"):
+        AgentConfig.model_validate(data)
+
+
+def test_subagent_dotdot_escape_of_parent_rejected():
+    data = _minimal(
+        allowed_paths={"read": ["/srv/ref"]},
+        sub_agents=[_sub(allowed_paths={"read": ["/srv/ref/../secrets"]})],
+    )
+    with pytest.raises(ValidationError, match=r"allowed_paths\.read"):
+        AgentConfig.model_validate(data)

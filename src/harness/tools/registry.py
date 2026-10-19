@@ -19,7 +19,7 @@ import threading
 from collections.abc import Iterable
 
 from harness.core.errors import ConfigError, ToolNotRegisteredError
-from harness.tools.tool import Tool
+from harness.tools.tool import Tool, require_path_args
 
 log = logging.getLogger(__name__)
 
@@ -38,8 +38,10 @@ class ToolRegistry:
 
     def register(self, item: Tool) -> bool:
         """True = newly registered. False = identical already existed.
-        Raises ConfigError on same name with different content.
+        Raises ConfigError on same name with different content, or on an
+        `fs`-tagged tool without path_args.
         """
+        require_path_args(item)
         with self._lock:
             existing = self._tools.get(item.name)
             if existing is None:
@@ -50,7 +52,7 @@ class ToolRegistry:
                 return False  # idempotent
             diff = [
                 f for f in ("transport", "tags", "description",
-                            "argument_rules", "irreversibility")
+                            "argument_rules", "irreversibility", "path_args")
                 if getattr(existing, f) != getattr(item, f)
             ]
             # Names only for description and argument_rules — a tool description is

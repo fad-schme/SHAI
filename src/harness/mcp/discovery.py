@@ -145,7 +145,11 @@ def build_mcp_source(
     # `action` is deliberately absent here — it is compiled into policy rules
     # by compile_manifest_rules(), not carried into registration a second time.
     tool_specs = {
-        t.name: {"description": t.description, "tags": list(t.tags)}
+        t.name: {
+            "description": t.description,
+            "tags": list(t.tags),
+            "path_args": dict(t.path_args),
+        }
         for t in manifest.tools
     }
     params = MCPSourceParams(

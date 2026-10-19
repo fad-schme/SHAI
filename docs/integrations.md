@@ -39,6 +39,7 @@ async def transfer_funds(recipient: str, amount: int) -> str:
 
 - **`argument_rules`** — per-argument constraints enforced at gate layer 2 (`max_value`, `min_value`, `allowlist`, `pattern`, `scope_policy`, `required`). `user_origin=True` is enforced at layer 6: the call is denied when that argument's value entered the turn through a tool result rather than the user's prompt. Declare it only where the user is the one who names the value — a recipient, a grantee. On an argument the agent legitimately resolves from something it read, it denies ordinary work.
 - **`irreversibility`** — `SENSITIVE` or `IRREVERSIBLE` makes layer 3 deny until the configured quorum of signed approval grants is present. The default, `REVERSIBLE`, needs none.
+- **`path_args`** — the arguments that name filesystem paths, each mapped to the access the tool needs (`"read"` or `"write"`), for example `path_args={"src": "read", "dst": "write"}`. A tool tagged `fs` must declare them; registration refuses it otherwise, whatever the tool's source.
 
 Tools discovered from an MCP source can't declare either — the manifest has no field for them.
 
@@ -95,6 +96,23 @@ Each check emits one `tool_dispatch_check` audit event carrying the same
 The integrations run each tool inside `harness.dispatch_scope(ctx, gate)`,
 which is where the check finds the token. In a manual loop you open the scope
 yourself — see [Manual dispatch](#manual-dispatch-any-framework).
+
+### Opening files
+
+A tool that reads or writes a file opens it with `harness.fs.open(path, mode)`
+in place of the built-in `open()`. It works only inside `dispatch_scope`. It
+resolves the path again at the moment of use against the calling agent's
+`allowed_paths` and the protected set, opens the resolved location, and refuses
+a final path component that became a link since the gate's check. A refusal
+raises `DispatchRefused`, and each call emits one `tool_dispatch_check` event
+that carries no path.
+
+```python
+@shai_tool(tags=["fs"], path_args={"path": "read"})
+def read_file(path: str) -> str:
+    with harness.fs.open(path) as f:
+        return f.read()
+```
 
 ## LangGraph
 

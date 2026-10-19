@@ -21,11 +21,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.boundaries._scan import ScanState, _scan_views
-from harness.boundaries.argument_policy import check_argument_rules, check_irreversibility
+from harness.boundaries.argument_policy import (
+    check_argument_rules,
+    check_irreversibility,
+    check_path_args,
+)
 from harness.core.approval import ApprovalPolicy
 from harness.core.errors import (
     ArgumentViolationError,
@@ -76,6 +80,7 @@ async def run(
     normalization: NormalizationConfig | None = None,
     scan_state: ScanState | None = None,
     manifest_rules: list[RuleConfig] | None = None,
+    protected_paths: Sequence[str] = (),
 ) -> GateDecision:
     """Gate one tool call.
 
@@ -106,6 +111,9 @@ async def run(
                   arg_scanners is non-empty and the caller cares about
                   cross-call trip state; the harness call site always passes
                   its shared instance.
+    protected_paths: canonical paths SHAI itself depends on; a path argument that
+                  resolves into one is denied for every agent (see
+                  harness.config.protected_paths).
     manifest_rules: deny rules compiled from the MCP manifest that owns this
                   tool's source (harness.mcp.discovery.compile_manifest_rules).
                   Layer 5 evaluates them ahead of the agent's own rules, and
@@ -145,9 +153,10 @@ async def run(
     # ── Layer 2: argument rules ───────────────────────────────────────────
     try:
         check_argument_rules(tool, args, ctx)
+        check_path_args(tool, args, effective.allowed_paths, protected_paths, ctx)
     except ArgumentViolationError as e:
         return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
-                           audit_tags=agent_config.audit_tags)
+                           audit_tags=agent_config.audit_tags, extra=e.extra or None)
 
     # ── Layer 3: irreversibility gate ─────────────────────────────────────
     try:
@@ -500,6 +509,7 @@ async def emit_deny(
     tenant_id: str,
     *,
     audit_tags: dict[str, str] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> GateDecision:
     """Emit the gate's deny event and return the decision.
 
@@ -517,6 +527,7 @@ async def emit_deny(
         transport=str(tool.transport) if tool else None,
         deny_reason=reason,
         audit_tags=audit_tags or {},
+        extra=extra,
     )
     await emitter.emit(event)
     return GateDecision(allowed=False, deny_reason=reason)
