@@ -93,3 +93,36 @@ def test_forbidden_tag_combination_needs_two_distinct_tags():
     for bad in ([["sensitive"]], [["sensitive", "sensitive"]], [[]]):
         with pytest.raises(ValidationError, match="at least two distinct tags"):
             PolicyConfig(forbidden_tag_combinations=bad)
+
+
+def test_approvals_secret_requires_a_store():
+    data = _minimal()
+    data["check_tool_call"] = {"approvals": {"secret": "secret://K"}}
+    with pytest.raises(ValidationError, match="approvals.store is required"):
+        HarnessConfig.model_validate(data)
+
+
+def test_approvals_secret_with_a_store_is_accepted():
+    data = _minimal()
+    data["check_tool_call"] = {"approvals": {"secret": "secret://K", "store": {"name": "memory"}}}
+    assert HarnessConfig.model_validate(data).check_tool_call.approvals.store.name == "memory"
+
+
+def test_approvals_on_error_defaults_to_fail_closed():
+    data = _minimal()
+    data["check_tool_call"] = {"approvals": {"secret": "secret://K", "store": {"name": "memory"}}}
+    assert HarnessConfig.model_validate(data).check_tool_call.approvals.on_error == "fail_closed"
+
+
+@pytest.mark.parametrize("value", ["fail_open", "degrade"])
+def test_approvals_on_error_other_than_fail_closed_is_rejected(value):
+    data = _minimal()
+    data["check_tool_call"] = {"approvals": {
+        "secret": "secret://K", "store": {"name": "memory"}, "on_error": value,
+    }}
+    with pytest.raises(ValidationError, match="must be 'fail_closed'"):
+        HarnessConfig.model_validate(data)
+
+
+def test_approvals_without_a_secret_needs_no_store():
+    assert HarnessConfig.model_validate(_minimal()).check_tool_call.approvals.store is None

@@ -16,7 +16,7 @@ HarnessError
 ├── IrreversibleActionError   — approval quorum unmet; check_tool_call returns it as a deny
 ├── AuditEmissionError        — all audit sinks failed simultaneously
 ├── NetworkPolicyError        — ShaiTransport blocked an outbound MCP request
-├── DispatchRefused           — a local tool's verify_tool_dispatch refused its call
+├── DispatchRefused           — a local tool's verify_tool_dispatch or harness.fs.open refused its call
 └── MCPInvocationError        — MCP server returned a JSON-RPC error
 
 SecretsProviderError          — a secrets provider failed to resolve a secret:// reference
@@ -206,4 +206,5 @@ written.
 | `ConfigError` at `from_yaml()` | Parse/validate | YAML is malformed, invalid MCP manifest, bad schema |
 | `AuditEmissionError` at `from_yaml()` | Startup attestation | Every sink rejected the `system`/`startup` event — construction fails rather than running unaudited |
 | `ConfigError` at `load_agent()` | Source connect | Required MCP source failed to connect |
+| `ConfigError` at `load_agent()` | Filesystem paths | An `allowed_paths` entry overlaps a protected SHAI path, or a tool tagged `fs` declares no `path_args` |
 | `AgentNotRegisteredError` | Per-turn | `check_tool_call` called before `load_agent()` |

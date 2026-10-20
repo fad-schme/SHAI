@@ -67,12 +67,16 @@ def test_every_declared_source_is_protected(tmp_path: Path):
         mcp_baseline={"path": str(tmp_path / "baseline.db")},
         mcp_manifests_dir=str(tmp_path / "manifests"),
         revocation={"path": str(tmp_path / "revoked.json")},
+        check_tool_call={"approvals": {
+            "secret": "k",
+            "store": {"name": "sqlite", "config": {"path": str(tmp_path / "approvals.db")}},
+        }},
     )
     got = protected_paths(
         config, config_path=tmp_path / "harness.yaml", agents_dir=tmp_path / "agents",
     )
     for name in ("audit.jsonl", "sess.db", "budget.db", "patterns.db", "baseline.db",
-                 "manifests", "revoked.json", "harness.yaml", "agents"):
+                 "manifests", "revoked.json", "approvals.db", "harness.yaml", "agents"):
         assert _real(tmp_path / name) in got, name
 
 

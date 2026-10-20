@@ -66,6 +66,20 @@ class _SQLiteKV:
         )
         await db.commit()
 
+    async def put_if_absent(self, key: str, value: bytes) -> bool:
+        require_bytes(value)
+        db = await self._conn()
+        # The primary key makes the insert the arbiter: SQLite serialises
+        # writers on the file, so of any number of connections and processes
+        # exactly one inserts the row and the rest see zero rows changed.
+        async with db.execute(
+            "INSERT INTO kv_store(key, value) VALUES(?, ?) ON CONFLICT(key) DO NOTHING",
+            (key, value),
+        ) as cur:
+            won = cur.rowcount == 1
+        await db.commit()
+        return won
+
     async def batch_put(self, items: dict[str, bytes]) -> None:
         """All-or-nothing: one transaction for the whole batch.
 

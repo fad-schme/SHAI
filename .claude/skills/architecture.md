@@ -20,6 +20,21 @@ One `SHAI` instance per deployment. Multiple agents and concurrent turns share t
  Pre-gate controls (revocation, rate limit, session budget, MCP manifest approval) run before the seven gate layers. First denial wins. Exactly one `AuditEvent` per call on every code path.
 
 
+### Filesystem paths — gate layer 2
+
+The operator grants each agent the files and directories it may read and write
+(`allowed_paths` in `agent.yaml`); no grant means no filesystem access, and a
+subagent's grant sits inside its parent's. A tool names its path arguments and
+the access each needs (`path_args`, declared in code for a local tool and in the
+manifest for an MCP tool), and a tool tagged `fs` must declare them. For each
+declared argument, layer 2 resolves the value to its real location and denies it
+inside the protected set or outside the agent's grant. The protected set is
+SHAI's own files, derived from the harness config: audit sinks, pattern DB, MCP
+baseline and manifests, revocation file, state stores, the config file and agent
+definitions. No grant may overlap it. A local tool opens files with
+`harness.fs.open`, which repeats the check at the moment of use. A denial
+records `extra.fs_rule` and no path.
+
 ### Session Budget — `boundaries/session_budget.py`
 
 `SessionBudget` is a thread-safe, per-session enforcer for DoS / Unbounded Consumption (OWASP T4). One instance per SHAI facade, keyed by `(agent_id, session_id)` where `session_id` is `ctx.conversation_id or ctx.agent_id`. All controls are opt-in via `None` defaults.

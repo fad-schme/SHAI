@@ -208,6 +208,7 @@ class SHAI:
         connectivity_secret: bytes,
         session_budget_store,
         session_store,
+        approvals_store,
         mcp_required_flags: dict[str, bool] | None = None,
         mcp_baseline_gate: McpBaselineGate | None = None,
         mcp_policy_rules: dict[str, list[RuleConfig]] | None = None,
@@ -238,7 +239,9 @@ class SHAI:
             secret=_approvals_cfg.secret.encode() if _approvals_cfg.secret else None,
             sensitive_quorum=_approvals_cfg.sensitive_quorum,
             irreversible_quorum=_approvals_cfg.irreversible_quorum,
+            store=approvals_store.kv if approvals_store is not None else None,
         )
+        self._approvals_store = approvals_store
         self._rate_limiter              = rate_limiter
         self._session_budget            = SessionBudget(
             session_budget_store,
@@ -525,6 +528,10 @@ class SHAI:
         session_store = (
             wiring._build_store(config.session.store) if config.session.enabled else None
         )
+        approvals_store = (
+            wiring._build_store(config.check_tool_call.approvals.store)
+            if config.check_tool_call.approvals.secret else None
+        )
         instance = cls(
             config=config,
             agent_registry=agent_registry,
@@ -541,6 +548,7 @@ class SHAI:
             connectivity_secret=connectivity_secret,
             session_budget_store=session_budget_store,
             session_store=session_store,
+            approvals_store=approvals_store,
             mcp_required_flags=mcp_required_flags,
             mcp_baseline_gate=mcp_baseline_gate,
             mcp_policy_rules=mcp_policy_rules,
@@ -569,6 +577,7 @@ class SHAI:
                 stores={
                     "session_budget": session_budget_store,
                     "session":        session_store,
+                    "approvals":      approvals_store,
                     "patterns_db":    rules_store,
                 },
                 policy=policy,
@@ -1411,6 +1420,12 @@ class SHAI:
             except Exception as e:
                 log.warning("session budget store close failed",
                             extra={"error": str(e), "op": "close"})
+            if self._approvals_store is not None:
+                try:
+                    await self._approvals_store.close()
+                except Exception as e:
+                    log.warning("approvals store close failed",
+                                extra={"error": str(e), "op": "close"})
 
     async def get_source(self, name: str) -> ToolSource:
         """Return a registered source by name.

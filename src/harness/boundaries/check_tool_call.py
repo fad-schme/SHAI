@@ -16,6 +16,9 @@ Layer 6: signal correlation — deny high-risk tools when input scan flagged
          from a tool result (C); mark WARN+write-capable calls for tightened
          arg scanning (B)
 Layer 7: optional arg scanning (unconditional if layer 6 marked TIGHTEN)
+
+An allowed call that was authorised by approval grants spends them last, after
+every layer that can still deny (see "Spend the grants" below).
 """
 from __future__ import annotations
 
@@ -30,7 +33,7 @@ from harness.boundaries.argument_policy import (
     check_irreversibility,
     check_path_args,
 )
-from harness.core.approval import ApprovalPolicy
+from harness.core.approval import ApprovalError, ApprovalPolicy, release_grants, spend_grants
 from harness.core.errors import (
     ArgumentViolationError,
     IrreversibleActionError,
@@ -95,7 +98,8 @@ async def run(
                   dispatch produces. None when connectivity is disabled.
     approvals:    resolved approval policy for layer 3. None means unconfigured,
                   which denies every SENSITIVE and IRREVERSIBLE tool — there is
-                  no weaker check to fall back to.
+                  no weaker check to fall back to. Its store records the grants
+                  an allowed call spent, so each authorises one call.
     normalization: same NormalizationConfig every other scan boundary applies
                   before a scanner sees text (see core/normalize.canonicalize).
                   Layer 7 uses it on each `key: value` argument text. None
@@ -159,12 +163,13 @@ async def run(
                            audit_tags=agent_config.audit_tags, extra=e.extra or None)
 
     # ── Layer 3: irreversibility gate ─────────────────────────────────────
+    approval_policy = approvals or ApprovalPolicy()
     try:
         approvers = check_irreversibility(
             tool, ctx,
             args=args,
             tenant_id=tenant_id,
-            approvals=approvals or ApprovalPolicy(),
+            approvals=approval_policy,
         )
     except IrreversibleActionError as e:
         return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
@@ -457,35 +462,106 @@ async def run(
     if scanned_redactions:
         effective_args = {**effective_args, **scanned_redactions}
 
+    # ── Spend the grants ───────────────────────────────────────────────────
+    # Last before the allow, so a call refused by any layer above leaves its
+    # grants usable and the approver is not asked twice. Layer 3 only verified
+    # them; verifying is pure, and a grant verified twice authorises twice.
+    # Spending is the store's atomic put-if-absent, so of concurrent calls
+    # presenting one grant — here or in another process on the same store —
+    # exactly one passes. A store that cannot answer denies: a grant that
+    # cannot be marked used would authorise any number of calls.
+    claimed: list[str] = []
+    if approvers:
+        if approval_policy.store is None or approval_policy.secret is None:
+            return await emit_deny(
+                "approval grants cannot be spent: no approvals store is configured "
+                "(set check_tool_call.approvals.store)",
+                name, tool, ctx, emitter, start, tenant_id,
+                audit_tags=agent_config.audit_tags,
+            )
+        try:
+            claimed = await spend_grants(
+                ctx.approvals, secret=approval_policy.secret, store=approval_policy.store,
+            )
+        except ApprovalError as e:
+            return await emit_deny(
+                f"tool '{name}' approval grant refused: {e}",
+                name, tool, ctx, emitter, start, tenant_id,
+                audit_tags=agent_config.audit_tags,
+            )
+        except asyncio.CancelledError:
+            # Control signal, not a defect (Invariant 2): the event is still
+            # owed, then the cancellation continues.
+            await emit_deny(
+                "approval spend cancelled",
+                name, tool, ctx, emitter, start, tenant_id,
+                audit_tags=agent_config.audit_tags,
+            )
+            raise
+        except Exception as e:
+            log.error("approvals store failed — denying (fail-closed)",
+                      extra={"tool": name, "error_type": type(e).__name__,
+                             **ctx.to_log_fields()})
+            return await emit_deny(
+                "approvals store unavailable: grants cannot be spent",
+                name, tool, ctx, emitter, start, tenant_id,
+                audit_tags=agent_config.audit_tags,
+            )
+
     # ── Allow ──────────────────────────────────────────────────────────────
     # The token is minted here, before the event is built, so token_id lands on
     # the gate event that authorised it. Issuing it afterwards — in the caller —
     # left AuditEvent.token_id permanently null and the documented SIEM join
     # with only a right-hand side. issue_token is called only on this path, so
     # a denied call still mints nothing.
-    token: tuple[str, str] | None = issue_token() if issue_token is not None else None
+    # Authorising the dispatch can still fail: the token may not sign, the event
+    # may not build, every audit sink may be down. The call is then not allowed,
+    # so its grants go back — an approval is spent only by a call that was
+    # allowed. A token or event failure is a denial (Invariant 2); a total sink
+    # outage leaves as AuditEmissionError, after the release.
+    try:
+        try:
+            token: tuple[str, str] | None = issue_token() if issue_token is not None else None
 
-    event = AuditEvent.build(
-        boundary=BoundaryName.TOOL_CALL_GATE,
-        decision=(
-            Decision.REDACT
-            if policy_decision.action == "redact" or scanned_redactions
-            else Decision.ALLOW
-        ),
-        ctx=ctx,
-        tenant_id=tenant_id,
-        duration_ms=now_ms() - start,
-        tool_name=name,
-        transport=tool.transport,
-        token_id=token[1] if token is not None else None,
-        adapters=[policy.name],
-        audit_tags=agent_config.audit_tags,
-        # Who authorised a SENSITIVE/IRREVERSIBLE call. Identifiers only — the
-        # audit trail must be able to answer "who approved this" without ever
-        # carrying the approval prompt or the arguments it covered.
-        extra={"approvers": approvers} if approvers else None,
-    )
-    await emitter.emit(event)
+            event = AuditEvent.build(
+                boundary=BoundaryName.TOOL_CALL_GATE,
+                decision=(
+                    Decision.REDACT
+                    if policy_decision.action == "redact" or scanned_redactions
+                    else Decision.ALLOW
+                ),
+                ctx=ctx,
+                tenant_id=tenant_id,
+                duration_ms=now_ms() - start,
+                tool_name=name,
+                transport=tool.transport,
+                token_id=token[1] if token is not None else None,
+                adapters=[policy.name],
+                audit_tags=agent_config.audit_tags,
+                # Who authorised a SENSITIVE/IRREVERSIBLE call. Identifiers only — the
+                # audit trail must be able to answer "who approved this" without ever
+                # carrying the approval prompt or the arguments it covered.
+                extra={"approvers": approvers} if approvers else None,
+            )
+        except Exception as e:
+            log.error("dispatch authorisation failed — denying (fail-closed)",
+                      extra={"tool": name, "error_type": type(e).__name__,
+                             **ctx.to_log_fields()})
+            # Released here and the list emptied, so the handler below cannot
+            # release them a second time over a claim another call has since made.
+            released, claimed = claimed, []
+            if released:
+                await release_grants(released, store=approval_policy.store)
+            return await emit_deny(
+                "dispatch could not be authorised: token or audit event failed",
+                name, tool, ctx, emitter, start, tenant_id,
+                audit_tags=agent_config.audit_tags,
+            )
+        await emitter.emit(event)
+    except BaseException:
+        if claimed:
+            await release_grants(claimed, store=approval_policy.store)
+        raise
     return GateDecision(
         allowed=True,
         redacted_args=(

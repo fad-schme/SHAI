@@ -43,6 +43,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
         if sess.enabled else ""
     ))
     console.write(f"  session_budget: store={config.session_budget.store.name}")
+    approvals = config.check_tool_call.approvals
+    console.write("  approvals:     " + (
+        f"store={approvals.store.name}" if approvals.store else "not configured"
+    ))
 
     console.write("  boundaries:")
     for boundary_name, boundary_cfg in [

@@ -41,7 +41,7 @@ async def transfer_funds(recipient: str, amount: int) -> str:
 - **`irreversibility`** — `SENSITIVE` or `IRREVERSIBLE` makes layer 3 deny until the configured quorum of signed approval grants is present. The default, `REVERSIBLE`, needs none.
 - **`path_args`** — the arguments that name filesystem paths, each mapped to the access the tool needs (`"read"` or `"write"`), for example `path_args={"src": "read", "dst": "write"}`. A tool tagged `fs` must declare them; registration refuses it otherwise, whatever the tool's source.
 
-Tools discovered from an MCP source can't declare either — the manifest has no field for them.
+Tools discovered from an MCP source can't declare `argument_rules` or `irreversibility` — the manifest has no field for them. They declare `path_args` in the manifest (see [connectors.md](connectors.md)).
 
 ## Which integration to use
 

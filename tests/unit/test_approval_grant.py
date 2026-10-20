@@ -1,16 +1,21 @@
 """Tests for core/approval.py — grant signing, verification, and binding."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from harness.adapters.state_store.memory_store import InMemoryStore
 from harness.core.approval import (
     ApprovalError,
     args_digest,
     encode_grant,
+    release_grants,
     sign_grant,
+    spend_grants,
     verify_grant,
     verify_grants,
 )
@@ -140,3 +145,106 @@ def test_one_bad_grant_fails_the_whole_set():
     """A valid grant alongside an invalid one does not carry the set."""
     with pytest.raises(ApprovalError, match="different tool"):
         _verify((_issue(approver="alex"), _issue(approver="sam", tool_name="other")), quorum=1)
+
+
+# ── Single use ────────────────────────────────────────────────────────────
+
+_SPENT = "approval_grant:"
+
+
+async def _spend(store, *encoded):
+    await spend_grants(encoded, secret=SECRET, store=store.kv)
+
+
+async def test_a_spent_grant_is_refused_a_second_time():
+    store = InMemoryStore()
+    grant = _issue()
+    await _spend(store, grant)
+    with pytest.raises(ApprovalError, match="already been used"):
+        await _spend(store, grant)
+
+
+async def test_distinct_grants_are_independent():
+    store = InMemoryStore()
+    await _spend(store, _issue())
+    await _spend(store, _issue())
+
+
+async def test_a_refused_quorum_leaves_the_other_grants_unspent():
+    store = InMemoryStore()
+    fresh, used = _issue(approver="alex"), _issue(approver="sam")
+    await _spend(store, used)
+    with pytest.raises(ApprovalError, match="already been used"):
+        await _spend(store, fresh, used)
+    await _spend(store, fresh)   # still spendable: the failed call released it
+
+
+async def test_concurrent_spends_of_one_grant_have_one_winner():
+    store = InMemoryStore()
+    grant = _issue()
+    results = await asyncio.gather(
+        *[_spend(store, grant) for _ in range(20)], return_exceptions=True
+    )
+    assert sum(r is None for r in results) == 1
+    assert all(isinstance(r, ApprovalError) for r in results if r is not None)
+
+
+async def test_spent_record_outlives_the_grant_it_names_by_a_grace_period_then_goes():
+    store = InMemoryStore()
+    long_gone = (datetime.now(UTC) - timedelta(hours=1)).isoformat().encode()
+    just_expired = (datetime.now(UTC) - timedelta(seconds=5)).isoformat().encode()
+    await store.kv.put(_SPENT + "long-gone", long_gone)
+    await store.kv.put(_SPENT + "just-expired", just_expired)
+    await _spend(store, _issue())
+    keys = set(await store.kv.list(_SPENT))
+    assert _SPENT + "long-gone" not in keys
+    assert _SPENT + "just-expired" in keys   # clock skew between replicas
+
+
+async def test_an_unverifiable_grant_is_refused_before_anything_is_recorded():
+    store = InMemoryStore()
+    with pytest.raises(ApprovalError, match="signature mismatch"):
+        await _spend(store, _issue(secret=b"another-key"))
+    assert await store.kv.list(_SPENT) == []
+
+
+async def test_spend_returns_what_it_claimed_and_release_frees_it():
+    store = InMemoryStore()
+    grant = _issue()
+    claimed = await spend_grants((grant,), secret=SECRET, store=store.kv)
+    assert len(claimed) == 1
+    await release_grants(claimed, store=store.kv)
+    await _spend(store, grant)   # usable again
+
+
+class _FailingDelete:
+    """A store whose delete fails for chosen keys."""
+
+    def __init__(self, kv, fail_for):
+        self._kv, self._fail_for = kv, fail_for
+
+    def __getattr__(self, name):
+        return getattr(self._kv, name)
+
+    async def delete(self, key):
+        if any(marker in key for marker in self._fail_for):
+            raise ConnectionError("delete failed")
+        await self._kv.delete(key)
+
+
+async def test_a_failed_release_does_not_strand_the_other_claims_or_hide_the_cause():
+    store = InMemoryStore()
+    g1, g2, g3 = _issue(approver="a"), _issue(approver="b"), _issue(approver="c")
+    first_id = verify_grant(g1, SECRET).grant_id
+    await _spend(store, g3)                               # g3 is already spent
+    flaky = _FailingDelete(store.kv, fail_for=[first_id])
+    with pytest.raises(ApprovalError, match="already been used"):   # not ConnectionError
+        await spend_grants((g1, g2, g3), secret=SECRET, store=flaky)
+    await _spend(store, g2)                               # g2 was released despite g1's failure
+
+
+async def test_a_record_with_a_timezone_less_timestamp_is_left_alone():
+    store = InMemoryStore()
+    await store.kv.put(_SPENT + "foreign", b"2020-01-01")
+    await _spend(store, _issue())
+    assert await store.kv.get(_SPENT + "foreign") == b"2020-01-01"

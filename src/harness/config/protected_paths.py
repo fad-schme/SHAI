@@ -36,6 +36,7 @@ def _declared(config: HarnessConfig) -> Iterator[tuple[str, str | Path | None]]:
         yield "audit_sinks[].config.path", _adapter_path(sink)
     yield "session.store.config.path", _adapter_path(config.session.store)
     yield "session_budget.store.config.path", _adapter_path(config.session_budget.store)
+    yield "check_tool_call.approvals.store.config.path", _adapter_path(config.check_tool_call.approvals.store)
     yield "patterns_db.path", config.patterns_db.path
     yield "patterns_db.store.config.path", _adapter_path(config.patterns_db.store)
     yield "mcp_baseline.path", config.mcp_baseline.path

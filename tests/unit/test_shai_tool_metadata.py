@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from harness.adapters.state_store.memory_store import InMemoryStore
 from harness.agents.agent_config import AgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
@@ -36,7 +37,9 @@ from tests.conftest import RecordingSink
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 _SECRET = b"metadata-test-secret"
-_POLICY = ApprovalPolicy(secret=_SECRET, sensitive_quorum=1, irreversible_quorum=2)
+_POLICY = ApprovalPolicy(
+    secret=_SECRET, sensitive_quorum=1, irreversible_quorum=2, store=InMemoryStore().kv,
+)
 
 # A tool result carrying a destination the user never named — the Pattern C
 # attack shape, with no injection language for a scanner to match.

@@ -144,12 +144,17 @@ check_tool_call:
     secret: "secret://SHAI_APPROVAL_KEY"   # HMAC key for ApprovalGrants
     sensitive_quorum: 1                    # distinct approvers for SENSITIVE
     irreversible_quorum: 2                 # distinct approvers for IRREVERSIBLE
+    store:                                 # required with a secret
+      name: sqlite
+      config: {path: state/approvals.db}   # spent grants; share it across replicas
+    on_error: fail_closed                  # only value accepted; unreachable store denies
 ```
 
 **`approvals` governs layer 3.** SENSITIVE/IRREVERSIBLE tools require a quorum
 of signed `ApprovalGrant`s on `ctx.approvals`. **An empty `secret` denies every
 such tool** — there is no fallback, because an unverifiable approval is what
-grants replaced.
+grants replaced. A grant authorises one call: the allow records it in `store`,
+and a second call presenting it is denied in every process on that store.
 
 Issue grants with `harness.core.approval.sign_grant` / `encode_grant`. Each is
 bound to `(agent_id, tenant_id, tool_name, args_digest, approver_id, expiry)`
@@ -370,6 +375,9 @@ tools:
     tags: [external_write, messaging]
     action: block   # operator's own record of intent — not a second
                     # enforcement path; tag + a policy rule is what denies it
+  - name: read_file
+    tags: [fs]
+    path_args: {path: read}   # checked against the agent's allowed_paths
 ```
 
 At `SHAI.from_yaml()`, the manifest for each declared `transport: mcp`

@@ -36,6 +36,14 @@ class _MemoryKV:
         require_bytes(value)
         self._data[key] = value
 
+    async def put_if_absent(self, key: str, value: bytes) -> bool:
+        # No await between the check and the write: atomic on the event loop.
+        require_bytes(value)
+        if key in self._data:
+            return False
+        self._data[key] = value
+        return True
+
     async def batch_put(self, items: dict[str, bytes]) -> None:
         # Validate everything first, then update: nothing awaits, so nothing
         # can interleave — atomic by construction on the single-threaded

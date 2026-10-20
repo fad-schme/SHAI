@@ -8,10 +8,12 @@ Section 4 — Integration through check_tool_call.run(): confirms both checks
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
 
+from harness.adapters.state_store.memory_store import InMemoryStore
 from harness.agents.agent_config import AgentConfig
 from harness.audit.emitter import AuditEmitter
 from harness.boundaries import check_tool_call
@@ -35,7 +37,9 @@ def make_agent(tool_name: str = "pay_invoice") -> AgentConfig:
 
 
 _SECRET = b"approval-test-secret"
-_POLICY = ApprovalPolicy(secret=_SECRET, sensitive_quorum=1, irreversible_quorum=2)
+_POLICY = ApprovalPolicy(
+    secret=_SECRET, sensitive_quorum=1, irreversible_quorum=2, store=InMemoryStore().kv,
+)
 
 
 def _grants(tool_name: str, args: dict[str, Any], *approvers: str,
@@ -406,6 +410,216 @@ async def test_reversible_tool_with_no_rules_unaffected():
     assert gate.allowed
     assert len(sink.events) == 1
     assert sink.events[0].decision == Decision.ALLOW
+
+
+# ── Section 5: a grant authorises one call ───────────────────────────────
+
+_SPENT = "approval_grant:"
+
+
+def _policy(store=None, **kwargs) -> ApprovalPolicy:
+    return ApprovalPolicy(
+        secret=_SECRET, sensitive_quorum=1, irreversible_quorum=2,
+        store=store if store is not None else InMemoryStore().kv, **kwargs,
+    )
+
+
+def _pay(irreversibility=Irreversibility.SENSITIVE, tags=("financial",)) -> Tool:
+    return Tool(name="pay_invoice", tags=list(tags), irreversibility=irreversibility)
+
+
+async def test_a_grant_allows_one_call_and_denies_the_next():
+    policy = _policy()
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    first, _ = await _gate(_pay(), {}, ctx=ctx, approvals=policy)
+    second, sink = await _gate(_pay(), {}, ctx=ctx, approvals=policy)
+    assert first.allowed
+    assert not second.allowed
+    assert "already been used" in second.deny_reason
+    assert len(sink.events) == 1 and sink.events[0].decision == Decision.DENY
+
+
+async def test_a_grant_spent_through_one_policy_is_refused_through_another_on_the_store():
+    kv = InMemoryStore().kv
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    first, _ = await _gate(_pay(), {}, ctx=ctx, approvals=_policy(kv))
+    second, _ = await _gate(_pay(), {}, ctx=ctx, approvals=_policy(kv))
+    assert first.allowed and not second.allowed
+
+
+async def test_every_grant_of_a_quorum_is_spent_by_one_allowed_call():
+    policy = _policy()
+    grants = _grants("pay_invoice", {}, "alex", "sam")
+    tool = _pay(Irreversibility.IRREVERSIBLE)
+    first, _ = await _gate(tool, {}, ctx=AgentContext(agent_id="test_agent", approvals=grants),
+                           approvals=policy)
+    assert first.allowed
+    assert len(await policy.store.list(_SPENT)) == 2
+    for single in grants:
+        again, _ = await _gate(
+            tool, {}, ctx=AgentContext(agent_id="test_agent", approvals=(single,)),
+            approvals=_policy(policy.store, ),
+        )
+        assert not again.allowed
+
+
+async def test_a_call_denied_after_layer_3_leaves_its_grant_unspent():
+    policy = _policy()
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    # "write" is outside the agent's capability set: layer 4 refuses after layer 3 verified.
+    denied, _ = await _gate(_pay(tags=("financial", "write")), {}, ctx=ctx, approvals=policy)
+    assert not denied.allowed
+    assert await policy.store.list(_SPENT) == []
+    allowed, _ = await _gate(_pay(), {}, ctx=ctx, approvals=policy)
+    assert allowed.allowed
+
+
+async def test_concurrent_calls_with_one_grant_allow_exactly_one():
+    policy = _policy()
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    results = await asyncio.gather(
+        *[_gate(_pay(), {}, ctx=ctx, approvals=policy) for _ in range(15)]
+    )
+    assert sum(gate.allowed for gate, _ in results) == 1
+    assert all(len(sink.events) == 1 for _, sink in results)
+
+
+async def test_a_reversible_tool_does_not_spend_the_grants_on_the_context():
+    policy = _policy()
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    gate, _ = await _gate(_pay(Irreversibility.REVERSIBLE), {}, ctx=ctx, approvals=policy)
+    assert gate.allowed
+    assert await policy.store.list(_SPENT) == []
+
+
+async def test_approvals_without_a_store_deny_rather_than_skip_the_spend():
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    gate, sink = await _gate(
+        _pay(), {}, ctx=ctx, approvals=ApprovalPolicy(secret=_SECRET),
+    )
+    assert not gate.allowed
+    assert "approvals store" in gate.deny_reason
+    assert len(sink.events) == 1
+
+
+class _DeadKV:
+    name = "dead"
+
+    async def list(self, prefix):
+        raise ConnectionError("store unreachable")
+
+    put_if_absent = get = delete = list
+
+
+async def test_an_unreachable_store_denies_with_one_event_and_no_exception():
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    gate, sink = await _gate(_pay(), {}, ctx=ctx, approvals=_policy(_DeadKV()))
+    assert not gate.allowed
+    assert "approvals store" in gate.deny_reason
+    assert "unreachable" not in gate.deny_reason
+    assert len(sink.events) == 1 and sink.events[0].decision == Decision.DENY
+
+
+async def test_the_reuse_denial_carries_no_argument_value():
+    policy = _policy()
+    args = {"note": "AKIAIOSFODNN7EXAMPLE_hunter2"}
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", args, "alex"))
+    await _gate(_pay(), args, ctx=ctx, approvals=policy)
+    gate, sink = await _gate(_pay(), args, ctx=ctx, approvals=policy)
+    assert not gate.allowed
+    assert "AKIA" not in gate.deny_reason and "hunter2" not in gate.deny_reason
+    assert "AKIA" not in str(sink.events[0].model_dump())
+
+
+async def test_a_token_mint_failure_denies_with_one_event_and_gives_the_grant_back():
+    policy = _policy()
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+
+    def broken_mint():
+        raise RuntimeError("token mint failed: secret-detail")
+
+    tool, sink = _pay(), RecordingSink()
+    gate = await check_tool_call.run(
+        tool.name, {}, ctx, agent_config=make_agent(tool.name), tools={tool.name: tool},
+        policy=RuleBasedPolicy(), arg_scanners=[], emitter=AuditEmitter([sink]),
+        tenant_id="test", approvals=policy, issue_token=broken_mint,
+    )
+    assert not gate.allowed
+    assert "secret-detail" not in gate.deny_reason
+    assert len(sink.events) == 1 and sink.events[0].decision == Decision.DENY
+    assert await policy.store.list(_SPENT) == []
+    retry, _ = await _gate(tool, {}, ctx=ctx, approvals=policy)
+    assert retry.allowed
+
+
+async def test_a_token_mint_failure_denies_a_call_that_carries_no_grants_too():
+    tool, sink = Tool(name="search", tags=["read"]), RecordingSink()
+
+    def broken_mint():
+        raise RuntimeError("boom")
+
+    gate = await check_tool_call.run(
+        tool.name, {}, AgentContext(agent_id="test_agent"),
+        agent_config=make_agent(tool.name), tools={tool.name: tool},
+        policy=RuleBasedPolicy(), arg_scanners=[], emitter=AuditEmitter([sink]),
+        tenant_id="test", issue_token=broken_mint,
+    )
+    assert not gate.allowed
+    assert len(sink.events) == 1 and sink.events[0].decision == Decision.DENY
+
+
+async def test_grants_are_released_once_when_the_deny_event_also_cannot_be_written():
+    """A second release could delete a claim another call made in between."""
+    from harness.core.errors import AuditEmissionError
+
+    kv = InMemoryStore().kv
+    deletes: list[str] = []
+    real_delete = kv.delete
+
+    async def counting_delete(key):
+        deletes.append(key)
+        await real_delete(key)
+
+    kv.delete = counting_delete
+    policy = _policy(kv)
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+
+    def broken_mint():
+        raise RuntimeError("boom")
+
+    tool = _pay()
+    with pytest.raises(AuditEmissionError):
+        await check_tool_call.run(
+            tool.name, {}, ctx, agent_config=make_agent(tool.name), tools={tool.name: tool},
+            policy=RuleBasedPolicy(), arg_scanners=[], emitter=AuditEmitter([_DeadSink()]),
+            tenant_id="test", approvals=policy, issue_token=broken_mint,
+        )
+    assert len(deletes) == 1
+
+
+class _DeadSink:
+    name = "dead"
+
+    async def emit(self, event):
+        raise OSError("sink is down")
+
+    async def close(self):
+        pass
+
+
+async def test_a_total_audit_outage_gives_the_grant_back():
+    from harness.core.errors import AuditEmissionError
+
+    policy = _policy()
+    ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
+    tool = _pay()
+    with pytest.raises(AuditEmissionError):
+        await check_tool_call.run(
+            tool.name, {}, ctx, agent_config=make_agent(tool.name), tools={tool.name: tool},
+            policy=RuleBasedPolicy(), arg_scanners=[], emitter=AuditEmitter([_DeadSink()]),
+            tenant_id="test", approvals=policy,
+        )
+    assert await policy.store.list(_SPENT) == []
 
 
 # ── Invariant 3: no violation message may carry the argument value ────────

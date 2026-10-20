@@ -134,6 +134,17 @@ class NormalizationConfig(BaseModel, frozen=True, extra="forbid"):
     max_expansion_bytes: int = 8388608
 
 
+def _approvals_on_error(value: OnError) -> OnError:
+    """The approvals store is the only record of which grants are spent, so a
+    store that cannot answer leaves no way to tell a fresh grant from a reused
+    one. Only `fail_closed` is accepted; `fail_open` would turn an outage into
+    unlimited reuse of every grant."""
+    if value != OnError.FAIL_CLOSED:
+        raise ValueError("approvals.on_error must be 'fail_closed': a store that cannot "
+                         "answer cannot show a grant is unspent")
+    return value
+
+
 def _store_on_error(value: OnError) -> OnError:
     """A state store either is reachable or is not: there is no degraded
     verdict for a call the store could not answer, so `degrade` (a scanner
@@ -381,10 +392,30 @@ class ApprovalsConfig(BaseModel, frozen=True, extra="forbid"):
         Distinct approvers required. Quorum counts distinct `approver_id`s
         across the grants on AgentContext.approvals, so 2 means two people
         signed independently — two grants from one approver is still one.
+
+    store:
+        Where the gate records the grants it has spent, so each grant
+        authorises one call. Required when `secret` is set, and named
+        explicitly like every state store (see StoreRef). Every process that
+        gates calls for one deployment points at the same backend: a grant
+        spent through one replica is refused through the others. `memory`
+        covers a single process.
+
+    on_error:
+        What happens when the store cannot answer. Only `fail_closed` (the
+        default) is accepted: the call is denied, with one audit event.
     """
     secret:              str = ""
     sensitive_quorum:    int = Field(default=1, ge=1)
     irreversible_quorum: int = Field(default=2, ge=1)
+    store:               StoreRef | None = None
+    on_error:            Annotated[OnError, AfterValidator(_approvals_on_error)] = OnError.FAIL_CLOSED
+
+    @model_validator(mode="after")
+    def _secret_needs_store(self) -> ApprovalsConfig:
+        if self.secret and self.store is None:
+            raise ValueError("approvals.store is required when approvals.secret is set")
+        return self
 
 
 class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):

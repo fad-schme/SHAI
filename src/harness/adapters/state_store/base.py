@@ -48,6 +48,19 @@ class KVStore(Protocol):
         """Write `value` at `key`, replacing any existing value."""
         ...
 
+    async def put_if_absent(self, key: str, value: bytes) -> bool:
+        """Write `value` at `key` only when `key` is absent; return whether
+        this call wrote it.
+
+        Atomic across every caller of the backend — tasks, threads and
+        processes sharing it — so exactly one of any number of concurrent
+        callers gets True. A get followed by a put cannot give that guarantee;
+        this is the primitive for a record that may be claimed once, such as a
+        spent approval grant. A networked adapter maps it to its backend's
+        conditional write.
+        """
+        ...
+
     async def batch_put(self, items: dict[str, bytes]) -> None:
         """Write every item, atomically: all keys land or none do.
 

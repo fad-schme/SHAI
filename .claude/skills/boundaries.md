@@ -65,7 +65,7 @@ result = await my_dispatch(tool_name, args)
 |---|---|---|
 | Pre-gate | Revocation + rate limit + session execution budget + agent registered? + MCP manifest approval | No |
 | L1 | `tool_name` in `allowed_tool_names`? | No |
-| L2 | Argument rules (deterministic parameter constraints) | No |
+| L2 | Argument rules and path arguments — each `path_args` argument must resolve outside the protected set and inside the agent's `allowed_paths` | No |
 | L3 | Irreversibility gate (SENSITIVE/IRREVERSIBLE require a quorum of signed `ApprovalGrant`s) | No |
 | L4 | `tool.tags ⊆ allowed_tags`? (the agent's own, narrowed by subagent) | No |
 | L5 | Policy rules (manifest denials → subagent → parent) | By design |
@@ -87,7 +87,9 @@ bound to the tool, agent, and source:
 gate.dispatch_token  # str | None — pass to source.call()
 ```
 `ShaiTransport` checks it on every MCP request; a local tool checks it with
-`verify_tool_dispatch` (`tool_dispatch_check` event).
+`verify_tool_dispatch` (`tool_dispatch_check` event). A local tool opens files
+with `harness.fs.open(path, mode)` inside `dispatch_scope`, which repeats the L2
+path check at the moment of use and refuses a link in the final component.
 
 ---
 

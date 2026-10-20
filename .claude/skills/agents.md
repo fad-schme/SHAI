@@ -41,6 +41,12 @@ allowed_tags:
   - internal
   - external_write
 
+# Filesystem paths this agent may read and write (absolute files or directories).
+# A write entry also grants read. No block means no filesystem access.
+allowed_paths:
+  read:  [/srv/workspace, /srv/reference]
+  write: [/srv/workspace/out]
+
 # Tool source activation — names must match sources declared in harness.yaml
 sources:
   - docs_local
@@ -70,6 +76,8 @@ sub_agents:
   - id: research_sub
     allowed_tool_names: [search_docs]      # ⊆ parent allowed_tool_names
     allowed_tags: [read, internal]         # ⊆ parent allowed_tags
+    allowed_paths:
+      read: [/srv/reference]               # inside a parent entry of the same mode
     sources: [docs_local]
     policy_rules:
       - id: research_deny_write
@@ -89,6 +97,11 @@ These are validated when the YAML is parsed — not at gate time.
 - `allowed_tool_names` and `allowed_tags` must be non-empty
 - Subagent `allowed_tool_names` ⊆ parent `allowed_tool_names`
 - Subagent `allowed_tags` ⊆ parent `allowed_tags`
+- `allowed_paths` entries must be absolute; a subagent's entries sit inside a
+  parent entry of the same mode (a parent `write` entry also covers a subagent
+  `read` entry)
+- An `allowed_paths` entry that equals, contains or sits inside a protected SHAI
+  path raises `ConfigError` at `load_agent()` / `reload_agent()`
 - Subagent `id` values must be unique within the parent
 - `deny` rules require a non-empty `reason`
 - `redact` rules require a `redact` mapping
@@ -135,6 +148,38 @@ allowed_tags: [read, internal, external_write]
 sub_agents:
   - id: reader_sub
     allowed_tags: [read, internal]   # ⊆ parent
+```
+
+---
+
+## `allowed_paths` — the filesystem grant
+
+`allowed_paths` lists the absolute files and directories an agent may read
+(`read`) and write (`write`). A directory covers everything beneath it, and a
+`write` entry also grants read. No block means no filesystem access.
+
+For each argument a tool declares in `path_args`, gate layer 2 resolves the
+value to its real location (`..` and symlinks resolved, on every call) and
+denies the call unless it sits outside the protected set and inside the agent's
+grant for the access the tool needs. A subagent context is checked against the
+subagent's own grant.
+
+The protected set is SHAI's own files, derived from `harness.yaml`: audit sink
+files, the pattern DB, the MCP baseline and manifests directory, the revocation
+file, the session and budget stores, the config file and every loaded agent
+definition. A grant overlapping it fails at load, so `/srv` cannot cover
+`/srv/state`.
+
+```yaml
+allowed_paths:
+  read:  [/srv/workspace, /srv/reference]
+  write: [/srv/workspace/out]
+sub_agents:
+  - id: researcher
+    allowed_tool_names: [read_file]
+    allowed_tags: [fs]
+    allowed_paths:
+      read: [/srv/reference]
 ```
 
 ---

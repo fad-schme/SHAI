@@ -34,12 +34,18 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from harness.core.signing import claims_of, decode, encode, sign
+
+if TYPE_CHECKING:
+    from harness.adapters.state_store.base import KVStore
+
+log = logging.getLogger(__name__)
 
 
 class ApprovalError(Exception):
@@ -68,10 +74,16 @@ class ApprovalPolicy:
     secret=None means approvals are not configured. SENSITIVE and IRREVERSIBLE
     tools are then denied outright rather than falling back to a weaker check —
     an unverifiable approval is what this module exists to remove.
+
+    store records the grants the gate has spent (see spend_grants). It is shared
+    by every process that gates calls for one deployment, so a grant spent
+    through one is refused through the others. None denies the call: a grant
+    that cannot be marked used would authorise any number of calls.
     """
     secret:              bytes | None = None
     sensitive_quorum:    int = 1
     irreversible_quorum: int = 2
+    store:               KVStore | None = None
 
 
 # Envelope mechanics — canonical encoding, HMAC, base64url, expiry — live in
@@ -204,3 +216,74 @@ def verify_grants(
             f"{len(approvers)} distinct approver(s) presented, {quorum} required"
         )
     return approvers
+
+
+_SPENT_PREFIX = "approval_grant:"
+
+# A record is kept this long past its grant's expiry. Replicas' clocks differ, and
+# one running ahead must not forget a grant that another still accepts.
+_SPENT_GRACE = timedelta(seconds=60)
+
+
+async def spend_grants(
+    encoded: tuple[str, ...], *, secret: bytes, store: KVStore
+) -> list[str]:
+    """Mark every grant used, so none authorises a second call; return the
+    store keys this call claimed, which `release_grants` gives back.
+
+    Raises ApprovalError when a grant was already used, and nothing stays
+    recorded for the failed call: a call that is refused leaves its grants usable.
+    The claim is the store's atomic put-if-absent, so of any number of concurrent
+    calls, in this process or others on the same store, exactly one succeeds.
+
+    The gate calls this as the last step before it allows, with grants it has
+    already verified; they are decoded again here because verification is pure
+    and spending is not.
+    """
+    grants = list({g.grant_id: g for g in (verify_grant(item, secret) for item in encoded)}.values())
+    await _forget_expired(store)
+    claimed: list[str] = []
+    try:
+        for grant in grants:
+            key = _SPENT_PREFIX + grant.grant_id
+            if not await store.put_if_absent(key, grant.expires_at.isoformat().encode()):
+                raise ApprovalError(f"grant {grant.grant_id} has already been used")
+            claimed.append(key)
+    except BaseException:
+        await release_grants(claimed, store=store)
+        raise
+    return claimed
+
+
+async def release_grants(keys: list[str], *, store: KVStore) -> None:
+    """Give back grants a call claimed but did not use.
+
+    Every key is attempted. A delete that fails is logged and the rest still
+    run, so one store error cannot strand the other grants, and the error that
+    caused the release is the one the caller sees. A grant whose release failed
+    stays spent: the approver signs again, which errs on the safe side.
+    """
+    for key in keys:
+        try:
+            await store.delete(key)
+        except Exception as e:
+            log.error("spent-grant release failed — the grant stays spent",
+                      extra={"op": "release_grants", "grant_key": key,
+                             "error_type": type(e).__name__})
+
+
+async def _forget_expired(store: KVStore) -> None:
+    """Drop records whose grant can no longer verify, so the store stays bounded."""
+    cutoff = datetime.now(UTC) - _SPENT_GRACE
+    for key in await store.list(_SPENT_PREFIX):
+        raw = await store.get(key)
+        if raw is None:
+            continue
+        try:
+            expires_at = datetime.fromisoformat(raw.decode())
+        except ValueError:
+            continue    # not a record this module wrote; leave it for its owner
+        if expires_at.tzinfo is None:
+            continue    # this module writes aware timestamps only
+        if expires_at < cutoff:
+            await store.delete(key)

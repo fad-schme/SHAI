@@ -73,6 +73,13 @@ at all — it is the absence of a restriction, not a grant, so an operator
 rule denying that tool still denies. The manifest adds denials, never
 removes them.
 
+A tool that reaches the filesystem names its path arguments, each with the
+access it needs: `path_args: {path: read}` (or `write`). The gate checks them
+against the protected set and the calling agent's `allowed_paths`, as for a
+local tool. A tool tagged `fs` must declare `path_args`; the source is refused
+at load otherwise. `path_args` is part of the manifest's hash, so changing it
+requires re-onboarding.
+
 ---
 
 ## The approval gate

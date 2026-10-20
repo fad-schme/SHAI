@@ -91,6 +91,10 @@ check_tool_call:
     secret: "secret://SHAI_APPROVAL_KEY"
     sensitive_quorum: 1                  # one approver
     irreversible_quorum: 2               # two-person rule
+    store:                               # spent grants: each authorises one call
+      name: sqlite
+      config:
+        path: state/approvals.db
 
 audit_sinks:
   - name: file

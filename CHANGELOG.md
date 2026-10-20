@@ -12,6 +12,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **A failure to sign the dispatch token or build the allow event denies the
+  call.** The gate let that exception leave `check_tool_call` with no verdict
+  and no audit event. It now returns a denial with one event, and a call
+  authorised by approval grants gives them back.
+- **An approval grant authorises one call.** The gate verified a grant's
+  signature, expiry and binding but kept no record of its use, so the same grant
+  passed again for any identical call until it expired. The allow now records the
+  grant in `check_tool_call.approvals.store`, shared by every process on that
+  backend, and a second call presenting it is denied; a call refused for another
+  reason leaves its grants usable. `approvals.store` is required when
+  `approvals.secret` is set, and `KVStore` gains an atomic `put_if_absent`.
 - **An agent rule that names `source_tags` is rejected at load.** The tool
   matcher does not read `source_tags`, so such a rule matched every tool call:
   a deny rule denied all of them. `load_agent()` now fails with the rule id, for

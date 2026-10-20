@@ -183,6 +183,11 @@ check_tool_call:
     secret: "secret://SHAI_APPROVAL_KEY"   # HMAC-SHA256, required
     sensitive_quorum: 1                    # one approver
     irreversible_quorum: 2                 # two-person rule
+    store:                                 # required with a secret
+      name: sqlite
+      config:
+        path: state/approvals.db
+    on_error: fail_closed                  # the only accepted value: an unreachable store denies
 ```
 
 **With no `secret`, every `SENSITIVE` and `IRREVERSIBLE` tool is denied.** There is no weaker check to fall back to: a tool classified as needing verified approval, in a deployment that cannot verify one, is a tool that cannot run.
@@ -205,7 +210,7 @@ ctx = ctx.model_copy(update={"approvals": (encode_grant(grant),)})
 gate = await harness.check_tool_call("pay_invoice", args, ctx)
 ```
 
-SHAI verifies the signature and the binding offline — it never calls out. Each grant is bound to one agent, tenant, tool, and **argument set**, so approving a $5 refund does not authorise a $50,000 one, and a grant for one tool cannot be replayed against another. Quorum counts *distinct* `approver_id`s, so two grants from one person is still one approver.
+SHAI verifies the signature and the binding offline — it never calls out. Each grant is bound to one agent, tenant, tool, and **argument set**, so approving a $5 refund does not authorise a $50,000 one, and a grant for one tool cannot be replayed against another. A grant also authorises **one call**: the gate records it in `approvals.store` when it allows the call, and a second call presenting it is denied. Point every replica of a deployment at the same backend and a grant spent through one is refused through the others; a call the gate denies for another reason leaves its grants unspent. Spent-grant records are kept 60 seconds past the grant's expiry, so replica clocks should agree within 60 seconds. Quorum counts *distinct* `approver_id`s, so two grants from one person is still one approver.
 
 Two things to know. `scope_context_for_subagent()` does **not** copy `approvals` onto the child context, so a delegated call is approved on its own terms unless you pass grants down deliberately — a grant binds a tool and its arguments, never a caller role, and whether a subagent may reach that tool at all is settled earlier by `allowed_tool_names` and `allowed_tags`. And the approvers land on the gate's allow event as `extra.approvers`, so the audit trail can answer who authorised an irreversible action.
 
@@ -440,7 +445,7 @@ A malformed value (a non-list `owners`, an unparseable date, an unknown `delegat
 
 ### Subagents
 
-Declare inline. Each subagent must be a **strict subset** of the parent's capabilities — narrower `allowed_tags`, narrower `allowed_tool_names`. Validated at `load_agent()` time; a config that gives a subagent a tag the parent doesn't have is a startup error.
+Declare inline. Each subagent must be a **strict subset** of the parent's capabilities — narrower `allowed_tags`, narrower `allowed_tool_names`, narrower `allowed_paths`. Validated at `load_agent()` time; a config that gives a subagent a tag the parent doesn't have is a startup error.
 
 ```yaml
 sub_agents:

@@ -46,8 +46,15 @@ async def transfer_funds(recipient: str, amount: int) -> str: ...
   on an argument the agent resolves from a read, it denies ordinary work.
 - `irreversibility` — `SENSITIVE` / `IRREVERSIBLE` make layer 3 deny until the
   approval quorum is met. Default `REVERSIBLE` needs none.
+- `path_args` — the arguments that name filesystem paths, each mapped to the
+  access the tool needs: `path_args={"src": "read", "dst": "write"}`. Layer 2
+  checks them against the agent's `allowed_paths` and the protected set. A tool
+  tagged `fs` must declare them; registration refuses it otherwise, whatever
+  its source.
 
-MCP-discovered tools can't declare either — the manifest has no field for them.
+MCP-discovered tools can't declare `argument_rules` or `irreversibility` — the
+manifest has no field for them. They declare `path_args` in the manifest (see
+`connectors.md`).
 
 ---
 
@@ -291,7 +298,12 @@ default), and forwarded but recorded with no `token_id` under `audit`.
 per token for an unexpired token issued for this tool, agent and local source,
 and otherwise raises `DispatchRefused` — which every integration renders as
 the standard denial. Each check emits one `tool_dispatch_check` event with the
-call's `token_id`. The integrations run tools inside
+call's `token_id`. A tool that touches a file opens it with
+`harness.fs.open(path, mode)` instead of `open()`: inside `dispatch_scope` it
+resolves the path again against the agent's `allowed_paths` and the protected
+set, refuses a link in the final component, and raises `DispatchRefused` on
+refusal, with one `tool_dispatch_check` event that carries no path. The
+integrations run tools inside
 `harness.dispatch_scope(ctx, gate)`, where the check finds the token; a manual
 loop opens it around its own call:
 

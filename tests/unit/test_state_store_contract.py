@@ -54,6 +54,35 @@ async def test_kv_batch_put(store):
     assert await store.kv.get("y") == b"2"
 
 
+async def test_kv_put_if_absent_first_writer_wins(store):
+    assert await store.kv.put_if_absent("k", b"first") is True
+    assert await store.kv.put_if_absent("k", b"second") is False
+    assert await store.kv.get("k") == b"first"
+    await store.kv.delete("k")
+    assert await store.kv.put_if_absent("k", b"third") is True
+    assert await store.kv.get("k") == b"third"
+
+
+async def test_kv_put_if_absent_has_one_winner_among_concurrent_writers(store):
+    import asyncio
+    results = await asyncio.gather(
+        *[store.kv.put_if_absent("race", str(i).encode()) for i in range(25)]
+    )
+    assert results.count(True) == 1
+
+
+async def test_kv_put_if_absent_is_shared_between_instances_on_one_file(tmp_path):
+    path = str(tmp_path / "shared.db")
+    a, b = SQLiteStore(path=path), SQLiteStore(path=path)
+    try:
+        assert await a.kv.put_if_absent("k", b"a") is True
+        assert await b.kv.put_if_absent("k", b"b") is False
+        assert await b.kv.get("k") == b"a"
+    finally:
+        await a.close()
+        await b.close()
+
+
 # ── LogStore contract ─────────────────────────────────────────────────────
 
 async def test_log_tail_is_newest_first_and_bounded(store):
