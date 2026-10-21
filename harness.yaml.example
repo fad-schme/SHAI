@@ -63,6 +63,7 @@ scan_input:
       action: block            # always hard-block injection attempts
     - name: jailbreak_scan       # guardrail-integrity attacks: persona override, instruction override, etc.
     - name: identity_spoof_scan  # agentic identity spoofing: claimed orchestrator/system authority
+    - name: exec_config_scan     # configuration that turns into execution: process adapters, command fields, hooks
     - name: regex_pii
       action: redact          # redact PII instead of blocking
       redact_with: "***"      # placeholder (use {category} for category name)
@@ -78,6 +79,7 @@ scan_file:
     - name: injection_scan
     - name: jailbreak_scan
     - name: regex_pii
+    - name: exec_config_scan
 
 # ── Tool result scanning (indirect injection) ───────────────────────
 scan_tool_result:
@@ -90,6 +92,7 @@ scan_tool_result:
     # or search result carrying "ignore your previous instructions" is an
     # indirect-injection payload, not a user asking for a jailbreak.
     - name: jailbreak_scan
+    - name: exec_config_scan
 
 # ── Tool call gate ────────────────────────────────────────────────────────
 check_tool_call:
@@ -100,6 +103,7 @@ check_tool_call:
     max_calls_per_tool: 10
   scanners:
     - name: regex_pii
+    - name: exec_config_scan
   scan_args_for_tags:
     - sensitive
 

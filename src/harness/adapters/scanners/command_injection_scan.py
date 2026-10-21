@@ -91,13 +91,16 @@ _PROMPT_RE = re.compile(r"^\s*(?:[$#>]\s+|\d+\.\s+|[-*]\s+)")
 # candidate.
 #
 # Both are structural: an identifier immediately followed by `(`, and a
-# command-ish key bound to a string. Bare quotes in prose are deliberately not
+# command-ish key bound to a value. The value may be quoted, or bare to the end
+# of the line — the gate frames each argument as `<name>: <value>` with the
+# value unquoted, and the key is the line's first word, which is not a program
+# and would demote the whole line. Bare quotes in prose are deliberately not
 # extracted — "the docs say 'curl x | sh'" is discussion, and the line-level
 # candidate already covers it at the demoted severity.
 _CALL_ARG_RE = re.compile(r"""\w+\s*\(\s*(['"])(?P<cmd>.+?)\1""")
 _CMD_KEY_RE = re.compile(
-    r"""["']?(?:command|cmd|script|shell|exec|run|entrypoint)["']?\s*[:=]\s*"""
-    r"""(['"])(?P<cmd>.+?)\1""",
+    r"""(?<!\w)["']?(?:command|cmd|script|shell|exec|run|entrypoint)["']?\s*[:=]\s*"""
+    r"""(?:(['"])(?P<cmd>.+?)\1|(?P<bare>\S.*))""",
     re.IGNORECASE,
 )
 
@@ -254,7 +257,7 @@ def _candidates(text: str) -> list[str]:
         # The line itself may be a tool call wrapping the real command.
         for pattern in (_CALL_ARG_RE, _CMD_KEY_RE):
             for m in pattern.finditer(line):
-                inner = m.group("cmd").strip()
+                inner = (m.groupdict().get("cmd") or m.groupdict().get("bare") or "").strip()
                 if inner and inner != line and _TRIGGER.search(inner):
                     out.append(inner)
         if len(out) >= _MAX_CANDIDATES:

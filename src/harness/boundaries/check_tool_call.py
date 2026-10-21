@@ -40,7 +40,7 @@ from harness.core.errors import (
     PolicyEvaluationError,
 )
 from harness.core.events import AuditEvent, now_ms
-from harness.core.normalize import canonicalize_config
+from harness.core.normalize import canonicalize_config, with_layout
 from harness.core.types import BoundaryName, Decision, ScanAction, ScanStatus, Severity
 from harness.core.verdicts import GateDecision
 
@@ -304,10 +304,11 @@ async def run(
         ]
         _state = scan_state if scan_state is not None else ScanState()
 
-        def _arg_views(text: str) -> list[str]:
+        def _arg_views(text: str) -> tuple[list[str], str | None]:
             if normalization is not None and normalization.enabled:
-                return canonicalize_config(text, normalization).views
-            return [text]
+                norm = canonicalize_config(text, normalization)
+                return norm.views, norm.layout
+            return [text], None
 
         class _BreakerOpen(Exception):
             """The scanner was skipped because its breaker is open. A skip is
@@ -342,12 +343,15 @@ async def run(
             # inside the try, so a normalization failure fails closed here as
             # a scanner exception does.
             views: list[str] | None = None
+            layout: str | None = None
             for configured in arg_scanners:
                 scanner = configured.scanner
                 try:
                     if views is None:
-                        views = _arg_views(text)
-                    result = await _guarded_arg_scan(configured, views)
+                        views, layout = _arg_views(text)
+                    result = await _guarded_arg_scan(
+                        configured, with_layout(scanner, views, layout)
+                    )
                 except Exception as exc:
                     if not isinstance(exc, _BreakerOpen):
                         _state.get_breaker(scanner).record_failure()

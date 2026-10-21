@@ -215,11 +215,13 @@ def _refs(*names: str) -> list[AdapterRef]:
 # the list outright; `scanners: []` leaves the built-in backstop alone
 # (heuristic_scan for a text boundary, the structural pass for scan_file).
 RECOMMENDED_INPUT_SCANNERS       = ("regex_pii", "injection_scan", "jailbreak_scan",
-                                    "identity_spoof_scan")
+                                    "identity_spoof_scan", "exec_config_scan")
 RECOMMENDED_OUTPUT_SCANNERS      = ("regex_pii",)
 RECOMMENDED_TOOL_RESULT_SCANNERS = ("injection_scan", "identity_spoof_scan",
-                                    "jailbreak_scan")
-RECOMMENDED_FILE_SCANNERS        = ("injection_scan", "jailbreak_scan", "regex_pii")
+                                    "jailbreak_scan", "exec_config_scan")
+RECOMMENDED_FILE_SCANNERS        = ("injection_scan", "jailbreak_scan", "regex_pii",
+                                    "exec_config_scan")
+RECOMMENDED_GATE_SCANNERS        = ("exec_config_scan",)
 
 
 class BoundaryConfig(BaseModel, frozen=True, extra="forbid"):
@@ -423,7 +425,9 @@ class ToolCallGateConfig(BaseModel, frozen=True, extra="forbid"):
     # Named `scanners` like every scan_* boundary. These run over the tool's
     # arguments at gate layer 7, not over free text, but the key an operator
     # writes is the same one everywhere.
-    scanners:           ScannerRefs           = Field(default_factory=list)
+    scanners:           ScannerRefs           = Field(
+        default_factory=lambda: _refs(*RECOMMENDED_GATE_SCANNERS)
+    )
     scan_args_for_tags: list[str]             = Field(default_factory=lambda: ["sensitive"])
     rate_limit:         RateLimitConfig       = Field(default_factory=RateLimitConfig)
     execution_budget:   ExecutionBudgetConfig = Field(default_factory=ExecutionBudgetConfig)

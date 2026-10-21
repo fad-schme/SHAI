@@ -50,7 +50,8 @@ scan_input:           # or scan_output, scan_tool_result, scan_file
 | `identity_spoof_scan` | `identity_spoof_patterns.yaml` — messages that claim privileged agent identity or fabricate approval. | High value at `scan_tool_result` — catches authority-completion in poisoned tool results. |
 | `heuristic_scan` | Not YAML-driven. 5 sub-scores: entropy, instruction density, coherence, structural markers, typoglycemia. | Always-on backstop. Catches novel patterns the regex catalogs miss. |
 | `mcp_metadata_scan` | `mcp_metadata_patterns.yaml`. | `scan_mcp_metadata` only. |
-| `command_injection_scan` | Not YAML-driven, and has **no `.l10n.yaml` sibling** — shell syntax is language-independent, so it is the one detector with a single copy. `bashlex` AST shapes: pipeline into an interpreter, `/dev/tcp` redirect, fetch-then-exec, inline interpreter code. | Any boundary, including `check_tool_call`. Requires the `shell` extra; declaring it without `bashlex` raises `ConfigError` at `from_yaml()`. Findings are demoted one level when the statement's leading word is not a program — discussion reports MEDIUM, invocation reports HIGH. `method_family: structural_command`, distinct from `structural_heuristic` so the two corroborate. |
+| `exec_config_scan` | Not YAML-driven, and has **no `.l10n.yaml` sibling** — executable field names are not translated. Reads the structure of a parsed YAML or JSON document (whole text, fenced `yaml`/`json` blocks, the value after a `name:` label): `exec_config.process_adapter` and `exec_config.command_metacharacters` are HIGH, `exec_config.command_field`, `exec_config.lifecycle_hook` and `exec_config.limit_exceeded` are MEDIUM. Rule ids only in findings. | Any boundary. Recommended at `scan_input`, `scan_tool_result`, `scan_file`; the default `check_tool_call.scanners`, run over the arguments of tools tagged in `scan_args_for_tags`. Needs no extra. `method_family: structural_config`. |
+| `command_injection_scan` | Not YAML-driven, and has **no `.l10n.yaml` sibling** — shell syntax is language-independent, so it is the one detector with a single copy. `bashlex` AST shapes: pipeline into an interpreter, `/dev/tcp` redirect, fetch-then-exec, inline interpreter code. | Any boundary, including `check_tool_call`. Requires the `shell` extra; declaring it without `bashlex` raises `ConfigError` at `from_yaml()`. Findings are demoted one level when the statement's leading word is not a program — discussion reports MEDIUM, invocation reports HIGH. At the gate an argument named `command`, `cmd`, `script`, `shell`, `exec`, `run` or `entrypoint` is scanned as a command, quoted or not. `method_family: structural_command`, distinct from `structural_heuristic` so the two corroborate. |
 
 **`on_error`** — how a boundary handles a scanner failure:
 - `fail_closed` (default) — treat as if the scanner blocked; boundary returns BLOCK, emits a SYSTEM/DEGRADED audit event alongside the block.
@@ -137,7 +138,7 @@ check_tool_call:
     max_calls_per_window: 60    # global budget per agent per window
     max_calls_per_tool: 20      # per-tool budget per agent per window
   scanners:
-    - name: regex_pii           # scanners run on tool arguments
+    - name: regex_pii           # scanners run on tool arguments (omitted: exec_config_scan)
   scan_args_for_tags:
     - sensitive                 # only scan args for tools tagged with these
   approvals:

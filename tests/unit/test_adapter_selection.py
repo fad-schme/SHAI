@@ -30,6 +30,7 @@ from harness.policy.rules import RuleBasedPolicy
 _BUILTIN_SCANNERS = [
     "regex_pii", "injection_scan", "heuristic_scan", "mcp_metadata_scan",
     "jailbreak_scan", "identity_spoof_scan", "command_injection_scan",
+    "exec_config_scan",
 ]
 
 

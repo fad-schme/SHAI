@@ -303,6 +303,10 @@ class NormalizationResult:
     # are a prefix of what this input would have produced. A partly examined
     # document must never be indistinguishable from a fully examined one.
     budget_exhausted: bool = False
+    # The folded text with its line structure intact, for a scanner that reads
+    # document structure (see `wants_layout`). None when it equals the surface
+    # view, i.e. for text with nothing to collapse.
+    layout: str | None = None
 
     @property
     def changed(self) -> bool:
@@ -826,7 +830,7 @@ class ViewStream:
     production as a whole, not of any one view.
     """
 
-    __slots__ = ("budget_exhausted", "_views")
+    __slots__ = ("budget_exhausted", "layout", "_views")
 
     def __init__(
         self,
@@ -837,6 +841,8 @@ class ViewStream:
         max_expansion_bytes: int,
     ) -> None:
         self.budget_exhausted = False
+        # Set when iteration starts, from the fold the surface view comes from.
+        self.layout: str | None = None
         self._views = _iter_views(
             text,
             decode=decode,
@@ -876,6 +882,7 @@ def _iter_views(
     streaming the generator exists for.
     """
     folded, uncollapsed, fold_transforms = _fold(text)
+    stream.layout = uncollapsed if uncollapsed != folded else None
     seen = {_digest(folded)}
     yield folded, fold_transforms
 
@@ -933,6 +940,25 @@ def _iter_views(
             depth += 1
 
 
+def wants_layout(scanner: object) -> bool:
+    """True when `scanner` declares `wants_layout = True`.
+
+    The surface view collapses whitespace, which erases the indentation and line
+    breaks a block-style YAML document is made of. A scanner that reads
+    structure sets the attribute and is scanned over the layout view as well
+    (`ViewStream.layout`, `NormalizationResult.layout`); every other scanner is
+    unaffected. This is the one place the attribute is read.
+    """
+    return bool(getattr(scanner, "wants_layout", False))
+
+
+def with_layout(scanner: object, views: list[str], layout: str | None) -> list[str]:
+    """`views` plus the layout view, for a scanner that wants it."""
+    if layout is not None and wants_layout(scanner):
+        return [*views, layout]
+    return views
+
+
 def canonicalize(
     text: str,
     *,
@@ -972,7 +998,10 @@ def canonicalize(
             if name not in transforms:
                 transforms.append(name)
     return NormalizationResult(
-        views=views, transforms=transforms, budget_exhausted=stream.budget_exhausted
+        views=views,
+        transforms=transforms,
+        budget_exhausted=stream.budget_exhausted,
+        layout=stream.layout,
     )
 
 

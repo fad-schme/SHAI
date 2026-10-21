@@ -53,7 +53,9 @@ def _chain(h: SHAI) -> list[str]:
 
 async def test_omitted_block_runs_the_recommended_chain(tmp_path: Path):
     h = await _harness(tmp_path, "")
-    assert _chain(h) == ["injection_scan", "jailbreak_scan", "regex_pii", "heuristic_scan"]
+    assert _chain(h) == [
+        "injection_scan", "jailbreak_scan", "regex_pii", "exec_config_scan", "heuristic_scan",
+    ]
 
 
 async def test_empty_scanner_list_has_only_the_heuristic(tmp_path: Path):

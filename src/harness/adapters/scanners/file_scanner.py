@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING
 
 from harness.adapters.scanners.base import ScanResult
 from harness.core.context import AgentContext
-from harness.core.normalize import canonicalize_config
+from harness.core.normalize import canonicalize_config, with_layout
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 
@@ -989,7 +989,7 @@ class FileContentScanner:
             payloads.append(("image_metadata", metadata))
         return payloads
 
-    def _views(self, payload: str) -> list[str]:
+    def _views(self, payload: str) -> tuple[list[str], str | None]:
         """De-obfuscated views of one extracted payload.
 
         Built once per payload and shared across the whole chain, not once per
@@ -999,8 +999,9 @@ class FileContentScanner:
         call rather than inside its scanner loop.
         """
         if self._normalization is not None and self._normalization.enabled:
-            return canonicalize_config(payload, self._normalization).views
-        return [payload]
+            norm = canonicalize_config(payload, self._normalization)
+            return norm.views, norm.layout
+        return [payload], None
 
     async def _scan_views(
         self, scanner, views: list[str], ctx: AgentContext
@@ -1053,13 +1054,14 @@ class FileContentScanner:
         """Every chain scanner over every view of every extracted payload."""
         findings: list[Finding] = []
         for surface, payload in payloads:
-            views = self._views(payload)
+            views, layout = self._views(payload)
             for scanner in self._text_scanners:
+                scanner_views = with_layout(scanner, views, layout)
                 # Exceptions propagate. run_scan owns the on_error policy, and
                 # a failure here no longer costs the structural findings —
                 # those come from a different scanner.
                 text_result = ScanResult(
-                    findings=await self._scan_views(scanner, views, ctx)
+                    findings=await self._scan_views(scanner, scanner_views, ctx)
                 )
                 # Carry the producing scanner's technique, not this composite's.
                 # run_scan only fills in families a scanner left unset, so a

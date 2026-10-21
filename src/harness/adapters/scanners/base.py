@@ -81,6 +81,9 @@ class Scanner(Protocol):
                          # findings stamps each one with its producer's family and
                          # declares "unknown" here — run_scan fills in only the
                          # families a scanner left unset.
+    # Optional: a scanner that reads indentation and line breaks sets
+    # `wants_layout = True` and is also given the layout view the surface view
+    # collapses. Read only through core.normalize.wants_layout.
 
     async def scan(
         self,

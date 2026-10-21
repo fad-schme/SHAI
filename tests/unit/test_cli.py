@@ -224,6 +224,139 @@ scan_input:
     assert "injection_scann" in captured.err
 
 
+_VALID_CONFIG = """\
+version: 1
+connectivity:
+  token_secret: test-connectivity-secret
+session_budget:
+  store:
+    name: memory
+audit_sinks:
+  - name: stdout
+"""
+
+
+def _validate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], extra: str = "",
+) -> str:
+    """Run `shai validate` on _VALID_CONFIG plus `extra`; return its stdout."""
+    config = tmp_path / "harness.yaml"
+    config.write_text(_VALID_CONFIG + extra, encoding="utf-8")
+    assert main(["validate", "--config", str(config)]) == 0
+    return capsys.readouterr().out
+
+
+def test_validate_prints_no_warnings_block_for_a_clean_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert "warnings:" not in _validate(tmp_path, capsys)
+
+
+@pytest.mark.parametrize(
+    "boundary", ["scan_input", "scan_file", "scan_output", "scan_tool_result"],
+)
+def test_validate_warns_on_a_fail_open_boundary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], boundary: str,
+) -> None:
+    out = _validate(tmp_path, capsys, f"{boundary}:\n  on_error: fail_open\n")
+    assert "warnings:" in out
+    assert f"{boundary}.on_error: fail_open" in out
+
+
+def test_validate_does_not_warn_on_degrade_or_fail_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = _validate(tmp_path, capsys, "scan_input:\n  on_error: degrade\n")
+    assert "warnings:" not in out
+
+
+def test_validate_warns_on_audit_token_policy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = tmp_path / "harness.yaml"
+    config.write_text(
+        _VALID_CONFIG.replace(
+            "test-connectivity-secret\n",
+            "test-connectivity-secret\n  token_policy: audit\n",
+        ),
+        encoding="utf-8",
+    )
+    assert main(["validate", "--config", str(config)]) == 0
+    assert "connectivity.token_policy: audit" in capsys.readouterr().out
+
+
+def _mcp_config(tmp_path: Path, allowed_urls: list[str]) -> Path:
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    entries = "".join(f"  - {u}\n" for u in allowed_urls)
+    (manifests / "crm.yaml").write_text(
+        "id: crm\ndisplay_name: CRM\nurl: https://crm.example.com/sse\n"
+        "allowed_urls:\n" + entries,
+        encoding="utf-8",
+    )
+    config = tmp_path / "harness.yaml"
+    config.write_text(
+        _VALID_CONFIG + f"mcp_manifests_dir: {manifests.as_posix()}\n"
+        "mcp_baseline:\n  secret: test-baseline-secret\n"
+        "sources:\n  - name: crm\n    transport: mcp\n",
+        encoding="utf-8",
+    )
+    return config
+
+
+@pytest.mark.parametrize("url", [
+    "https://*.example.com/*", "https://*/*", "http://0.0.0.0/*",
+])
+def test_validate_warns_on_a_wildcard_or_unspecified_manifest_host(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], url: str,
+) -> None:
+    config = _mcp_config(tmp_path, [url])
+    assert main(["validate", "--config", str(config)]) == 0
+    out = capsys.readouterr().out
+    assert "warnings:" in out
+    assert "manifest crm: allowed_urls" in out
+    assert url not in out
+
+
+def test_validate_warning_for_a_broken_manifest_does_not_quote_the_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _mcp_config(tmp_path, ["https://crm.example.com/*"])
+    (tmp_path / "manifests" / "crm.yaml").write_text(
+        "credentials: {token: hunter2-secret\nallowed_urls: [\n", encoding="utf-8",
+    )
+    assert main(["validate", "--config", str(config)]) == 0
+    out = capsys.readouterr().out
+    assert "manifest crm: unreadable or invalid" in out
+    assert "hunter2-secret" not in out
+
+
+def test_validate_is_quiet_for_a_named_manifest_host(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _mcp_config(tmp_path, ["https://crm.example.com/*"])
+    assert main(["validate", "--config", str(config)]) == 0
+    assert "warnings:" not in capsys.readouterr().out
+
+
+def test_validate_reports_two_risky_settings_as_two_lines(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = _validate(
+        tmp_path, capsys,
+        "scan_input:\n  on_error: fail_open\nscan_output:\n  on_error: fail_open\n",
+    )
+    block = out.split("warnings:")[1]
+    assert block.count("on_error: fail_open") == 2
+
+
+def test_validate_warnings_do_not_change_the_exit_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _mcp_config(tmp_path, ["https://*/*"])
+    assert main(["validate", "--config", str(config)]) == 0
+
+
 def test_read_tail_returns_only_requested_lines(tmp_path: Path) -> None:
     audit_log = tmp_path / "audit.jsonl"
     audit_log.write_text("".join(f"{index}\n" for index in range(1_000)), encoding="utf-8")

@@ -3,14 +3,72 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from harness.agents.registry import AgentRegistry
 from harness.config.loader import load_yaml
 from harness.config.protected_paths import protected_paths
+from harness.config.schema import HarnessConfig
 from harness.core.errors import ConfigError, HarnessError
+from harness.core.types import OnError, Transport
+from harness.mcp.manifest import load_manifest_file, manifest_path_for
 from harness_cli.console import console
 from harness_cli.paths import agent_path_lines
+
+# The boundaries that carry `on_error`; scan_mcp_metadata runs a fixed scanner
+# set and has none.
+_SCAN_BOUNDARIES = ("scan_input", "scan_file", "scan_output", "scan_tool_result")
+
+
+def _risky_url_host(url: str) -> bool:
+    """True for a host the allow-list matcher cannot mean what it says about.
+
+    `*` in a host never globs (patterns take a trailing `/*` only), so such an
+    entry matches no destination; an unspecified address is a destination the
+    scope policy refuses on its own.
+    """
+    host = urlsplit(url).hostname or ""
+    if "*" in host:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_unspecified
+    except ValueError:
+        return False  # a name, not an IP literal
+
+
+def _risk_warnings(config: HarnessConfig) -> list[str]:
+    """Legal settings that weaken a control. Names the setting, never a value."""
+    warnings: list[str] = []
+
+    for name in _SCAN_BOUNDARIES:
+        if getattr(config, name).on_error is OnError.FAIL_OPEN:
+            warnings.append(f"{name}.on_error: fail_open")
+
+    if config.connectivity.token_policy == "audit":
+        warnings.append("connectivity.token_policy: audit")
+
+    if config.mcp_manifests_dir:
+        for src in config.sources:
+            if src.transport is not Transport.MCP:
+                continue
+            path = manifest_path_for(src.name, config.mcp_manifests_dir)
+            try:
+                manifest = load_manifest_file(path)
+            except ConfigError:
+                # The error text quotes the parser's view of the file, which
+                # can include a credentials entry; name the file, not the cause.
+                warnings.append(f"manifest {src.name}: unreadable or invalid ({path})")
+                continue
+            bad = [i for i, u in enumerate(manifest.allowed_urls) if _risky_url_host(u)]
+            if bad:
+                warnings.append(
+                    f"manifest {src.name}: allowed_urls entries at positions {bad} "
+                    "have a wildcard or unspecified host"
+                )
+
+    return warnings
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -78,6 +136,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
     console.write(f"  protected_paths: {len(protected)}")
     for path in protected:
         console.write(f"    {path}")
+
+    warnings = _risk_warnings(config)
+    if warnings:
+        console.write("  warnings:")
+        for line in warnings:
+            console.write(f"    {line}")
 
     if args.agents_dir is None:
         console.write(

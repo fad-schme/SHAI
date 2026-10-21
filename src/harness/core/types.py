@@ -15,6 +15,7 @@ SCANNER_NAMES: frozenset[str] = frozenset({
     "jailbreak_scan",
     "identity_spoof_scan",
     "command_injection_scan",
+    "exec_config_scan",
 })
 SINK_NAMES: frozenset[str] = frozenset({"stdout", "file"})
 STORE_NAMES: frozenset[str] = frozenset({"sqlite", "memory"})

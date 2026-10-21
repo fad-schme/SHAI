@@ -52,18 +52,34 @@ a protected path fails.
 ```bash
 shai validate
 # Validating config/harness.yaml ... OK
-#   tenant_id:     acme-prod
-#   source_rules:  0
-#   audit_sinks:   ['file', 'stdout']
+#   tenant_id:    acme-prod
+#   source_rules: 0
+#   audit_sinks:  ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
 #   session:       enabled=True  store=sqlite  threshold=0.7  window=50  on_escalation=block
+#   session_budget: store=memory
+#   approvals:     store=sqlite
 #   boundaries:
-#     scan_input:       always on  block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
-#     scan_file:        always on  block_at=high   scanners=['injection_scan', 'jailbreak_scan', 'regex_pii']
-#     scan_output:      always on  block_at=high   scanners=['regex_pii']
-#     scan_tool_result: always on  block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
+#     scan_input: always on  block_at=high  scanners=['regex_pii', 'injection_scan', 'jailbreak_scan', 'exec_config_scan']
+#     scan_file: always on  block_at=high  scanners=['injection_scan', 'jailbreak_scan', 'regex_pii', 'exec_config_scan']
+#     scan_output: always on  block_at=high  scanners=['regex_pii']
+#     scan_tool_result: always on  block_at=high  scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan', 'exec_config_scan']
 #     scan_mcp_metadata: always on  block_at=medium  scanners=['mcp_metadata_scan']
+#   execution_budget: none configured
+#   protected_paths: 5
+#     /srv/shai/config/harness.yaml
+#     /srv/shai/logs/audit.jsonl
+#     /srv/shai/state/approvals.db
+#     /srv/shai/state/mcp_baseline.db
+#     /srv/shai/state/patterns.db
 ```
+
+A valid config that carries a setting weakening a control also prints a
+`warnings:` block after the protected paths. Each line names the setting and
+never its value: a scan boundary with `on_error: fail_open`,
+`connectivity.token_policy: audit`, an MCP manifest whose `allowed_urls` holds a
+wildcard or unspecified host, and a manifest that cannot be read. Warnings do
+not change the exit code.
 
 Exit codes: `0` valid, `1` invalid (first error on stderr). Wire it into CI to
 catch configuration and agent-schema drift. Validation does not instantiate

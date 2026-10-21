@@ -191,9 +191,17 @@ the host.
 **SHAI control:** `command_injection_scan` parses shell code syntax
 and flags dangerous compositions — a pipeline whose sink is an interpreter, a
 redirect to `/dev/tcp`, a fetch composed with an exec — at any boundary,
-including tool arguments at `check_tool_call`.
+including tool arguments at `check_tool_call`. `exec_config_scan` flags
+executable configuration — an agent bundle whose adapter runs a process, a
+`command` field, a lifecycle hook — by the structure of the parsed YAML or JSON
+at `scan_input`, `scan_tool_result`, `scan_file` and in the arguments of tools
+tagged in `scan_args_for_tags` at `check_tool_call`. A launch or import tool left out of `allowed_tool_names`,
+declared `IRREVERSIBLE` (a quorum of two distinct approvers bound to the exact
+arguments), or given a `user_origin` argument stops a hijacked agent that
+already holds the bundle.
 
-**Limits:** detection covers the shell compositions the parser recognises.
+**Limits:** detection covers the shell compositions the parser recognises and
+the executable field names in the scanner's vocabulary.
 
 ---
 

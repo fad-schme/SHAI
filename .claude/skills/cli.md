@@ -83,17 +83,26 @@ write; an agent whose `allowed_paths` overlaps a protected path fails.
 ```bash
 shai validate
 # Validating config/harness.yaml ... OK
-#   tenant_id:     acme-prod
-#   source_rules:  1
-#   audit_sinks:   ['file', 'stdout']
+#   tenant_id:    acme-prod
+#   source_rules: 1
+#   audit_sinks:  ['file', 'stdout']
 #   normalization: enabled=True  decode=True  max_depth=3
 #   session:       enabled=True  store=sqlite  threshold=0.7  window=50  on_escalation=block
+#   session_budget: store=memory
+#   approvals:     store=sqlite
 #   boundaries:
-#     scan_input:       always on  block_at=high   scanners=['regex_pii', 'injection_scan', 'jailbreak_scan']
-#     scan_file:        always on  block_at=high   scanners=['injection_scan', 'jailbreak_scan', 'regex_pii']
-#     scan_output:      always on  block_at=high   scanners=['regex_pii']
-#     scan_tool_result: always on  block_at=high   scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan']
+#     scan_input: always on  block_at=high  scanners=['regex_pii', 'injection_scan', 'jailbreak_scan', 'exec_config_scan']
+#     scan_file: always on  block_at=high  scanners=['injection_scan', 'jailbreak_scan', 'regex_pii', 'exec_config_scan']
+#     scan_output: always on  block_at=high  scanners=['regex_pii']
+#     scan_tool_result: always on  block_at=high  scanners=['injection_scan', 'identity_spoof_scan', 'jailbreak_scan', 'exec_config_scan']
 #     scan_mcp_metadata: always on  block_at=medium  scanners=['mcp_metadata_scan']
+#   execution_budget: none configured
+#   protected_paths: 5
+#     /srv/shai/config/harness.yaml
+#     /srv/shai/logs/audit.jsonl
+#     /srv/shai/state/approvals.db
+#     /srv/shai/state/mcp_baseline.db
+#     /srv/shai/state/patterns.db
 ```
 
 **Flags:**
@@ -102,6 +111,12 @@ shai validate
 |---|---|---|
 | `--config` / `-c PATH` | `config/harness.yaml` | Path to the harness config. |
 | `--agents-dir` / `-a DIR` | — | Also validate agent YAMLs in this directory. When omitted, only the harness config is validated. |
+
+A valid config that carries a setting weakening a control also prints a
+`warnings:` block, one line per setting, naming it and never its value:
+`on_error: fail_open` on a scan boundary, `connectivity.token_policy: audit`, an
+MCP manifest `allowed_urls` entry with a wildcard or unspecified host, an
+unreadable manifest. Warnings leave the exit code unchanged.
 
 **Exit codes:**
 

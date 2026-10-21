@@ -61,11 +61,12 @@ minimal config is a protected one:
 
 | Boundary | Scanners when the block is omitted |
 |---|---|
-| `scan_input` | `regex_pii`, `injection_scan`, `jailbreak_scan`, `identity_spoof_scan` |
+| `scan_input` | `regex_pii`, `injection_scan`, `jailbreak_scan`, `identity_spoof_scan`, `exec_config_scan` |
 | `scan_output` | `regex_pii` |
-| `scan_tool_result` | `injection_scan`, `identity_spoof_scan`, `jailbreak_scan` |
-| `scan_file` | `injection_scan`, `jailbreak_scan`, `regex_pii` |
+| `scan_tool_result` | `injection_scan`, `identity_spoof_scan`, `jailbreak_scan`, `exec_config_scan` |
+| `scan_file` | `injection_scan`, `jailbreak_scan`, `regex_pii`, `exec_config_scan` |
 | `scan_mcp_metadata` | `mcp_metadata_scan` |
+| `check_tool_call` (arguments of tools tagged in `scan_args_for_tags`) | `exec_config_scan` |
 
 Declaring `scanners:` replaces that list outright. `heuristic_scan` is added
 automatically to a text boundary if it is not already listed, and `scan_file`
@@ -92,7 +93,7 @@ scanners:
   - name: injection_scan        # inherits boundary action (block)
 ```
 
-The six built-in scanners:
+The eight built-in scanners:
 
 | Scanner | Catches |
 |---|---|
@@ -102,6 +103,8 @@ The six built-in scanners:
 | `regex_pii` | 7 PII categories with Luhn-validated credit cards and SSN structural rules — supports redaction |
 | `heuristic_scan` | Structural anomalies: entropy, instruction density, coherence, structural markers. Always on (not configurable). |
 | `command_injection_scan` | Shell command composition — a pipeline into an interpreter, a `/dev/tcp` redirect, fetch-then-execute, inline interpreter code. Requires the `shell` extra. |
+| `mcp_metadata_scan` | Injection-like text in MCP tool names, descriptions and argument schemas. Runs at `scan_mcp_metadata` only. |
+| `exec_config_scan` | Configuration that turns into execution — an agent bundle whose adapter runs a process, a `command` field, a lifecycle hook — recognised by the structure of a parsed YAML or JSON document. |
 
 #### `command_injection_scan`
 
@@ -123,6 +126,34 @@ It matches AST **shapes**, not command names: `curl … | sh`, `wget … && chmo
 +x … && ./x`, `bash -i >& /dev/tcp/…`, `python -c` with an opaque payload. That
 is why an unlisted fetcher piped into `sh` is still caught — the sink is the
 signal.
+
+At `check_tool_call` each argument reaches the scanner as `<name>: <value>`. An
+argument named `command`, `cmd`, `script`, `shell`, `exec`, `run` or
+`entrypoint` is scanned as a command, quoted or not.
+
+#### `exec_config_scan`
+
+A bundle an agent imports, a job spec, a lifecycle hook: configuration that a
+server turns into a process. The scanner reads the structure of the parsed YAML
+or JSON document — which keys sit where — so a plain `command: ./run.sh` is
+seen although no shell-text scanner has anything to say about it. It examines
+the whole text, each fenced `yaml` or `json` block inside it, and the value
+after a leading `name:` label (the gate's argument framing). Key names compare
+case-insensitively with `_`, `-` and spaces removed.
+
+| Finding | Severity | Meaning |
+|---|---|---|
+| `exec_config.process_adapter` | high | an `adapter`, `type` or `kind` of `process`, `shell`, `exec`, `subprocess` or `command` with a command field beneath it |
+| `exec_config.command_metacharacters` | high | a command field holding a pipe, `;`, `&`, a redirect, a backtick or `$(` |
+| `exec_config.command_field` | medium | a non-empty `command`, `cmd`, `exec`, `entrypoint`, `script`, `shell` or `run` field |
+| `exec_config.lifecycle_hook` | medium | a non-empty `hooks`, `lifecycle`, `preStart`, `postStart`, `preInstall`, `postInstall`, `onStart` or `setup` key |
+| `exec_config.limit_exceeded` | medium | the document passed a parser limit (200,000 characters, 16 documents, 10,000 nodes, depth 32), so part of it was left unexamined |
+
+With the default `block_at: high` a process-adapter bundle is blocked and a
+plain command field or hook is flagged in the audit event. Findings carry rule
+ids only; keys, values and commands never reach the audit trail. The scanner is
+declarable at every boundary, runs on PyYAML (no extra), and keeps one pattern
+copy because executable field names are not translated.
 
 Commands wrapped in a tool call are lifted out and parsed on their own, because
 that is the shape an agent actually emits — `run_shell('curl … | sh')`,
@@ -171,7 +202,7 @@ check_tool_call:
     - sensitive                   # arg scanning runs on tools with this tag
 ```
 
-You don't declare which tools are allowed here — that's per-agent. The gate config only sets rate limits and which tags trigger argument scanning.
+You don't declare which tools are allowed here — that's per-agent. The gate config only sets rate limits and which tags trigger argument scanning. An omitted `scanners:` list runs `exec_config_scan` over those arguments; declaring the list replaces it.
 
 #### Human approval for `SENSITIVE` / `IRREVERSIBLE` tools
 

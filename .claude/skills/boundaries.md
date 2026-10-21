@@ -18,7 +18,7 @@ safe_text = verdict.redacted_text or user_text
 ```
 
 **Runs:** the `scan_input.scanners` chain (typically `injection_scan`,
-`jailbreak_scan`, `identity_spoof_scan`, `regex_pii`) plus the always-on
+`jailbreak_scan`, `identity_spoof_scan`, `regex_pii`, `exec_config_scan`) plus the always-on
 `heuristic_scan`. Scanner failures follow `on_error` (default `fail_closed`).
 **Catches:** PII (T11), direct prompt injection (T5).
 **Audit:** `boundary="input_scan"`, `decision` = allow/warn/blocked.
@@ -106,7 +106,7 @@ else:
 
 **Runs:** whichever scanners `scan_tool_result.scanners` names — the shipped
 example uses `injection_scan` (`injection_common.yaml` + `injection_patterns.yaml`),
-`identity_spoof_scan`, and `jailbreak_scan`, plus the always-on heuristic
+`identity_spoof_scan`, `jailbreak_scan` and `exec_config_scan` (also what an omitted block runs), plus the always-on heuristic
 backstop. `patterns_for_doc.yaml` is **not** loaded here; it reaches only
 `scan_file`, via `_build_text_scanners(include_document_patterns=True)`.
 **Catches:** indirect prompt injection embedded in tool results (T6), including
@@ -222,6 +222,7 @@ boundary list both adapters, `file_scanner` and `file_content_scan`.
 | `InjectionScanner` (doc) |  `patterns_for_doc.yaml` — tuned for document content, unioned with the common + input catalogs | `scan_file` only (`FileContentScanner` chain) |
 | `JailbreakScanner` |  `jailbreak_patterns.yaml` — persona override, instruction control, safety deactivation, refusal suppression, mode activation, prompt extraction, hypothetical laundering | Any text boundary; recommended at `scan_input`, `scan_output` **and** `scan_tool_result` |
 | `IdentitySpoofScanner` |  `identity_spoof_patterns.yaml` — claimed orchestrator/system authority, peer-privilege claims, tool-result authority | High value at `scan_tool_result` |
+| `ExecConfigScanner` |  Not YAML-driven and **no l10n sibling**. Structure of a parsed YAML/JSON document: process adapter, command field, shell metacharacters in a command, lifecycle hook | Any boundary; recommended at `scan_input`, `scan_tool_result`, `scan_file`; default for `check_tool_call` arguments |
 | `HeuristicScanner` |  Not YAML-driven. 5 sub-scores: entropy, instruction density, coherence, structural markers, **typoglycemia** (Damerau-Levenshtein-1 against an intent-space keyword list, with anagram-scramble fast path and prefix-relationship rejection so morphology like `ignored`, `filters`, `systems` is not scored) | Always on |
 | `FileScanner`  | Not YAML-driven. Structural only — MIME, extension, size, filename, PDF markers, SVG, archives, EXIF, Office macros | `scan_file` |
 | `FileContentScanner` |  Not YAML-driven. Runs the configured `scan_file.scanners` chain over extracted text and the image EXIF/XMP blob | `scan_file` |

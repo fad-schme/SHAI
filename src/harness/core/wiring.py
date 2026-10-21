@@ -88,6 +88,9 @@ _SCANNER_FACTORIES: dict[str, Any] = {
         "harness.adapters.scanners.command_injection_scan",
         fromlist=["CommandInjectionScanner"],
     ).CommandInjectionScanner(**cfg),
+    "exec_config_scan": lambda cfg: __import__(
+        "harness.adapters.scanners.exec_config_scan", fromlist=["ExecConfigScanner"]
+    ).ExecConfigScanner(**cfg),
 }
 
 # Same contract for audit sinks: keys == core.types.SINK_NAMES. stdout takes no

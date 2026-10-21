@@ -12,6 +12,11 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`command_injection_scan` reads a command argument at the gate.** The gate
+  frames each argument as `<name>: <value>`, and the unquoted value of a
+  `command`, `cmd`, `script`, `shell`, `exec`, `run` or `entrypoint` argument
+  was judged under its key word instead of as a command. It is now scanned as
+  the command it is.
 - **A failure to sign the dispatch token or build the allow event denies the
   call.** The gate let that exception leave `check_tool_call` with no verdict
   and no audit event. It now returns a denial with one event, and a call
@@ -88,6 +93,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NetworkAuditEvent` joined a tool call to its gate event.
 
 ### Changed
+- **`exec_config_scan` joins the recommended scanners.** An omitted `scanners:`
+  block at `scan_input`, `scan_tool_result` and `scan_file` now runs it, and an
+  omitted `check_tool_call.scanners` runs it over the arguments of tools tagged
+  in `scan_args_for_tags`; a declared list replaces the default as before.
 - **Every scan boundary is always on.** `enabled` is gone from the five scan
   boundaries and a config naming it is rejected; operators choose scanners and
   each scanner's `action` instead. An omitted block runs SHAI's recommended
@@ -128,6 +137,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   escalations only.
 
 ### Added
+- **`exec_config_scan`** recognises configuration that turns into execution — a
+  process adapter, a `command` field, a lifecycle hook — by the structure of a
+  parsed YAML or JSON document, so an agent bundle that defines a process-based
+  agent is blocked at any boundary. Findings carry rule ids
+  (`exec_config.process_adapter`, `command_metacharacters`, `command_field`,
+  `lifecycle_hook`, `limit_exceeded`) and never the keys, values or commands.
+- **`shai validate` prints a `warnings:` block** for legal settings that weaken a
+  control: a scan boundary with `on_error: fail_open`,
+  `connectivity.token_policy: audit`, and an MCP manifest whose `allowed_urls`
+  holds a wildcard or unspecified host. A warning names the setting and leaves
+  the exit code unchanged.
+- **A scanner may declare `wants_layout = True`** to also receive the text with
+  its indentation and line breaks, which the surface view collapses.
 - **Agents declare the paths they may read and write.** `allowed_paths` in `agent.yaml` takes `read` and `write` lists of absolute files or directories; an agent with no block has no filesystem access, and a subagent's entries must sit inside the parent's, checked at `load_agent()`.
 - **MCP tools declare their path arguments in the manifest.** `path_args` on a
   manifest tool entry is carried onto the registered tool, so the gate checks

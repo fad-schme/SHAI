@@ -59,7 +59,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from harness.adapters.circuit_breaker import CircuitBreaker
 from harness.adapters.scanners.base import ScanResult
 from harness.core.events import AuditEvent, now_ms
-from harness.core.normalize import canonicalize_iter_config
+from harness.core.normalize import canonicalize_iter_config, wants_layout
 from harness.core.types import (
     BoundaryName,
     Decision,
@@ -398,6 +398,24 @@ async def run_scan(
                 acc.add(outcome, surface=surface)
         surface = False
         del view
+
+    # A scanner that reads document structure also gets the unfolded layout
+    # (see normalize.wants_layout); the surface view above has lost it.
+    if view_stream is not None:
+        structural = [
+            (c.scanner, acc) for c, acc in live
+            if acc.failure is None and wants_layout(c.scanner)
+        ]
+        layout = view_stream.layout if structural else None
+        if layout is not None:
+            outcomes = await asyncio.gather(
+                *[_scan_view(scanner, layout) for scanner, _ in structural]
+            )
+            for (_, acc), outcome in zip(structural, outcomes):
+                if isinstance(outcome, BaseException):
+                    acc.failure = outcome
+                else:
+                    acc.add(outcome, surface=False)
 
     # Collapse each accumulator to the shape the reporting loop below expects:
     # a ScanResult, the exception the scanner raised, or the breaker sentinel.

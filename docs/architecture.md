@@ -60,8 +60,8 @@ failures follow `on_error` (default `fail_closed`).
 ### Ingress Scan — `scan_input`
 
 Runs on user text before the LLM. Typical chain: `injection_scan`,
-`jailbreak_scan`, `identity_spoof_scan`, `regex_pii`; `command_injection_scan`
-with the `shell` extra.
+`jailbreak_scan`, `identity_spoof_scan`, `regex_pii`, `exec_config_scan`;
+`command_injection_scan` with the `shell` extra.
 
 ### File Scan — `scan_file`
 
@@ -72,9 +72,9 @@ catalog by default.
 
 ### Tool Stream Control — `scan_tool_result`
 
-Runs before tool results re-enter the LLM context. The example config runs
-`injection_scan`, `identity_spoof_scan`, and `jailbreak_scan` here — which is
-also what an omitted block runs. When the input scan flagged injection this
+Runs before tool results re-enter the LLM context. The example config and an
+omitted block both run `injection_scan`, `identity_spoof_scan`,
+`jailbreak_scan` and `exec_config_scan` here. When the input scan flagged injection this
 turn, `block_at` steps down one level.
 
 ### Egress Scan — `scan_output`
