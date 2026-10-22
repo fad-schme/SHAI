@@ -431,8 +431,11 @@ async def test_surviving_sink_keeps_the_boundary_alive(tmp_path: Path):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Invariant 3 — No raw text in audit
+# Invariant 3 — No raw text in audit (redacted text only)
 # ══════════════════════════════════════════════════════════════════════════
+#
+# The canary stands for unredacted content: text that has been redacted first
+# is permitted, the canary itself is not.
 #
 # Checked by canary rather than by listing fields: a field-by-field assertion
 # only covers the fields someone thought of, and the leak that matters is the

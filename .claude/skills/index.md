@@ -48,7 +48,7 @@ the trust envelope every other skill assumes.
 - Every boundary emits **exactly one** `AuditEvent` on every code path.
 - Boundaries **never raise** — they return a verdict.
 - The tool-call gate is **deterministic code**, not an LLM judgement.
-- **No raw text** ever appears in an `AuditEvent` field.
+- Audit and log fields carry **redacted text only** — no PII, keys, passwords or other secrets.
 - Default `on_error` is `fail_closed`. Explicit `fail_open` opts out.
 
 If a user's expectation contradicts any of the above, the user is wrong

@@ -39,15 +39,15 @@ user input → [scan] → LLM → [gate] → tool → [scan result] → LLM → 
 
 | Boundary | What runs | Catches (see THREAT_MODEL.md) |
 |---|---|---|
-| `scan_input` | PII regex, injection catalogs, heuristic scanner | Direct prompt injection, PII, credentials in user text |
+| `scan_input` | PII regex, injection, jailbreak, identity-spoof and exec-config scanners, heuristic scanner | Direct prompt injection, PII, credentials in user text |
 | `check_tool_call` | 7-layer gate | Unauthorised tools, argument and filesystem path violations, irreversibility without approval, subagent scope violations, policy denies, cross-boundary signal correlation |
-| `scan_tool_result` | Configured scanner chain (common + input injection catalogs, plus heuristic) | Indirect injection and authority spoofing in fetched documents, MCP responses, web pages |
+| `scan_tool_result` | Configured scanner chain (injection, identity-spoof, jailbreak, exec-config, plus heuristic) | Indirect injection and authority spoofing in fetched documents, MCP responses, web pages |
 | `scan_output` | PII regex, consolidated-risk block | PII leakage, data exfiltration, turn-level risk accumulation |
-| `scan_file` | Structural + configured content scan (common + input + document injection catalogs) | Malicious PDFs, Office macros, EXIF anomalies, embedded payloads, Zip Bombs and svg checks |
+| `scan_file` | Structural + configured content scan (injection, jailbreak, PII, exec-config) | Malicious PDFs, Office macros, EXIF anomalies, embedded payloads, Zip Bombs and svg checks |
 
-Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block, or degraded. No raw user text, LLM response, or matched substring ever appears in the log.
+Every boundary emits **exactly one** signed `AuditEvent` — allow, warn, block, or degraded. Audit events and logs carry structured metadata and redacted text only: no PII, keys, passwords or other secrets.
 
-On top of those, `SHAI.from_yaml()` emits one `system`/`startup` attestation event recording what the process actually wired: adapter identities and source-file digests, MCP manifest digests for every declared `transport: mcp` source (URL stripped of credentials), pattern-DB, policy and protected-path digests, and every declared source. `shai harness inspect` and `shai harness graph` show the same topology offline, straight from the config.
+On top of those, `SHAI.from_yaml()` emits one `system`/`startup` attestation event recording what the process actually wired: adapter identities and source-file digests, MCP manifest digests for every declared `transport: mcp` source (URL stripped of credentials), pattern-DB and policy digests, the count and digest of the protected-path set, and every declared source. `shai harness inspect` and `shai harness graph` show the same topology offline, straight from the config.
 
 ---
 
@@ -135,8 +135,9 @@ SHAI treats the **whole agent lifecycle** as the unit of enforcement, not just i
 2. **Tool-result scanning as a first-class boundary.** When a tool returns a document, web page, or API response, its content is scanned before it re-enters the LLM's context. This is where indirect prompt injection lives, and most other tools miss it entirely.
 3. **Cross-boundary signal correlation within a turn.** `scan_input` sets `TurnSignals`; `check_tool_call` reads them (input flagged for injection + a proposed write-capable tool → deny); `scan_output` computes a consolidated turn-risk that can block a turn even when no single scanner blocked.
 4. **Cross-turn threat accumulation.** Adversarial patterns that stay below any single turn's threshold are caught at the session level.
-5. **Signed, tamper-evident audit trail.** HMAC-SHA256 over every event, one event per boundary call, no raw content ever recorded. Structured for SIEM ingestion.
-6. **Framework-agnostic drop-in.** Same package integrates with LangGraph, LangChain, CrewAI, PydanticAI, Anthropic SDK, and OpenAI Agents. You don't rewrite your agent to add SHAI.
+5. **Single-use approval grants and signed dispatch tokens.** A sensitive or irreversible tool runs only with signed grants from the required approvers, and each grant authorises one call. Every allowed call is minted a short-lived dispatch token; MCP requests are forwarded only when the token and the approved manifest's `allowed_urls` agree, and local tools verify the token before they run.
+6. **Signed, tamper-evident audit trail.** HMAC-SHA256 over every event, one event per boundary call, metadata and redacted text only. Structured for SIEM ingestion.
+7. **Framework-agnostic drop-in.** Same package integrates with LangGraph, LangChain (`ShaiMiddleware`), CrewAI, PydanticAI, Anthropic SDK, and OpenAI Agents. You don't rewrite your agent to add SHAI.
 
 ---
 

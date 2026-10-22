@@ -170,7 +170,7 @@ await harness.close()   # flushes audit sinks, closes MCP connections
 ## What gets audited
 
 Every call to any boundary method emits exactly one `AuditEvent`.
-No raw text ever appears in the event — only metadata.
+The event carries metadata and redacted text only — no PII, keys, passwords or other secrets.
 
 `from_yaml()` also emits one `boundary: system`, `decision: startup` event
 before returning — the attestation of what this process wired. It is the first
