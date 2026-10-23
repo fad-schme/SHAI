@@ -71,10 +71,16 @@ def _request(
     method: str = "POST",
     token: str | None = None,
     rpc_method: str | None = "tools/call",
+    tool_name: str | None = "search_docs",
+    params: dict | None = None,
 ) -> httpx.Request:
     # A POST carries a JSON-RPC body, as MCPSource sends it: a token's purpose
-    # is bound to the JSON-RPC method it may carry.
-    body = ({"jsonrpc": "2.0", "id": "1", "method": rpc_method, "params": {}}
+    # is bound to the JSON-RPC method it may carry, and a tool-call token to the
+    # tool name in params.name.
+    if params is None:
+        params = ({"name": tool_name, "arguments": {}}
+                  if rpc_method == "tools/call" and tool_name is not None else {})
+    body = ({"jsonrpc": "2.0", "id": "1", "method": rpc_method, "params": params}
             if method == "POST" and rpc_method else None)
     r = httpx.Request(method, url, json=body)
     if token:
@@ -309,6 +315,77 @@ async def test_connect_token_refused_on_tool_call():
     with pytest.raises(NetworkPolicyError, match="purpose"):
         await t.handle_async_request(_request(token=_connect_token()))
     assert [e.status for e in sink.events] == ["denied"]
+
+
+# ── Token tool binding: a tool-call token authorises one tool ──────────────
+
+async def test_tool_call_token_passes_for_its_own_tool():
+    sink = RecordingSink()
+    inner = _network()
+    t = _transport(emitter=AuditEmitter([sink]), inner=inner)
+
+    await t.handle_async_request(_request(token=_token(), tool_name="search_docs"))
+
+    assert [e.status for e in sink.events] == ["allowed"]
+
+
+async def test_tool_call_token_refused_for_another_tool_and_not_burned():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
+    token = _token()
+
+    with pytest.raises(NetworkPolicyError, match="search_docs.*delete_all"):
+        await t.handle_async_request(_request(token=token, tool_name="delete_all"))
+
+    denied = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
+    assert [e.status for e in denied] == ["denied"]
+    assert denied[0].tool_name == "search_docs"
+    assert denied[0].token_id
+
+    # The nonce was not consumed: the same token passes on its own tool.
+    await t.handle_async_request(_request(token=token, tool_name="search_docs"))
+    assert [e.status for e in sink.events] == ["denied", "allowed"]
+
+
+@pytest.mark.parametrize("params", [{}, {"name": 7}, {"name": None}, {"arguments": {}}])
+async def test_tool_call_token_refused_when_body_has_no_readable_tool_name(params):
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
+    token = _token()
+
+    with pytest.raises(NetworkPolicyError, match="no readable tool"):
+        await t.handle_async_request(_request(token=token, params=params))
+    assert [e.status for e in sink.events] == ["denied"]
+
+    await t.handle_async_request(_request(token=token))   # not burned
+
+
+async def test_tool_binding_refusal_carries_no_argument_value():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
+    req = _request(token=_token(), params={"name": "delete_all",
+                                           "arguments": {"secret": "hunter2-value"}})
+
+    with pytest.raises(NetworkPolicyError) as exc:
+        await t.handle_async_request(req)
+
+    assert "hunter2-value" not in str(exc.value)
+    assert all("hunter2-value" not in (e.deny_reason or "") for e in sink.events)
+
+
+async def test_mcp_source_call_refuses_token_issued_for_another_tool():
+    seen: list[httpx.Request] = []
+    sink = RecordingSink()
+    src = _wired_source(seen, sink)
+
+    with pytest.raises(NetworkPolicyError, match="search_docs.*other_tool"):
+        await src.call("other_tool", {"q": "x"}, dispatch_token=_token())
+
+    assert seen == []
+    events = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
+    assert [e.status for e in events] == ["denied"]
+    assert events[0].tool_name == "search_docs"
+    await src.close()
 
 
 @pytest.mark.parametrize("url,method,rpc_method", [

@@ -218,6 +218,13 @@ else:
     }]})
 ```
 
+`run_turn(user_text, ctx, harness=harness, llm_fn=llm_fn)` wraps a whole turn:
+`scan_input`, your `llm_fn`, then `scan_output`. It returns a `ScanVerdict` when
+either boundary blocked the turn: the input never reached the model, or the
+response was rejected and is not returned. Abort the turn and decide what to
+surface. It returns a `str` when the turn completed, which is the final response
+and carries the redacted text when `scan_output` replaced content.
+
 ## CrewAI
 
 ```python

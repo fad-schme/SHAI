@@ -111,9 +111,10 @@ async def run_turn(
         Must return the final response string.
 
     Returns:
-        ScanVerdict if input is blocked (caller should abort and surface reason).
-        str (the final response) if the turn completed normally.
-        The response may have been redacted by scan_output.
+        ScanVerdict — scan_input blocked the input, or scan_output blocked the
+                      response. The caller aborts the turn and decides what to
+                      surface; a blocked response is never returned.
+        str         — the final response, possibly redacted by scan_output.
     """
 
     input_verdict = await harness.scan_input(user_text, ctx)
@@ -123,6 +124,8 @@ async def run_turn(
     # Tools are resolved at load_agent() time — ask the harness for the set.
     response = await llm_fn(user_text, harness.tools_for(ctx), ctx)
     output_verdict = await harness.scan_output(response, ctx)
+    if output_verdict.blocked:
+        return output_verdict
     return output_verdict.redacted_text or response
 
 

@@ -68,9 +68,13 @@ def check_path_args(
     allowed: AllowedPaths,
     protected: Sequence[str],
     ctx: AgentContext,
+    parent_allowed: AllowedPaths | None = None,
 ) -> None:
     """Require every declared path argument to resolve outside the protected set
     and inside the agent's grant.
+
+    For a subagent, `parent_allowed` is its parent's grant: the argument must be
+    inside both, so a subagent never reaches what its parent cannot.
 
     A `write` need is met only by a write entry; a `read` need by a read or a
     write entry. An absent or None argument is not checked. A value that cannot
@@ -85,6 +89,8 @@ def check_path_args(
             continue
         _, rule = check_path(
             value, access, read=allowed.read, write=allowed.write, protected=protected,
+            parent_read=parent_allowed.read if parent_allowed else None,
+            parent_write=parent_allowed.write if parent_allowed else None,
         )
         if rule is not None:
             _deny_path(tool, arg, rule, ctx)

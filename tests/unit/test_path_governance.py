@@ -302,6 +302,94 @@ async def test_subagent_is_checked_against_its_own_grant(tree):
     assert not (await _gate("read_file", {"path": str(tree / "out" / "f.txt")}, agent, sub=True))[0].allowed
 
 
+def _sub_of(tree: Path, parent: dict, child: dict) -> AgentConfig:
+    return _agent(parent, sub={
+        "id": "sub", "allowed_tool_names": ["read_file", "save_file"],
+        "allowed_tags": ["fs"], "allowed_paths": child,
+    })
+
+
+async def test_subagent_link_inside_parent_pointing_outside_is_denied_for_both(tree):
+    link = tree / "data" / "link"
+    _link(link, tree / "elsewhere")
+    agent = _sub_of(tree, {"read": [str(tree / "data")]}, {"read": [str(link)]})
+    target_file = {"path": str(tree / "elsewhere" / "f.txt")}
+    assert not (await _gate("read_file", target_file, agent))[0].allowed
+    d, sink = await _gate("read_file", target_file, agent, sub=True)
+    assert not d.allowed
+    assert len(sink.events) == 1
+
+
+async def test_subagent_link_inside_parent_pointing_inside_is_allowed(tree):
+    (tree / "data" / "sub").mkdir()
+    (tree / "data" / "sub" / "f.txt").write_text("x")
+    link = tree / "data" / "alias"
+    _link(link, tree / "data" / "sub")
+    agent = _sub_of(tree, {"read": [str(tree / "data")]}, {"read": [str(link)]})
+    d, _ = await _gate("read_file", {"path": str(tree / "data" / "sub" / "f.txt")}, agent, sub=True)
+    assert d.allowed
+
+
+async def test_subagent_link_repointed_outside_the_parent_after_load_is_denied(tree):
+    (tree / "data" / "sub").mkdir()
+    (tree / "data" / "sub" / "f.txt").write_text("x")
+    link = tree / "data" / "swap"
+    _link(link, tree / "data" / "sub")
+    agent = _sub_of(tree, {"read": [str(tree / "data")]}, {"read": [str(link)]})
+    inside = {"path": str(tree / "data" / "sub" / "f.txt")}
+    outside = {"path": str(tree / "elsewhere" / "f.txt")}
+    assert (await _gate("read_file", inside, agent, sub=True))[0].allowed
+    os.rmdir(link) if os.name == "nt" else link.unlink()
+    _link(link, tree / "elsewhere")
+    assert not (await _gate("read_file", outside, agent, sub=True))[0].allowed
+    assert not (await _gate("read_file", inside, agent, sub=True))[0].allowed
+
+
+async def test_subagent_write_needs_a_parent_write_entry(tree):
+    # The child's write entry is a link inside the parent's write grant that
+    # leads to a directory the parent may only read.
+    link = tree / "data" / "to_out"
+    _link(link, tree / "out")
+    agent = _sub_of(
+        tree,
+        {"write": [str(tree / "data")], "read": [str(tree / "out")]},
+        {"write": [str(link)]},
+    )
+    target = {"path": str(tree / "out" / "new.txt")}
+    assert not (await _gate("save_file", target, agent, sub=True))[0].allowed
+    assert (await _gate("read_file", {"path": str(tree / "out" / "f.txt")}, agent, sub=True))[0].allowed
+
+
+async def test_parent_write_entry_covers_a_subagent_read_entry(tree):
+    agent = _sub_of(tree, {"write": [str(tree / "out")]}, {"read": [str(tree / "out")]})
+    target = {"path": str(tree / "out" / "f.txt")}
+    assert (await _gate("read_file", target, agent, sub=True))[0].allowed
+    assert not (await _gate("save_file", target, agent, sub=True))[0].allowed
+
+
+async def test_subagent_write_inside_both_write_grants_is_allowed(tree):
+    agent = _sub_of(tree, {"write": [str(tree / "out")]}, {"write": [str(tree / "out")]})
+    assert (await _gate("save_file", {"path": str(tree / "out" / "new.txt")}, agent, sub=True))[0].allowed
+
+
+async def test_protected_set_still_wins_over_both_grants(tree):
+    agent = _sub_of(tree, {"read": [str(tree / "data")]}, {"read": [str(tree / "data")]})
+    d, _ = await check_with_protected(tree / "data" / "f.txt", agent)
+    assert not d.allowed
+
+
+async def check_with_protected(path: Path, agent: AgentConfig):
+    sink = RecordingSink()
+    ctx = AgentContext(agent_id="test_agent", sub_agent_id="sub", allowed_tags=["fs"])
+    decision = await check_tool_call.run(
+        "read_file", {"path": str(path)}, ctx,
+        agent_config=agent, tools=TOOLS, policy=RuleBasedPolicy(),
+        arg_scanners=[], emitter=AuditEmitter([sink]), tenant_id="test",
+        protected_paths=[str(path)],
+    )
+    return decision, sink
+
+
 async def test_two_argument_tool_denies_when_either_argument_fails(tree):
     agent = _grant(tree, read=["data"], write=["out"])
     ok = {"src": str(tree / "data" / "f.txt"), "dst": str(tree / "out" / "f.txt")}

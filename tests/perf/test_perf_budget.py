@@ -116,7 +116,10 @@ async def _make_harness(
         session_block = (
             f"session:\n"
             f"  enabled: true\n"
-            f"  path: {db_path}\n"
+            f"  store:\n"
+            f"    name: sqlite\n"
+            f"    config:\n"
+            f"      path: '{Path(db_path).as_posix()}'\n"
             f"  escalation_threshold: 0.70\n"
             f"  window_size: 10\n"
         )
@@ -262,10 +265,11 @@ async def test_5_full_scanner_stack(tmp_path: Path):
 async def test_6_session_accumulator(tmp_path: Path):
     pytest.importorskip("aiosqlite")
     print("\n── 6. Session accumulator (SQLite check + record) ─────────────────")
+    from harness.adapters.state_store.sqlite_store import SQLiteStore
     from harness.boundaries.session_accumulator import ThreatAccumulator
 
     db = str(tmp_path / "perf.db")
-    acc = ThreatAccumulator(db_path=db, escalation_threshold=0.70, window_size=10)
+    acc = ThreatAccumulator(SQLiteStore(path=db), escalation_threshold=0.70, window_size=10)
 
     # check() — read path (O(1) SELECT)
     m_check = await _measure(lambda: acc.check("conv-perf"))

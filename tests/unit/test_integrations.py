@@ -134,6 +134,96 @@ async def test_run_turn_input_blocked(tmp_path: Path):
     assert result.blocked
 
 
+async def _build_output_harness(tmp_path: Path, scan_output_yaml: str) -> SHAI:
+    cfg = tmp_path / "h.yaml"
+    cfg.write_text(
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
+        "scan_input:\n  scanners: []\n"
+        + scan_output_yaml +
+        "audit_sinks:\n  - name: stdout\n"
+    )
+    h = await SHAI.from_yaml(cfg)
+    await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
+    await h.register_tools([
+        Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),
+    ])
+    return h
+
+
+async def test_run_turn_output_blocked_returns_the_verdict(tmp_path: Path):
+    """When scan_output blocks, run_turn returns the ScanVerdict, never the response."""
+    from harness.core.verdicts import ScanVerdict
+    from harness.integrations.anthropic_sdk import run_turn
+
+    h = await _build_output_harness(
+        tmp_path,
+        "scan_output:\n  block_at: low\n  scanners:\n    - name: regex_pii\n",
+    )
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    response = "Contact me at test@example.com"
+
+    async def llm_fn(text, tools, ctx):
+        return response
+
+    result = await run_turn("hello", ctx, harness=h, llm_fn=llm_fn)
+    assert isinstance(result, ScanVerdict)
+    assert result.blocked
+    assert result != response
+
+
+async def test_run_turn_output_redacted_returns_the_redacted_string(tmp_path: Path):
+    from harness.integrations.anthropic_sdk import run_turn
+
+    h = await _build_output_harness(
+        tmp_path,
+        "scan_output:\n  block_at: low\n  scanners:\n    - name: regex_pii\n"
+        "      action: redact\n      redact_with: \"***\"\n",
+    )
+    ctx = AgentContext(agent_id="orchestrator_agent")
+
+    async def llm_fn(text, tools, ctx):
+        return "Contact me at test@example.com"
+
+    result = await run_turn("hello", ctx, harness=h, llm_fn=llm_fn)
+    assert isinstance(result, str)
+    assert "test@example.com" not in result
+    assert "***" in result
+
+
+async def test_run_turn_output_clean_returns_the_response(tmp_path: Path):
+    from harness.integrations.anthropic_sdk import run_turn
+
+    h = await _build_output_harness(
+        tmp_path,
+        "scan_output:\n  block_at: low\n  scanners:\n    - name: regex_pii\n",
+    )
+    ctx = AgentContext(agent_id="orchestrator_agent")
+
+    async def llm_fn(text, tools, ctx):
+        return "Nothing sensitive here."
+
+    result = await run_turn("hello", ctx, harness=h, llm_fn=llm_fn)
+    assert result == "Nothing sensitive here."
+
+
+async def test_run_turn_output_warned_returns_the_response(tmp_path: Path):
+    """A finding below block_at warns; the response still reaches the caller."""
+    from harness.integrations.anthropic_sdk import run_turn
+
+    h = await _build_output_harness(
+        tmp_path,
+        "scan_output:\n  block_at: high\n  scanners:\n    - name: regex_pii\n",
+    )
+    ctx = AgentContext(agent_id="orchestrator_agent")
+
+    async def llm_fn(text, tools, ctx):
+        return "Reach me at test@example.com"
+
+    result = await run_turn("hello", ctx, harness=h, llm_fn=llm_fn)
+    assert isinstance(result, str)
+    assert result == "Reach me at test@example.com"
+
+
 # ── langgraph integration ─────────────────────────────────────────────────
 
 async def test_harness_tool_node_allow(tmp_path: Path):

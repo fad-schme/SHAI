@@ -498,7 +498,7 @@ The returned context has `allowed_tags` narrowed to the intersection of parent a
 
 ### Filesystem paths
 
-`allowed_paths` lists the absolute files and directories an agent may read and write; a directory covers everything beneath it, and a `write` entry also grants read. An agent with no `allowed_paths` has no filesystem access. A subagent's entries must sit inside the parent's for the same mode, and a violation is a startup error at `load_agent()`.
+`allowed_paths` lists the absolute files and directories an agent may read and write; a directory covers everything beneath it, and a `write` entry also grants read. An agent with no `allowed_paths` has no filesystem access. A subagent's entries must sit inside the parent's for the same mode, and a violation is a startup error at `load_agent()`. A subagent's effective access is the overlap of its entries and its parent's: on every call, a path must resolve inside both the subagent's grant and the parent's for the same access, with links resolved at that moment, so a link inside a subagent entry that leads outside the parent's grant, or one repointed after load, gives the subagent nothing the parent lacks.
 
 The gate enforces the grant at layer 2. For each argument a tool declares in `path_args`, it resolves the value to its real location (`..` segments and symlinks resolved, resolved again on every call) and denies the call unless that location sits inside the agent's grant for the access the tool needs. A relative path, a URI such as `file://...`, a NUL byte or a path the platform cannot resolve is denied. The denial reason names the argument and never the path; the audit event's `extra.fs_rule` says which control refused it (`protected`, `outside_read` or `outside_write`).
 

@@ -52,16 +52,30 @@ log = logging.getLogger(__name__)
 _CONNECT_RPC_METHODS = frozenset({"initialize", "notifications/initialized", "tools/list"})
 
 
-def _jsonrpc_method(request: httpx.Request) -> str | None:
-    """The JSON-RPC method a POST body names, None for anything else."""
+def _jsonrpc_body(request: httpx.Request) -> dict | None:
+    """The JSON-RPC object a POST body carries, None for anything else."""
     if request.method != "POST":
         return None
     try:
         body = json.loads(request.content)
     except (ValueError, httpx.RequestNotRead):
         return None
-    method = body.get("method") if isinstance(body, dict) else None
+    return body if isinstance(body, dict) else None
+
+
+def _jsonrpc_method(request: httpx.Request) -> str | None:
+    """The JSON-RPC method a POST body names, None for anything else."""
+    body = _jsonrpc_body(request)
+    method = body.get("method") if body is not None else None
     return method if isinstance(method, str) else None
+
+
+def _called_tool_name(request: httpx.Request) -> str | None:
+    """The tool a tools/call body names (params.name), None when unreadable."""
+    body = _jsonrpc_body(request)
+    params = body.get("params") if body is not None else None
+    name = params.get("name") if isinstance(params, dict) else None
+    return name if isinstance(name, str) else None
 
 
 def _purpose_permits(purpose: str, http_method: str, rpc_method: str | None) -> bool:
@@ -205,6 +219,26 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                     duration_ms=int(time.monotonic() * 1000) - start_ms,
                 )
                 raise NetworkPolicyError(deny_reason)
+
+            # ── Tool binding — a tool-call token authorises the one tool it
+            #    was issued for; checked before the nonce is consumed ──────
+            if token.purpose == "tool_call":
+                called = _called_tool_name(request)
+                if called != token.tool_name:
+                    deny_reason = (
+                        f"token was issued for tool '{token.tool_name}', "
+                        f"request names "
+                        f"{'no readable tool' if called is None else repr(called)} "
+                        f"for source '{self._source_name}'"
+                    )
+                    await self._emit(
+                        token_id=token_id, tool_name=tool_name,
+                        destination=url_str, method=method,
+                        status="denied", deny_reason=deny_reason,
+                        bytes_sent=0, bytes_recv=0,
+                        duration_ms=int(time.monotonic() * 1000) - start_ms,
+                    )
+                    raise NetworkPolicyError(deny_reason)
 
             # ── 3b. URL binding — request must match token's allowed_urls ─
             if not matches_allowed_url(url_str, token.allowed_urls):

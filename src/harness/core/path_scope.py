@@ -108,6 +108,8 @@ def check_path(
     read: Sequence[str],
     write: Sequence[str],
     protected: Sequence[str],
+    parent_read: Sequence[str] | None = None,
+    parent_write: Sequence[str] | None = None,
 ) -> tuple[str | None, FsRule | None]:
     """Decide whether `value` may be used for `access`.
 
@@ -117,6 +119,11 @@ def check_path(
     (for write access) or a `read` or `write` entry (for read access). Grant
     entries are resolved with the same function as the value, so a symlinked
     root matches what it points to.
+
+    A subagent passes its parent's grant as `parent_read` / `parent_write`: the
+    path must then be inside both grants for the same access, each resolved on
+    this call, so a subagent is never wider than its parent however a link
+    changes after load. Both None (a parent context) checks `read` / `write` only.
     """
     resolved = canonicalize_path(value)
     if resolved is None:
@@ -124,10 +131,20 @@ def check_path(
     identity = _identity(resolved)
     if any(_contains(identity, _identity(p)) for p in protected):
         return None, "protected"
-    entries = write if access == "write" else [*read, *write]
-    if any(
-        root is not None and _contains(identity, _identity(root))
-        for root in map(canonicalize_path, entries)
-    ):
+    grants = [(read, write)]
+    if parent_read is not None or parent_write is not None:
+        grants.append((parent_read or [], parent_write or []))
+    if all(_granted(identity, access, r, w) for r, w in grants):
         return resolved, None
     return None, "outside_write" if access == "write" else "outside_read"
+
+
+def _granted(identity: str, access: Literal["read", "write"],
+             read: Sequence[str], write: Sequence[str]) -> bool:
+    """Whether one grant covers `identity`: a `write` entry for write access, a
+    `read` or `write` entry for read access."""
+    entries = write if access == "write" else [*read, *write]
+    return any(
+        root is not None and _contains(identity, _identity(root))
+        for root in map(canonicalize_path, entries)
+    )

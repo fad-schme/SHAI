@@ -12,6 +12,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **An MCP tool-call token authorises only the tool it was issued for.**
+  `ShaiTransport` now compares the tool name in a `tools/call` body
+  (`params.name`) with the token's `tool_name` and refuses a mismatch, or a body
+  with no readable name, with a `NetworkPolicyError` and one denied
+  `NetworkAuditEvent` naming both tools and no argument value. The check runs
+  before the nonce is consumed, so a refused token stays usable for its own
+  tool. Connect tokens are unchanged.
+- **A subagent's filesystem access is the overlap of its grant and its parent's.**
+  The gate's path-argument check and the governed `open` now require a path to
+  sit inside both the subagent's `allowed_paths` and the parent's for the same
+  access, each resolved on that call. A link inside a subagent entry that leads
+  outside the parent's grant, or one repointed after load, no longer reaches
+  locations the parent is denied.
+- **`run_turn` returns the verdict when `scan_output` blocks.** A response that
+  `scan_output` blocked was returned to the caller unchanged. `run_turn` now
+  returns the blocking `ScanVerdict`, as it does for a blocked input; redacted,
+  warned and clean outputs behave as before.
 - **A cancelled `scan_input` or `check_tool_call` records its event.** A task
   cancelled while `scan_input` waited on the session accumulator, or while
   `check_tool_call` waited on the session budget, left the boundary with no

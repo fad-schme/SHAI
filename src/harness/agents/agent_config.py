@@ -273,6 +273,20 @@ class AgentConfig(BaseModel, frozen=True, extra="forbid"):
 
         return self
 
+    def path_grants(self, sub_agent_id: str | None) -> tuple[AllowedPaths, AllowedPaths | None]:
+        """The filesystem grant a context is checked against: its own, and its
+        parent's when it is a subagent (None for a parent context).
+
+        The gate and the governed `open` both read this, so a subagent's
+        effective access (its entries overlapped with its parent's) is decided
+        in one place.
+
+        Raises SubAgentNotDeclaredError if `sub_agent_id` is not declared.
+        """
+        if sub_agent_id is None:
+            return self.allowed_paths, None
+        return self.get_sub_agent(sub_agent_id).allowed_paths, self.allowed_paths
+
     def get_sub_agent(self, sub_agent_id: str) -> SubAgentConfig:
         """Return SubAgentConfig for sub_agent_id.
 

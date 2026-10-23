@@ -82,6 +82,7 @@ class _DispatchScope:
     # What `SHAI.fs.open` re-checks a path against: the calling agent's grant
     # (None when the agent is not registered) and the protected set.
     allowed:   AllowedPaths | None = None
+    parent_allowed: AllowedPaths | None = None   # a subagent's parent grant
     protected: tuple[str, ...] = ()
 
 
@@ -1164,9 +1165,10 @@ class SHAI:
         or raised — each check the tool ran emits exactly one AuditEvent
         (boundary=tool_dispatch_check), before any exception leaves the block.
         """
+        allowed, parent_allowed = self._path_grants_for(ctx)
         scope = _DispatchScope(
             token=gate.dispatch_token, ctx=ctx,
-            allowed=self._allowed_paths_for(ctx),
+            allowed=allowed, parent_allowed=parent_allowed,
             protected=self._agent_registry.protected_paths,
         )
         reset = _dispatch_scope.set(scope)
@@ -1184,16 +1186,13 @@ class SHAI:
                     **check,
                 ))
 
-    def _allowed_paths_for(self, ctx: AgentContext) -> AllowedPaths | None:
-        """The grant of the profile the gate resolves for `ctx`, or None when the
-        agent or subagent is not registered."""
+    def _path_grants_for(self, ctx: AgentContext) -> tuple[AllowedPaths | None, AllowedPaths | None]:
+        """The grants the gate resolves for `ctx`: its own and, for a subagent,
+        its parent's. (None, None) when the agent or subagent is not registered."""
         try:
-            effective = self._agent_registry.get(ctx.agent_id)
-            if ctx.sub_agent_id is not None:
-                effective = effective.get_sub_agent(ctx.sub_agent_id)
+            return self._agent_registry.get(ctx.agent_id).path_grants(ctx.sub_agent_id)
         except (AgentNotRegisteredError, SubAgentNotDeclaredError):
-            return None
-        return effective.allowed_paths
+            return None, None
 
     def _fs_open(self, path: str, mode: str = "r", **kwargs: Any) -> IO[Any]:
         """`open()` for a governed local tool.
@@ -1220,6 +1219,8 @@ class SHAI:
             resolved, rule = check_path(
                 path, access, read=scope.allowed.read, write=scope.allowed.write,
                 protected=scope.protected,
+                parent_read=scope.parent_allowed.read if scope.parent_allowed else None,
+                parent_write=scope.parent_allowed.write if scope.parent_allowed else None,
             )
         reason = FS_DENY_REASON[rule] if rule else None
         handle = None

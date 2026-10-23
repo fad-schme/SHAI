@@ -150,6 +150,61 @@ async def test_a_subagent_is_held_to_its_own_grant(world):
             h.fs.open(str(root / "out" / "f.txt"))
 
 
+async def _load_parent_with_link_child(h, root: Path, *, parent_read: str):
+    link = root / "data" / "link"
+    _link(link, root / "elsewhere")
+    parent = root / "agents" / "p2.yaml"
+    parent.write_text(
+        "id: parent_agent\nallowed_tool_names: [read_file]\nallowed_tags: [fs]\n"
+        f"allowed_paths:\n  read: ['{parent_read}']\n"
+        "sub_agents:\n  - id: narrow\n    allowed_tool_names: [read_file]\n    allowed_tags: [fs]\n"
+        f"    allowed_paths:\n      read: ['{link.as_posix()}']\n"
+    )
+    await h.load_agent(parent)
+    return link
+
+
+async def test_a_subagent_link_pointing_outside_its_parent_is_refused_at_open(world):
+    h, sink, root = world
+    await _load_parent_with_link_child(h, root, parent_read=(root / "data").as_posix())
+    sub = AgentContext(agent_id="parent_agent", sub_agent_id="narrow", allowed_tags=["fs"])
+    parent = AgentContext(agent_id="parent_agent")
+    target = str(root / "elsewhere" / "f.txt")
+    async with h.dispatch_scope(parent, ALLOWED):
+        with pytest.raises(DispatchRefused):
+            h.fs.open(target)
+    async with h.dispatch_scope(sub, ALLOWED):
+        with pytest.raises(DispatchRefused):
+            h.fs.open(target)
+    checks = [e for e in sink.events if e.boundary == BoundaryName.TOOL_DISPATCH_CHECK]
+    assert [e.decision for e in checks] == [Decision.DENY, Decision.DENY]
+
+
+async def test_a_subagent_link_repointed_outside_its_parent_after_load_is_refused(world):
+    h, _, root = world
+    (root / "data" / "inner").mkdir()
+    (root / "data" / "inner" / "f.txt").write_text("in")
+    link = root / "data" / "link"
+    _link(link, root / "data" / "inner")
+    parent = root / "agents" / "p3.yaml"
+    parent.write_text(
+        "id: parent_agent\nallowed_tool_names: [read_file]\nallowed_tags: [fs]\n"
+        f"allowed_paths:\n  read: ['{(root / 'data').as_posix()}']\n"
+        "sub_agents:\n  - id: narrow\n    allowed_tool_names: [read_file]\n    allowed_tags: [fs]\n"
+        f"    allowed_paths:\n      read: ['{link.as_posix()}']\n"
+    )
+    await h.load_agent(parent)
+    sub = AgentContext(agent_id="parent_agent", sub_agent_id="narrow", allowed_tags=["fs"])
+    async with h.dispatch_scope(sub, ALLOWED):
+        with h.fs.open(str(link / "f.txt")) as f:
+            assert f.read() == "in"
+    os.rmdir(link) if os.name == "nt" else link.unlink()
+    _link(link, root / "elsewhere")
+    async with h.dispatch_scope(sub, ALLOWED):
+        with pytest.raises(DispatchRefused):
+            h.fs.open(str(link / "f.txt"))
+
+
 async def test_a_link_swapped_after_the_gate_check_is_refused_at_open(world):
     h, _, root = world
     (root / "data" / "sub").mkdir()

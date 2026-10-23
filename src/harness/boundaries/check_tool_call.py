@@ -157,7 +157,11 @@ async def run(
     # ── Layer 2: argument rules ───────────────────────────────────────────
     try:
         check_argument_rules(tool, args, ctx)
-        check_path_args(tool, args, effective.allowed_paths, protected_paths, ctx)
+        check_path_args(
+            tool, args, effective.allowed_paths, protected_paths, ctx,
+            parent_allowed=(agent_config.allowed_paths
+                            if ctx.sub_agent_id is not None else None),
+        )
     except ArgumentViolationError as e:
         return await emit_deny(str(e), name, tool, ctx, emitter, start, tenant_id,
                            audit_tags=agent_config.audit_tags, extra=e.extra or None)
