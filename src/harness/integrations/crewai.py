@@ -21,21 +21,20 @@ CrewAI is imported lazily.
 """
 from __future__ import annotations
 
-import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
     make_gated_tool,
     run_sync,
     shai_tool,
+    tool_callable,
+    tool_input_schema,
 )
 
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
     from harness.core.harness import SHAI
-
-log = logging.getLogger(__name__)
 
 __all__ = ["shai_tool", "wrap_tool", "wrap_tools"]
 
@@ -45,30 +44,44 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
     Note: does not call register_tools(). Use wrap_tools() for that.
     """
-    tool_name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+    from crewai.tools import BaseTool
+    from pydantic import PrivateAttr, model_validator
+
+    function = tool_callable(tool)
+    tool_name = getattr(tool, "name", None) or function.__name__
+    schema = tool_input_schema(function, name=tool_name)
+    if "security_context" not in schema.model_fields:
+        class CrewToolInput(schema):
+            @model_validator(mode="before")
+            @classmethod
+            def _without_sdk_fingerprint(cls, value: Any) -> Any:
+                # CrewAI injects this transport metadata after constructing
+                # the tool request. It is not a function argument or a source
+                # of SHAI authority. Preserve it when the tool declares it.
+                if isinstance(value, dict) and "security_context" in value:
+                    return {key: item for key, item in value.items() if key != "security_context"}
+                return value
+
+        schema = CrewToolInput
 
     # CrewAI has no denial artifact — the shared default render (message on
     # denial/block, text otherwise) is exactly the tool output it expects.
     _gated_async = make_gated_tool(tool, harness=harness, ctx=ctx, tool_name=tool_name)
 
-    def _gated_sync(**kwargs: Any) -> Any:
-        return run_sync(_gated_async(**kwargs))
+    class GatedCrewTool(BaseTool):
+        _gated: Callable = PrivateAttr(default_factory=lambda: _gated_async)
 
-    try:
-        from crewai.tools import StructuredTool
-        return StructuredTool(
-            name=tool_name,
-            description=getattr(tool, "description", getattr(tool, "__doc__", "") or ""),
-            func=_gated_sync,
-            coroutine=_gated_async,
-            args_schema=getattr(tool, "args_schema", None),
-        )
-    except ImportError:
-        pass
+        async def _arun(self, *args: Any, **kwargs: Any) -> Any:
+            return await self._gated(*args, **kwargs)
 
-    _gated_async.__name__ = tool_name
-    _gated_async.__doc__  = getattr(tool, "__doc__", "")
-    return _gated_async
+        def _run(self, *args: Any, **kwargs: Any) -> Any:
+            return run_sync(self._arun(*args, **kwargs))
+
+    return GatedCrewTool(
+        name=tool_name,
+        description=getattr(tool, "description", None) or function.__doc__ or tool_name,
+        args_schema=schema,
+    )
 
 
 async def wrap_tools(

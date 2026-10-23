@@ -353,6 +353,12 @@ async def test_langchain_wrap_tool_blocks_poisoned_result(tmp_path: Path):
 
 
 async def test_crewai_wrap_tool_blocks_poisoned_result(tmp_path: Path):
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from pydantic import BaseModel
+
     from harness.integrations.crewai import wrap_tool
 
     h, ctx = await _poisoned_harness(tmp_path)
@@ -361,13 +367,24 @@ async def test_crewai_wrap_tool_blocks_poisoned_result(tmp_path: Path):
         return _POISONED
     search_docs.name = "search_docs"
 
-    gated  = wrap_tool(search_docs, harness=h, ctx=ctx)
-    result = await gated(query="q")
+    class BaseTool(BaseModel):
+        name: str
+        description: str
+        args_schema: type[BaseModel]
+
+    with patch.dict(sys.modules, {"crewai.tools": SimpleNamespace(BaseTool=BaseTool)}):
+        gated = wrap_tool(search_docs, harness=h, ctx=ctx)
+    result = await gated._arun(query="q")
     assert "blocked" in result.lower()
     assert "system prompt" not in result
 
 
 async def test_openai_wrap_tool_blocks_poisoned_result(tmp_path: Path):
+    import json
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
     from harness.integrations.openai_agents import wrap_tool
 
     h, ctx = await _poisoned_harness(tmp_path)
@@ -376,8 +393,15 @@ async def test_openai_wrap_tool_blocks_poisoned_result(tmp_path: Path):
         return _POISONED
     search_docs.name = "search_docs"
 
-    gated  = wrap_tool(search_docs, harness=h, ctx=ctx)
-    result = await gated(query="q")
+    def function_tool(function, *, name_override):
+        async def on_invoke_tool(context, arguments):
+            # The real SDK converts ordinary parameters to positional args.
+            return await function(json.loads(arguments)["query"])
+        return SimpleNamespace(name=name_override, on_invoke_tool=on_invoke_tool)
+
+    with patch.dict(sys.modules, {"agents": SimpleNamespace(function_tool=function_tool)}):
+        gated = wrap_tool(search_docs, harness=h, ctx=ctx)
+    result = await gated.on_invoke_tool(None, '{"query":"q"}')
     assert "blocked" in result.lower()
     assert "system prompt" not in result
 

@@ -230,6 +230,11 @@ gated = await wrap_tools([search_docs], harness=harness, ctx=ctx)
 # Pass `gated` as tools to your CrewAI Agent
 ```
 
+Install `crewai` alongside SHAI. `wrap_tools()` returns native CrewAI `BaseTool`
+objects with typed input schemas; sync and async execution both run SHAI's gate
+and result scan. CrewAI's injected fingerprint metadata is kept separate from
+the implementation's arguments unless the tool explicitly declares that field.
+
 ## PydanticAI
 
 ```python
@@ -252,15 +257,21 @@ For an agent that already holds its tools, `add_harness_middleware(agent, harnes
 ## OpenAI Agents SDK
 
 ```python
-from harness.integrations.openai_agents import wrap_tools
-from agents import Agent, function_tool
+from harness.integrations.openai_agents import wrap_tools, shai_tool
+from agents import Agent
 
-@function_tool
+@shai_tool(tags=["read", "internal"])
 async def search_docs(query: str) -> str: ...
 
 gated = await wrap_tools([search_docs], harness=harness, ctx=ctx)
 agent = Agent(name="assistant", tools=gated)
 ```
+
+Install `openai-agents` alongside SHAI. Decorate the implementation with
+`@shai_tool`; `wrap_tools()` registers its security metadata and creates the SDK
+`FunctionTool`. Positional and keyword arguments, including defaults, are bound
+to the original signature before SHAI authorizes the call. Missing SDKs and
+unsupported tool objects raise during wrapping.
 
 ## Manual dispatch (any framework)
 
