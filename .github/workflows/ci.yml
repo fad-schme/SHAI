@@ -56,7 +56,7 @@ jobs:
   # ── Job 2: Security invariant tests ─────────────────────────────────────
   # These are non-negotiable. They verify properties that must hold on every
   # code path regardless of configuration:
-  #   - No raw text in any AuditEvent field
+  #   - Only redacted text in any AuditEvent field
   #   - Dispatch token forgery resistance
   # A failure here means a boundary invariant is broken. The PR is rejected.
   security-invariants:

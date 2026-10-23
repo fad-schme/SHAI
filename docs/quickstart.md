@@ -167,7 +167,7 @@ this process wired. See [cli.md](cli.md) for the offline view of the same thing.
 }
 ```
 
-What's **not** there: no raw user text, no LLM output, no matched substrings. Structured metadata only. This is deliberate — the audit trail is safe to ship to a SIEM without leaking the content it was watching.
+What's there: structured metadata, and any text only after redaction, so it holds no PII, keys, passwords or other secrets. This is deliberate — the audit trail is safe to ship to a SIEM without leaking the content it was watching.
 
 ## Handy patterns
 

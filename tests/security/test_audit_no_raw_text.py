@@ -1,7 +1,8 @@
 """Security: verify no raw text leaks into AuditEvents.
 
 These tests catch accidental inclusion of user input, LLM output,
-tool arguments, or scanner-matched substrings in audit events.
+tool arguments, or scanner-matched substrings in their original form in audit
+events. Text that has been redacted first is what Invariant 3 permits.
 """
 from __future__ import annotations
 

@@ -271,7 +271,7 @@ with harness.collect_events() as events:
     await harness.scan_input("test", ctx)
 assert len(events) == 1
 
-# 4. No raw text in audit events
+# 4. No unredacted text in audit events
 ev = events[0]
 # Deny reason should not contain the actual input/args
 assert "123-45-6789" not in (ev.deny_reason or "")
