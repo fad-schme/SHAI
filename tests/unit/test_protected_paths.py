@@ -255,3 +255,43 @@ async def test_protected_denial_emits_one_event_without_path_text(tree):
     dumped = sink.events[0].model_dump_json()
     assert "audit.jsonl" not in dumped
     assert str(tree) not in dumped
+
+
+# ── a case alias of a protected path is the protected path ─────────────────
+
+def _requires_case_insensitive(tree: Path) -> None:
+    if not (tree / "DATA").exists():
+        pytest.skip("filesystem is case-sensitive")
+
+
+def test_grant_naming_a_protected_file_by_a_case_alias_is_refused(tree):
+    _requires_case_insensitive(tree)
+    registry = AgentRegistry(protected_paths=(_real(tree / "data" / "state" / "audit.jsonl"),))
+    alias = str(tree / "DATA" / "STATE" / "Audit.jsonl")
+    with pytest.raises(ConfigError, match="protected"):
+        registry.register(_agent(read=[alias]))
+
+
+@pytest.mark.parametrize("tool", [READ_FILE, SAVE_FILE])
+async def test_case_alias_of_a_protected_file_is_denied_at_access(tree, tool):
+    _requires_case_insensitive(tree)
+    protected = (_real(tree / "data" / "state" / "audit.jsonl"),)
+    d, _ = await _gate(tool, str(tree / "DATA" / "STATE" / "AUDIT.JSONL"), tree / "data", protected)
+    assert not d.allowed
+    assert "protected" in d.deny_reason
+
+
+@pytest.mark.parametrize("tool", [READ_FILE, SAVE_FILE])
+async def test_case_alias_of_a_protected_file_not_yet_created_is_denied(tree, tool):
+    _requires_case_insensitive(tree)
+    protected = (_real(tree / "data" / "state" / "later.db"),)
+    d, _ = await _gate(tool, str(tree / "DATA" / "State" / "LATER.db"), tree / "data", protected)
+    assert not d.allowed
+    assert "protected" in d.deny_reason
+
+
+def test_grant_over_a_protected_file_not_yet_created_by_a_case_alias_is_refused(tree):
+    _requires_case_insensitive(tree)
+    registry = AgentRegistry(protected_paths=(_real(tree / "data" / "state" / "later.db"),))
+    with pytest.raises(ConfigError, match="protected"):
+        registry.register(_agent(write=[str(tree / "DATA" / "STATE" / "Later.db")]))

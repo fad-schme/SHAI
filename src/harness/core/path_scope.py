@@ -1,9 +1,12 @@
 """Path canonicalization and containment shared by agent grants, the protected
 set and the gate.
 
-Containment is decided on the normalized form, never on a raw string prefix:
-`/data-evil` is not inside `/data`. `canonicalize_path` is the only function
-here that touches the filesystem, and only to resolve symlinks.
+Containment is decided on the identity form, never on a raw string prefix:
+`/data-evil` is not inside `/data`. Identity folds case in exactly the
+directories whose filesystem ignores it, so `DATA/f.txt` is `data/f.txt` on a
+case-insensitive volume and a different file on a case-sensitive one.
+`canonicalize_path` resolves symlinks; the identity form probes the filesystem
+for case behaviour.
 """
 from __future__ import annotations
 
@@ -32,17 +35,51 @@ def is_absolute(path: str) -> bool:
     return rest[:1] in ("/", os.sep)
 
 
-def _normalized(path: str) -> str:
-    return os.path.normcase(os.path.normpath(path))
+def _exists(path: str) -> bool:
+    return os.path.lexists(path)
+
+
+def _folds_case(parent: str, name: str) -> bool | None:
+    """Whether `parent` ignores case, probed with the existing entry `name`:
+    true when the case-swapped spelling is the same file. None when `name` has no
+    letters to swap."""
+    alt = name.swapcase()
+    if alt == name:
+        return None
+    other = os.path.join(parent, alt)
+    try:
+        return _exists(other) and os.path.samefile(os.path.join(parent, name), other)
+    except OSError:
+        return False
+
+
+def _identity(path: str) -> str:
+    """`path` as the filesystem identifies it: normalized, with each component
+    lowercased when its directory ignores case. A component that does not exist
+    yet takes the case behaviour of the nearest existing ancestor, so a file
+    about to be created compares like one that is there."""
+    drive, rest = os.path.splitdrive(os.path.normpath(path))
+    folds = os.path.normcase("A") != "A"
+    current = drive + os.sep
+    parts = []
+    for name in (c for c in rest.split(os.sep) if c):
+        if _exists(os.path.join(current, name)):
+            probed = _folds_case(current, name)
+            folds = folds if probed is None else probed
+        parts.append(name.lower() if folds else name)
+        current = os.path.join(current, name)
+    return os.path.normcase(drive) + os.sep + os.sep.join(parts)
+
+
+def _contains(path_id: str, root_id: str) -> bool:
+    return path_id == root_id or path_id.startswith(root_id.rstrip(os.sep) + os.sep)
 
 
 def is_within(path: str, root: str) -> bool:
-    """True when `path` equals `root` or sits beneath it, comparing normalized
+    """True when `path` equals `root` or sits beneath it, comparing identity
     forms (separators unified, `.` and `..` collapsed, case folded where the
-    platform folds it)."""
-    p = _normalized(path)
-    r = _normalized(root)
-    return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+    filesystem folds it)."""
+    return _contains(_identity(path), _identity(root))
 
 
 def canonicalize_path(value: Any) -> str | None:
@@ -82,11 +119,14 @@ def check_path(
     root matches what it points to.
     """
     resolved = canonicalize_path(value)
-    if resolved is not None and any(is_within(resolved, p) for p in protected):
+    if resolved is None:
+        return None, "outside_write" if access == "write" else "outside_read"
+    identity = _identity(resolved)
+    if any(_contains(identity, _identity(p)) for p in protected):
         return None, "protected"
     entries = write if access == "write" else [*read, *write]
-    if resolved is not None and any(
-        root is not None and is_within(resolved, root)
+    if any(
+        root is not None and _contains(identity, _identity(root))
         for root in map(canonicalize_path, entries)
     ):
         return resolved, None

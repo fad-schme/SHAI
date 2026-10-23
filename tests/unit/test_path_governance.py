@@ -221,6 +221,69 @@ async def test_case_differences_cannot_reach_a_sibling(tree):
     assert d.allowed is insensitive
 
 
+def _requires_case_insensitive(tree: Path) -> None:
+    if not (tree / "DATA").exists():
+        pytest.skip("filesystem is case-sensitive")
+
+
+def _case_sensitive_dir(tmp_path: Path) -> Path:
+    """An empty directory where `data` and `DATA` are different names. Windows
+    makes one per directory; skips where the platform cannot."""
+    root = tmp_path / "cs"
+    root.mkdir()
+    if os.name == "nt":
+        made = subprocess.run(
+            ["fsutil", "file", "setCaseSensitiveInfo", str(root), "enable"],
+            capture_output=True, check=False,
+        )
+        if made.returncode != 0:
+            pytest.skip("cannot mark a directory case-sensitive")
+    (root / "data").mkdir()
+    try:
+        (root / "DATA").mkdir()
+    except FileExistsError:
+        pytest.skip("filesystem is case-insensitive")
+    return root
+
+
+async def test_case_alias_of_a_granted_directory_is_accepted(tree):
+    _requires_case_insensitive(tree)
+    agent = _grant(tree, read=["data"])
+    assert (await _gate("read_file", {"path": str(tree / "DATA" / "f.txt")}, agent))[0].allowed
+    assert (await _gate("read_file", {"path": str(tree / "Data" / "F.TXT")}, agent))[0].allowed
+
+
+async def test_case_alias_of_a_granted_root_is_accepted_in_the_grant(tree):
+    _requires_case_insensitive(tree)
+    agent = _agent({"read": [str(tree / "DATA")]})
+    assert (await _gate("read_file", {"path": str(tree / "data" / "f.txt")}, agent))[0].allowed
+
+
+async def test_outside_sibling_stays_denied_under_a_case_alias(tree):
+    _requires_case_insensitive(tree)
+    (tree / "data2").mkdir()
+    (tree / "data2" / "f.txt").write_text("x")
+    agent = _grant(tree, read=["data"])
+    assert not (await _gate("read_file", {"path": str(tree / "DATA2" / "f.txt")}, agent))[0].allowed
+
+
+async def test_new_file_write_through_a_case_alias_obeys_the_grant(tree):
+    _requires_case_insensitive(tree)
+    agent = _grant(tree, write=["out"])
+    assert (await _gate("save_file", {"path": str(tree / "OUT" / "New.txt")}, agent))[0].allowed
+    assert not (await _gate("save_file", {"path": str(tree / "DATA" / "New.txt")}, agent))[0].allowed
+
+
+async def test_distinct_case_directories_stay_distinct_on_a_case_sensitive_directory(tmp_path):
+    root = _case_sensitive_dir(tmp_path)
+    (root / "data" / "f.txt").write_text("x")
+    (root / "DATA" / "f.txt").write_text("x")
+    agent = _agent({"read": [str(root / "data")]})
+    assert (await _gate("read_file", {"path": str(root / "data" / "f.txt")}, agent))[0].allowed
+    assert not (await _gate("read_file", {"path": str(root / "DATA" / "f.txt")}, agent))[0].allowed
+    assert not (await _gate("save_file", {"path": str(root / "DATA" / "new.txt")}, agent))[0].allowed
+
+
 # ── default deny, subagents, multi-argument tools ─────────────────────────
 
 async def test_agent_without_allowed_paths_is_denied_every_path(tree):
