@@ -56,7 +56,9 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_type_hints
+
+from pydantic import BaseModel, ConfigDict, create_model
 
 from harness.core.errors import DispatchRefused
 from harness.core.types import Irreversibility, Transport
@@ -228,13 +230,9 @@ class ShaiTool:
     # to build the JSON schema for the LLM. We expose these directly.
 
     @property
-    def args_schema(self) -> Any:
-        """Return a pydantic model for the function's args (for LangChain)."""
-        try:
-            from langchain_core.utils.function_calling import create_schema_from_function
-            return create_schema_from_function(self.name, self._fn)
-        except Exception:
-            return None
+    def args_schema(self) -> type[BaseModel]:
+        """Return the typed input schema without depending on a framework."""
+        return tool_input_schema(self._fn, name=self.name)
 
     # ── repr ──────────────────────────────────────────────────────────────
 
@@ -363,27 +361,70 @@ class GatedCall:
         return self.text or ""
 
 
-async def invoke_tool(tool: Any, args: dict[str, Any]) -> Any:
+def tool_callable(tool: Any) -> Callable[..., Any]:
+    """Find the implementation whose signature a framework tool exposes.
+
+    Unsupported SDK objects fail during wrapping rather than being returned
+    ungoverned. Protocol-only tools can still use invoke_tool directly.
+    """
+    for attr in ("_fn", "fn", "coroutine", "func"):
+        function = getattr(tool, attr, None)
+        if callable(function):
+            return function
+    if callable(tool):
+        return tool
+    raise TypeError(f"Cannot find an implementation callable on {type(tool).__name__}")
+
+
+def tool_input_schema(function: Callable[..., Any], *, name: str) -> type[BaseModel]:
+    """Build a Pydantic input model from the original function's annotations."""
+    signature = inspect.signature(function)
+    hints = get_type_hints(inspect.unwrap(function), include_extras=True)
+    fields = {}
+    for key, parameter in signature.parameters.items():
+        annotation = hints.get(key, Any)
+        default = ... if parameter.default is inspect.Parameter.empty else parameter.default
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            annotation, default = tuple[annotation, ...], ()
+        elif parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            annotation, default = dict[str, annotation], {}
+        fields[key] = (annotation, default)
+    return create_model(f"{name}Input", __config__=ConfigDict(extra="forbid"), **fields)
+
+
+async def invoke_tool(
+    tool: Any, args: dict[str, Any], *, signature: inspect.Signature | None = None,
+) -> Any:
     """Invoke a tool by keyword arguments, whatever shape it is.
 
     Recognises ShaiTool, LangChain tools (ainvoke/arun/invoke/run), and plain
     sync or async callables. Sync forms run on a worker thread so a blocking
     tool never stalls the event loop.
+    A signature supplied by make_gated_tool reconstructs positional-only and
+    variadic calls from the arguments the gate actually authorised.
     """
+    positional: tuple[Any, ...] = ()
+    keywords = args
+    if signature is not None:
+        if args.keys() - signature.parameters.keys():
+            raise TypeError("Gate returned arguments outside the tool signature")
+        bound = inspect.BoundArguments(signature, dict(args))
+        signature.bind(*bound.args, **bound.kwargs)
+        positional, keywords = bound.args, bound.kwargs
     if isinstance(tool, ShaiTool):
-        return await tool._async_call(**args)
+        return await tool._async_call(*positional, **keywords)
     if asyncio.iscoroutinefunction(getattr(tool, "ainvoke", None)):
         return await tool.ainvoke(args)
     if asyncio.iscoroutinefunction(getattr(tool, "arun", None)):
         return await tool.arun(**args)
     if asyncio.iscoroutinefunction(tool):
-        return await tool(**args)
+        return await tool(*positional, **keywords)
     if callable(getattr(tool, "invoke", None)):
         return await asyncio.to_thread(tool.invoke, args)
     if callable(getattr(tool, "run", None)):
         return await asyncio.to_thread(tool.run, **args)
     if callable(tool):
-        return await asyncio.to_thread(tool, **args)
+        return await asyncio.to_thread(tool, *positional, **keywords)
     raise TypeError(f"Cannot invoke tool of type {type(tool)}")
 
 
@@ -499,21 +540,26 @@ def make_gated_tool(
     or blocked, `call.text` when allowed. A framework with a richer artifact
     (ToolException, a Command) passes its own `render`.
 
-    Accepts positional or keyword arguments — a lone positional argument is
-    treated as {"input": ...}, matching how PydanticAI presents single-arg
-    tool calls.
+    Bind positional and keyword arguments to the implementation signature and
+    include defaults before authorisation. Dispatch reconstructs the call from
+    the gate's effective arguments, so argument redaction also reaches it.
     """
     name = tool_name or getattr(tool, "name", getattr(tool, "__name__", str(tool)))
     render = render or (lambda call: call.message if not call.allowed else call.text)
+    function = tool_callable(tool)
+    signature = inspect.signature(function)
 
+    @functools.wraps(function)
     async def gated(*args: Any, **kwargs: Any) -> Any:
-        tool_args = kwargs or ({"input": args[0]} if args else {})
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        tool_args = dict(bound.arguments)
         call = await execute_gated_tool_call(
             harness=harness,
             ctx=ctx,
             tool_name=name,
             tool_args=tool_args,
-            invoke=lambda a: invoke_tool(tool, a),
+            invoke=lambda a: invoke_tool(tool, a, signature=signature),
         )
         return render(call)
 

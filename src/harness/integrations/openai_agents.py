@@ -29,13 +29,10 @@ OpenAI Agents SDK is imported lazily.
 """
 from __future__ import annotations
 
-import functools
-import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
-    ShaiTool,
     make_gated_tool,
     shai_tool,
 )
@@ -43,8 +40,6 @@ from harness.integrations.base import (  # shai_tool re-exported
 if TYPE_CHECKING:
     from harness.core.context import AgentContext
     from harness.core.harness import SHAI
-
-log = logging.getLogger(__name__)
 
 __all__ = ["shai_tool", "wrap_tool", "wrap_tools"]
 
@@ -54,29 +49,13 @@ def wrap_tool(tool: Any, *, harness: SHAI, ctx: AgentContext) -> Any:
 
     Note: does not call register_tools(). Use wrap_tools() for that.
     """
+    from agents import function_tool
+
     tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
-    original_fn = (getattr(tool, "_fn", None) or getattr(tool, "fn", None)
-                   or (tool if callable(tool) else None))
-    if original_fn is None:
-        log.warning("wrap_tool: cannot find callable on %s — returning unwrapped", tool_name)
-        return tool
-
-    base_fn = original_fn._fn if isinstance(original_fn, ShaiTool) else original_fn
-
     # The SDK has no denial artifact — the shared default render (message on
     # denial/block, text otherwise) is exactly the tool output it expects.
-    gated = functools.wraps(base_fn)(
-        make_gated_tool(original_fn, harness=harness, ctx=ctx, tool_name=tool_name)
-    )
-
-    try:
-        from agents import function_tool
-        return function_tool(gated, name_override=tool_name)
-    except ImportError:
-        pass
-
-    gated.__name__ = tool_name
-    return gated
+    gated = make_gated_tool(tool, harness=harness, ctx=ctx, tool_name=tool_name)
+    return function_tool(gated, name_override=tool_name)
 
 
 async def wrap_tools(

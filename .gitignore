@@ -36,3 +36,6 @@ tmp_pytest/
 /state/*
 benchmark/*
 .coverage
+feature-spec*
+eval/
+benchmark/
