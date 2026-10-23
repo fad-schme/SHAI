@@ -105,8 +105,9 @@ async def run_turn(
 ) -> ScanVerdict | str:
     """Full turn: scan_input → llm_fn → scan_output.
 
-    llm_fn(user_text, tools, ctx) → str
-        The agent's LLM loop. It receives the active tool list and is
+    llm_fn(model_input, tools, ctx) → str
+        The agent's LLM loop. Its first argument is the user's text, or the
+        redacted text when scan_input redacted. It receives the active tool list and is
         responsible for calling gated_dispatch for each tool call.
         Must return the final response string.
 
@@ -121,8 +122,12 @@ async def run_turn(
     if input_verdict.blocked:
         return input_verdict
 
+    # When scan_input redacted, the model sees the redacted text and never the
+    # original; a clean or warned input passes through unchanged.
+    model_input = input_verdict.redacted_text or user_text
+
     # Tools are resolved at load_agent() time — ask the harness for the set.
-    response = await llm_fn(user_text, harness.tools_for(ctx), ctx)
+    response = await llm_fn(model_input, harness.tools_for(ctx), ctx)
     output_verdict = await harness.scan_output(response, ctx)
     if output_verdict.blocked:
         return output_verdict

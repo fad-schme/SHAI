@@ -438,11 +438,101 @@ async def run_scan(
 
     all_findings:   list[Finding] = []
     adapter_names:  list[str]     = []
-    current_text                  = text   # accumulates redactions
     final_status                  = ScanStatus.ALLOW
     degraded                      = False  # at least one scanner failed in degrade mode
     # Track which findings came from each scanner for per-scanner action
-    per_scanner_data: list[tuple[list[Finding], ScanResult | None, ScanAction, str | None]] = []
+    per_scanner_data: list[
+        tuple[list[Finding], ScanResult | None, ScanAction, str | None, str]
+    ] = []
+    # Scanners at action=redact that offered a replacement on the original pass,
+    # in configured order: the input to the redaction chain below.
+    redactors: list[tuple[Scanner, ScanResult, str | None]] = []
+    # Set when a redact-action scanner crossed block_at without supplying text.
+    redact_block_reason: str | None = None
+
+    async def _scanner_failed(scanner: Scanner, failure: BaseException) -> ScanVerdict | None:
+        """Apply the cancellation / on_error policy to one scanner failure.
+
+        Used for a scanner's detection pass and for its redaction-chain re-scan,
+        so both follow one policy. Returns the blocking verdict (event already
+        emitted) under fail_closed, raises a cancellation after emitting its
+        event, and otherwise records the degradation and returns None.
+        """
+        nonlocal degraded, final_status
+        breaker = state.get_breaker(scanner)
+
+        # CancelledError derives from BaseException, so it does not match the
+        # Exception branch below and would otherwise fall through to the
+        # success path and be read as a ScanResult. Invariant 2 names it as one
+        # of the two exceptions that may leave a boundary: it is a control
+        # signal, not a scanner defect, and swallowing it would return a normal
+        # verdict for a call the runtime has abandoned. No breaker failure is
+        # recorded — the scanner did not misbehave. Emit first, then re-raise.
+        if isinstance(failure, asyncio.CancelledError):
+            event = AuditEvent.build(
+                boundary=boundary,
+                decision=Decision.BLOCKED,
+                ctx=ctx,
+                tenant_id=tenant_id,
+                duration_ms=now_ms() - start,
+                adapters=adapter_names,
+                deny_reason=f"scan cancelled during scanner '{scanner.name}'",
+                token_id=token_id,
+                audit_tags=audit_tags or {},
+            )
+            await emitter.emit(event)
+            raise failure
+
+        breaker.record_failure()
+        error_type = type(failure).__name__
+        log.error(
+            "scanner failed",
+            extra={
+                "scanner": scanner.name,
+                "boundary": boundary,
+                "on_error": on_error,
+                "error_type": error_type,
+                # Bounded preview, not the exception message: a
+                # third-party scanner's exception text can echo the
+                # substring it choked on, but an operator reading this
+                # line still needs to know what was being scanned — a
+                # hash tells them nothing.
+                "text_preview": text[:80],
+                **ctx.to_log_fields(),
+            },
+        )
+        # Emit structured system event for observability. Type only, not
+        # the exception message — this event is signed and carries no
+        # raw text on any path.
+        await _emit_system_event(
+            emitter, ctx, tenant_id, scanner.name,
+            error_type, breaker.state,
+            boundary, audit_tags,
+        )
+
+        if on_error == OnError.FAIL_CLOSED:
+            # Short-circuit: scanner failure → BLOCK
+            event = AuditEvent.build(
+                boundary=boundary,
+                decision=Decision.BLOCKED,
+                ctx=ctx,
+                tenant_id=tenant_id,
+                duration_ms=now_ms() - start,
+                adapters=adapter_names,
+                deny_reason=f"scanner '{scanner.name}' failed (on_error=fail_closed)",
+                token_id=token_id,
+                audit_tags=audit_tags or {},
+                extra={"on_error": "fail_closed", "failed_scanner": scanner.name},
+            )
+            await emitter.emit(event)
+            return ScanVerdict(status=ScanStatus.BLOCK)
+
+        if on_error == OnError.DEGRADE:
+            degraded = True
+            if final_status != ScanStatus.BLOCK:
+                final_status = ScanStatus.WARN
+        # FAIL_OPEN or DEGRADE: continue with empty findings for this scanner
+        return None
 
     for configured, result in zip(scanners, raw_results):
         scanner = configured.scanner
@@ -470,85 +560,15 @@ async def run_scan(
                 if final_status != ScanStatus.BLOCK:
                     final_status = ScanStatus.WARN
             # FAIL_OPEN: skip silently
-            per_scanner_data.append(([], None, ScanAction.BLOCK, None))
+            per_scanner_data.append(([], None, ScanAction.BLOCK, None, scanner.name))
             continue
 
-        # ── Scan was cancelled ────────────────────────────────────────────
-        # CancelledError derives from BaseException, so it does not match the
-        # Exception branch below and would otherwise fall through to the
-        # success path and be read as a ScanResult. Invariant 2 names it as one
-        # of the two exceptions that may leave a boundary: it is a control
-        # signal, not a scanner defect, and swallowing it would return a normal
-        # verdict for a call the runtime has abandoned. No breaker failure is
-        # recorded — the scanner did not misbehave. Emit first, then re-raise.
-        if isinstance(result, asyncio.CancelledError):
-            event = AuditEvent.build(
-                boundary=boundary,
-                decision=Decision.BLOCKED,
-                ctx=ctx,
-                tenant_id=tenant_id,
-                duration_ms=now_ms() - start,
-                adapters=adapter_names,
-                deny_reason=f"scan cancelled during scanner '{scanner.name}'",
-                token_id=token_id,
-                audit_tags=audit_tags or {},
-            )
-            await emitter.emit(event)
-            raise result
-
-        # ── Scanner raised an exception ───────────────────────────────────
-        if isinstance(result, Exception):
-            breaker.record_failure()
-            error_type = type(result).__name__
-            log.error(
-                "scanner failed",
-                extra={
-                    "scanner": scanner.name,
-                    "boundary": boundary,
-                    "on_error": on_error,
-                    "error_type": error_type,
-                    # Bounded preview, not the exception message: a
-                    # third-party scanner's exception text can echo the
-                    # substring it choked on, but an operator reading this
-                    # line still needs to know what was being scanned — a
-                    # hash tells them nothing.
-                    "text_preview": text[:80],
-                    **ctx.to_log_fields(),
-                },
-            )
-            # Emit structured system event for observability. Type only, not
-            # the exception message — this event is signed and carries no
-            # raw text on any path.
-            await _emit_system_event(
-                emitter, ctx, tenant_id, scanner.name,
-                error_type, breaker.state,
-                boundary, audit_tags,
-            )
-
-            if on_error == OnError.FAIL_CLOSED:
-                # Short-circuit: scanner failure → BLOCK
-                event = AuditEvent.build(
-                    boundary=boundary,
-                    decision=Decision.BLOCKED,
-                    ctx=ctx,
-                    tenant_id=tenant_id,
-                    duration_ms=now_ms() - start,
-                    adapters=adapter_names,
-                    deny_reason=f"scanner '{scanner.name}' failed (on_error=fail_closed)",
-                    token_id=token_id,
-                    audit_tags=audit_tags or {},
-                    extra={"on_error": "fail_closed", "failed_scanner": scanner.name},
-                )
-                await emitter.emit(event)
-                return ScanVerdict(status=ScanStatus.BLOCK)
-
-            elif on_error == OnError.DEGRADE:
-                degraded = True
-                if final_status != ScanStatus.BLOCK:
-                    final_status = ScanStatus.WARN
-
-            # FAIL_OPEN or DEGRADE: continue with empty findings for this scanner
-            per_scanner_data.append(([], None, ScanAction.BLOCK, None))
+        # ── Scanner raised, or its scan was cancelled ─────────────────────
+        if isinstance(result, (asyncio.CancelledError, Exception)):
+            failed = await _scanner_failed(scanner, result)
+            if failed is not None:
+                return failed
+            per_scanner_data.append(([], None, ScanAction.BLOCK, None, scanner.name))
             continue
 
         # ── Scanner succeeded ─────────────────────────────────────────────
@@ -570,7 +590,9 @@ async def run_scan(
             else f.model_copy(update={"method_family": family})
             for f in result.findings
         ]
-        per_scanner_data.append((findings, result, effective_action, redact_with))
+        per_scanner_data.append(
+            (findings, result, effective_action, redact_with, scanner.name)
+        )
         all_findings.extend(findings)
         # Redaction is a content transform, so it applies whenever the scanner
         # produced one and the operator asked for it — independent of block_at.
@@ -583,9 +605,31 @@ async def run_scan(
         # alert-configured scanner and mutates content the operator chose to
         # let through.
         if result.redacted_text is not None and effective_action == ScanAction.REDACT:
-            current_text = _apply_redaction(
-                current_text, result.findings, result, redact_with
-            )
+            redactors.append((scanner, result, redact_with))
+
+    # ── Redaction chain ───────────────────────────────────────────────────
+    # Every scanner redacted from the original text, so taking the last one's
+    # output would restore whatever an earlier one removed. The first redactor
+    # supplies its text from the original pass; each later one scans the text
+    # produced so far, so every redaction survives and adding a redactor can
+    # only remove more. Only the surface text is re-scanned, and only after an
+    # earlier redactor changed it; a redactor that finds nothing in what it is
+    # handed leaves it as it is.
+    current_text = text
+    for scanner, result, redact_with in redactors:
+        if current_text == text:
+            step = result
+        else:
+            try:
+                step = await scanner.scan(current_text, ctx)
+            except (asyncio.CancelledError, Exception) as exc:
+                failed = await _scanner_failed(scanner, exc)
+                if failed is not None:
+                    return failed
+                continue
+            if step.redacted_text is None:
+                continue
+        current_text = _apply_redaction(current_text, step.findings, step, redact_with)
 
     if budget_exhausted:
         all_findings.append(Finding(
@@ -604,7 +648,7 @@ async def run_scan(
     all_findings = promote_findings(all_findings)
 
     # ── Apply action per scanner ──────────────────────────────────────────
-    for findings, result, action, redact_with in per_scanner_data:
+    for findings, result, action, redact_with, scanner_name in per_scanner_data:
         triggering = [f for f in findings if f.severity >= config.block_at]
         if not triggering:
             continue
@@ -619,11 +663,23 @@ async def run_scan(
                 final_status = ScanStatus.WARN
 
         elif action == ScanAction.REDACT:
-            # Redaction already applied unconditionally above.
-            # Status stays ALLOW — content passed through with PII replaced.
-            pass
+            # Redaction was applied by the chain above. Status stays ALLOW —
+            # content passed through with PII replaced — unless this scanner
+            # crossed block_at and supplied nothing to substitute: there is
+            # then no redaction to rely on, so the content is blocked, as the
+            # gate's layer 7 does. Read from the scanner's own original-pass
+            # result, never from a chain re-scan.
+            if result is not None and result.redacted_text is None:
+                final_status = ScanStatus.BLOCK
+                redact_block_reason = (
+                    f"scanner '{scanner_name}' is set to redact but supplied "
+                    "no replacement text"
+                )
+                break
 
-    redacted_text = current_text if current_text != text else None
+    redacted_text = (
+        current_text if current_text != text and redact_block_reason is None else None
+    )
 
     # A caller-supplied block floor — never overrides a block the scanners
     # themselves already produced, only raises ALLOW/WARN to BLOCK.
@@ -663,7 +719,7 @@ async def run_scan(
         adapters=adapter_names,
         finding_count=len(all_findings),
         max_severity=max_sev,
-        deny_reason=forced_block_reason if forced else None,
+        deny_reason=redact_block_reason or (forced_block_reason if forced else None),
         token_id=token_id,
         audit_tags=audit_tags or {},
         extra=extra or None,

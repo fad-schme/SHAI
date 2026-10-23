@@ -223,7 +223,10 @@ else:
 either boundary blocked the turn: the input never reached the model, or the
 response was rejected and is not returned. Abort the turn and decide what to
 surface. It returns a `str` when the turn completed, which is the final response
-and carries the redacted text when `scan_output` replaced content.
+and carries the redacted text when `scan_output` replaced content. When
+`scan_input` redacts, the model receives the redacted text, and `llm_fn` is
+called with it instead of the original. `ShaiMiddleware.abefore_agent` does the
+same: it replaces the last human message in graph state with the redacted text.
 
 ## CrewAI
 

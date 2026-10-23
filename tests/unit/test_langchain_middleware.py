@@ -337,3 +337,82 @@ def test_sync_tool_bodies_that_run_another_sync_gated_call_are_not_capped(tmp_pa
 
 def _request_for_pay() -> ToolCallRequest:
     return _request("pay", {"amount": 1, "to": "a"})
+
+
+# ── abefore_agent: the model receives scan_input's redacted text ──────────
+
+async def _build_input_redact(tmp_path: Path) -> tuple[SHAI, AgentContext]:
+    cfg = tmp_path / "h.yaml"
+    cfg.write_text(
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
+        "scan_input:\n  block_at: critical\n  scanners:\n    - name: regex_pii\n"
+        "      action: redact\n"
+        "scan_output:\n  scanners:\n    - name: injection_scan\n"
+        "audit_sinks:\n  - name: stdout\n"
+    )
+    agent = tmp_path / "pay_agent.yaml"
+    agent.write_text(AGENT_YAML)
+    h = await SHAI.from_yaml(cfg)
+    await h.load_agent(agent)
+    return h, AgentContext(agent_id="pay_agent")
+
+
+def _apply_update(messages: list, update: dict) -> list:
+    """Apply a before_agent update the way the graph's message reducer does."""
+    from langgraph.graph.message import add_messages
+    return add_messages(messages, update["messages"])
+
+
+async def test_abefore_agent_replaces_the_last_human_message_with_redacted_text(tmp_path: Path):
+    h, ctx = await _build_input_redact(tmp_path)
+    mw = await ShaiMiddleware.create([], harness=h, ctx=ctx)
+    from langgraph.graph.message import add_messages
+    state = add_messages([], [HumanMessage("My email is test@example.com")])
+
+    update = await mw.abefore_agent({"messages": state})
+
+    merged = _apply_update(state, update)
+    humans = [m for m in merged if isinstance(m, HumanMessage)]
+    assert [m.content for m in humans] == ["My email is [REDACTED:pii.email]"]
+    assert humans[0].id == state[0].id
+
+
+async def test_abefore_agent_replaces_only_the_last_human_message(tmp_path: Path):
+    h, ctx = await _build_input_redact(tmp_path)
+    mw = await ShaiMiddleware.create([], harness=h, ctx=ctx)
+    from langgraph.graph.message import add_messages
+    state = add_messages([], [
+        HumanMessage("earlier turn"), AIMessage("reply"),
+        HumanMessage("mail me at test@example.com"),
+    ])
+
+    update = await mw.abefore_agent({"messages": state})
+
+    merged = _apply_update(state, update)
+    assert [m.content for m in merged] == [
+        "earlier turn", "reply", "mail me at [REDACTED:pii.email]",
+    ]
+
+
+async def test_abefore_agent_clean_input_returns_none(tmp_path: Path):
+    h, ctx = await _build_input_redact(tmp_path)
+    mw = await ShaiMiddleware.create([], harness=h, ctx=ctx)
+
+    assert await mw.abefore_agent({"messages": [HumanMessage("hello")]}) is None
+
+
+async def test_abefore_agent_redacts_a_human_message_with_no_id(tmp_path: Path):
+    """No id → a replacement could not be keyed and would append a second
+    human message; the update rewrites the list instead."""
+    h, ctx = await _build_input_redact(tmp_path)
+    mw = await ShaiMiddleware.create([], harness=h, ctx=ctx)
+    state = [HumanMessage("earlier"), AIMessage("reply"),
+             HumanMessage("mail me at test@example.com")]
+    assert state[-1].id is None
+
+    update = await mw.abefore_agent({"messages": state})
+
+    merged = _apply_update(state, update)
+    assert [m.content for m in merged] == [
+        "earlier", "reply", "mail me at [REDACTED:pii.email]",
+    ]

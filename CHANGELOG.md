@@ -12,6 +12,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **The model receives the redacted input when `scan_input` redacts.** `run_turn`
+  and `ShaiMiddleware.abefore_agent` ignored `redacted_text`, so the original
+  content reached the model while the audit trail showed a redaction. `run_turn`
+  now passes the redacted text to `llm_fn`, and `abefore_agent` replaces the last
+  human message in graph state with it. A clean or warned input is unchanged.
+- **Redactions from several scanners compose in the shared scan pipeline.** With
+  two scanners at `action: redact`, the second's output replaced the first's and
+  restored what it had removed. Each later redactor now scans the text produced
+  so far, so every redaction is present whatever the scanner order.
+- **A scanner at `action: redact` that supplies no replacement now blocks.** When
+  it reported a finding at or above `block_at` with no `redacted_text`, the
+  shared pipeline allowed the content unchanged while the gate blocked the same
+  condition. The pipeline now blocks, with a fixed deny reason that names the
+  scanner and carries no content.
 - **An MCP tool-call token authorises only the tool it was issued for.**
   `ShaiTransport` now compares the tool name in a `tools/call` body
   (`params.name`) with the token's `tool_name` and refuses a mismatch, or a body

@@ -671,3 +671,52 @@ async def test_local_tool_without_callable_is_a_wiring_error(tmp_path: Path):
             harness=h, ctx=ctx, tool_name="search_docs",
             tool_args={"query": "q"}, invoke=None,
         )
+
+
+# ── run_turn: the model receives scan_input's redacted text ───────────────
+
+async def _build_input_redact_harness(tmp_path: Path) -> SHAI:
+    cfg = tmp_path / "h.yaml"
+    cfg.write_text(
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
+        "scan_input:\n  block_at: critical\n  scanners:\n    - name: regex_pii\n"
+        "      action: redact\n"
+        "scan_output:\n  scanners: []\n"
+        "audit_sinks:\n  - name: stdout\n"
+    )
+    h = await SHAI.from_yaml(cfg)
+    await h.load_agent(FIXTURES / "agents" / "orchestrator_agent.yaml")
+    await h.register_tools([
+        Tool(name="search_docs", tags=["read", "internal"], transport=Transport.LOCAL),
+    ])
+    return h
+
+
+async def test_run_turn_model_receives_the_redacted_input(tmp_path: Path):
+    from harness.integrations.anthropic_sdk import run_turn
+
+    h = await _build_input_redact_harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    seen: list[str] = []
+
+    async def llm_fn(text, tools, ctx):
+        seen.append(text)
+        return "ok"
+
+    await run_turn("My email is test@example.com", ctx, harness=h, llm_fn=llm_fn)
+    assert seen == ["My email is [REDACTED:pii.email]"]
+
+
+async def test_run_turn_model_receives_clean_input_unchanged(tmp_path: Path):
+    from harness.integrations.anthropic_sdk import run_turn
+
+    h = await _build_input_redact_harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    seen: list[str] = []
+
+    async def llm_fn(text, tools, ctx):
+        seen.append(text)
+        return "ok"
+
+    await run_turn("hello there", ctx, harness=h, llm_fn=llm_fn)
+    assert seen == ["hello there"]

@@ -185,7 +185,8 @@ def _build_shai_middleware_class() -> type:
         @hook_config(can_jump_to=["end"])
         async def abefore_agent(self, state: Any, runtime: Any = None) -> Any:
             """scan_input — once before the loop starts."""
-            user_text = _last_human_message(state.get("messages", []))
+            messages = state.get("messages", [])
+            user_text = _last_human_message(messages)
             if not user_text:
                 return None
             verdict = await self._harness.scan_input(user_text, self._ctx)
@@ -205,6 +206,8 @@ def _build_shai_middleware_class() -> type:
                 log.warning("scan_input flagged (action=alert)",
                             extra={"findings": len(verdict.findings),
                                    **self._ctx.to_log_fields()})
+            if verdict.redacted_text:
+                return _redacted_input_update(messages, verdict.redacted_text)
             return None
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
@@ -313,6 +316,28 @@ def _last_human_message(messages: list) -> str | None:
     except ImportError:
         pass
     return None
+
+
+def _redacted_input_update(messages: list, redacted: str) -> dict:
+    """State update that replaces the last human message with redacted text.
+
+    LangGraph's message reducer replaces a message that shares an id with an
+    existing one and appends otherwise. A message in graph state normally has an
+    id (the reducer assigns one on entry); when it has none the replacement
+    cannot be keyed to it, so the update clears the list and restores it with
+    the redacted message in place — still one human message, never two.
+    """
+    from langchain_core.messages import HumanMessage
+    index = max(i for i, m in enumerate(messages) if isinstance(m, HumanMessage))
+    original = messages[index]
+    replacement = original.model_copy(update={"content": redacted})
+    if original.id is not None:
+        return {"messages": [replacement]}
+    from langchain_core.messages import RemoveMessage
+    from langgraph.graph.message import REMOVE_ALL_MESSAGES
+    rebuilt = list(messages)
+    rebuilt[index] = replacement
+    return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *rebuilt]}
 
 
 def _last_ai_message(messages: list) -> str | None:

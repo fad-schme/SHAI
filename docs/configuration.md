@@ -93,6 +93,11 @@ scanners:
   - name: injection_scan        # inherits boundary action (block)
 ```
 
+Several scanners at `action: redact` compose: every one of their redactions is
+present in the redacted text, in either order, so adding a redactor can only
+remove more. A scanner at `action: redact` that reports a finding at or above
+`block_at` but supplies no replacement text blocks the content, as the gate does.
+
 The eight built-in scanners:
 
 | Scanner | Catches |
