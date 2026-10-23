@@ -19,6 +19,7 @@ Schema:
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from collections.abc import Iterator
@@ -136,13 +137,34 @@ def load_promoted_candidates(db_path: str | Path) -> list[dict]:
                 "SELECT id, fingerprint, skeleton, severity, hit_count "
                 "FROM heuristic_candidates WHERE status = 'promoted'"
             ).fetchall()
-        return [dict(r) for r in rows]
+        loaded = [dict(r) for r in rows]
     except Exception:
         # Runs on the scan path: an unreadable candidate cache costs promoted-
         # candidate matching, never a verdict — so it recovers to "none", and
         # says so.
         log.debug("promoted candidates unreadable — none loaded", exc_info=True)
         return []
+    # The same stance per row: a row whose fingerprint is not a JSON object
+    # costs that candidate's matching, never a verdict. Checked here, where the
+    # cache is filled, so the per-scan match path parses only readable rows.
+    # The id is logged, never the fingerprint.
+    readable = []
+    for row in loaded:
+        if _fingerprint_is_object(row["fingerprint"]):
+            readable.append(row)
+        else:
+            log.warning(
+                "promoted candidate fingerprint unreadable — skipped",
+                extra={"candidate_id": row["id"]},
+            )
+    return readable
+
+
+def _fingerprint_is_object(raw: object) -> bool:
+    try:
+        return isinstance(json.loads(raw), dict)
+    except (TypeError, ValueError):
+        return False
 
 
 def list_candidates(db_path: str | Path, status: str | None = None, min_hits: int = 0) -> list[dict]:

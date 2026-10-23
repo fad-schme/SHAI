@@ -851,6 +851,21 @@ class SHAI:
             store_failed = False
             try:
                 escalated, reason = await self._threat_accumulator.check(session_id)
+            except asyncio.CancelledError:
+                # Control signal, not a defect (Invariant 2): the event is
+                # still owed (Invariant 1), then the cancellation continues.
+                # BLOCKED with a reason naming the cancellation tells an
+                # abandoned call from a security denial.
+                await self._emitter.emit(AuditEvent.build(
+                    boundary=BoundaryName.INPUT_SCAN,
+                    decision=Decision.BLOCKED,
+                    ctx=ctx,
+                    tenant_id=self._tenant_id,
+                    duration_ms=0,
+                    deny_reason="scan_input cancelled during session accumulator pre-check",
+                    audit_tags=self._audit_tags_for(ctx),
+                ))
+                raise
             except StateStoreUnavailable:
                 # Not an escalation, so `on_escalation` does not apply: a
                 # store that cannot answer is denied under fail_closed and
@@ -860,7 +875,6 @@ class SHAI:
                 escalated = cfg.on_error == OnError.FAIL_CLOSED
                 reason = "session_accumulator: store unreachable — denying (fail_closed)"
             if escalated:
-                from harness.core.events import AuditEvent
                 if store_failed or cfg.on_escalation == "block":
                     status, decision = ScanStatus.BLOCK, Decision.BLOCKED
                 else:
@@ -945,23 +959,51 @@ class SHAI:
             # and SessionBudget resets the fan-out counter. Tool-only flows
             # that never call scan_input carry no signals — fan-out stays off.
             prompt_id = ctx.turn_signals.turn_id if ctx.turn_signals else None
-            allowed, reason = await self._session_budget.check(
-                ctx.agent_id, session_id, name, args, limits,
-                prompt_id=prompt_id,
-            )
+            try:
+                allowed, reason = await self._session_budget.check(
+                    ctx.agent_id, session_id, name, args, limits,
+                    prompt_id=prompt_id,
+                )
+            except asyncio.CancelledError:
+                # Control signal, not a defect (Invariant 2): the event is
+                # still owed (Invariant 1), then the cancellation continues.
+                # Emitted straight through the gate's deny path: the call has
+                # no decision, so nothing is recorded to TurnSignals. Whether
+                # the interrupted check had already reserved a step is unknown
+                # here, so nothing is released — the cautious direction.
+                await emit_gate_deny(
+                    "check_tool_call cancelled during session budget check",
+                    name, None, ctx, self._emitter, now_ms(), self._tenant_id,
+                    audit_tags=self._audit_tags_for(ctx),
+                )
+                raise
             if not allowed:
                 return await self._deny_pre_gate(reason, name, ctx)
 
-        decision = await self._gate_call(name, args, ctx)
+        try:
+            decision = await self._gate_call(name, args, ctx)
+        except BaseException:
+            # The step check() reserved was never used by a call that reached
+            # a decision (a cancellation, in practice): hand it back, then let
+            # the exception continue.
+            if reserved:
+                await self._release_budget(name, args, ctx, limits)
+            raise
         if reserved and not decision.allowed:
             # The budget counts calls that proceed: a call the gate refused
             # hands its step, fan-out slot and loop-window entry back, so a
             # retry after an approval is not read as a repeat.
-            await self._session_budget.release(
-                ctx.agent_id, ctx.conversation_id or ctx.agent_id, name, args, limits,
-                prompt_id=ctx.turn_signals.turn_id if ctx.turn_signals else None,
-            )
+            await self._release_budget(name, args, ctx, limits)
         return decision
+
+    async def _release_budget(
+        self, name: str, args: dict[str, Any], ctx: AgentContext, limits: ExecutionLimits
+    ) -> None:
+        """Hand back the step, fan-out slot and loop-window entry check() reserved."""
+        await self._session_budget.release(
+            ctx.agent_id, ctx.conversation_id or ctx.agent_id, name, args, limits,
+            prompt_id=ctx.turn_signals.turn_id if ctx.turn_signals else None,
+        )
 
     async def _gate_call(
         self, name: str, args: dict[str, Any], ctx: AgentContext

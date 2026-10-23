@@ -12,6 +12,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **A cancelled `scan_input` or `check_tool_call` records its event.** A task
+  cancelled while `scan_input` waited on the session accumulator, or while
+  `check_tool_call` waited on the session budget, left the boundary with no
+  audit event. Each now emits one blocked/denied event whose `deny_reason` names
+  the cancellation and the step, then re-raises. A `check_tool_call` cancelled
+  after the budget reserved a step now hands the step, fan-out slot and
+  loop-window entry back, so a call that never ran no longer counts toward
+  `max_steps`.
+- **An unreadable promoted-candidate row no longer breaks the text boundaries.**
+  One row whose fingerprint was not a JSON object made `scan_input`,
+  `scan_output` and `scan_tool_result` raise with no event. Such rows are now
+  left out when the cache is loaded, with one warning naming the candidate id;
+  readable candidates still match.
 - **`command_injection_scan` reads a command argument at the gate.** The gate
   frames each argument as `<name>: <value>`, and the unquoted value of a
   `command`, `cmd`, `script`, `shell`, `exec`, `run` or `entrypoint` argument
