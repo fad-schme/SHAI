@@ -729,3 +729,119 @@ async def test_missing_replacement_reason_names_the_scanner_and_no_content(emitt
     assert reason is not None and "mute" in reason
     assert "very-private-value" not in reason
     assert "very-private-value" not in sink.events[0].model_dump_json()
+
+
+# ── Scanner-failure log preview is redacted text ─────────────────────────
+
+_FAIL_LOGGER = "harness.boundaries._scan"
+_SECRET_TEXT = (
+    "api_key = sk_live_ABCDEF1234567890XYZ contact bob@example.com ssn 123-45-6789"
+)
+_ORIGINALS = ("sk_live_ABCDEF1234567890XYZ", "bob@example.com", "123-45-6789")
+
+
+async def _fail_scan(text, emitter, state, on_error=OnError.FAIL_CLOSED):
+    return await run_scan(
+        text, CTX,
+        boundary=BoundaryName.INPUT_SCAN,
+        scanners=[ConfiguredScanner(FailingScanner())],
+        config=boundary_config(on_error=on_error),
+        emitter=emitter,
+        tenant_id="test",
+        state=state,
+    )
+
+
+def _failure_records(caplog):
+    return [r for r in caplog.records
+            if r.name == _FAIL_LOGGER and r.getMessage() == "scanner failed"]
+
+
+def _record_dump(record) -> str:
+    return record.getMessage() + repr(vars(record))
+
+
+@pytest.mark.parametrize(
+    "on_error", [OnError.FAIL_CLOSED, OnError.DEGRADE, OnError.FAIL_OPEN]
+)
+async def test_failure_log_preview_is_redacted(caplog, emitter, sink, state, on_error):
+    caplog.set_level("ERROR", logger=_FAIL_LOGGER)
+    await _fail_scan(_SECRET_TEXT, emitter, state, on_error)
+
+    (record,) = _failure_records(caplog)
+    assert "[REDACTED:" in record.text_preview
+    dump = _record_dump(record)
+    for original in _ORIGINALS:
+        assert original not in dump
+    assert record.text_length == len(_SECRET_TEXT)
+    # One audit event for the boundary, plus the one SYSTEM event the failure
+    # already produced; the redaction step adds none.
+    boundary_events = [e for e in sink.events if e.boundary == BoundaryName.INPUT_SCAN]
+    assert len(boundary_events) == 1
+    assert len(sink.events) == 2
+
+
+async def test_failure_log_preview_of_plain_text_is_unchanged(caplog, emitter, state):
+    caplog.set_level("ERROR", logger=_FAIL_LOGGER)
+    text = "The quick brown fox jumps over the lazy dog. " * 4
+    await _fail_scan(text, emitter, state)
+    (record,) = _failure_records(caplog)
+    assert record.text_preview == text[:80]
+
+
+async def test_failure_log_secret_at_window_edge_leaves_no_fragment(
+    caplog, emitter, state, monkeypatch
+):
+    from harness.boundaries import _scan
+    monkeypatch.setattr(_scan, "_PREVIEW_WINDOW", 88)
+    monkeypatch.setattr(_scan, "_PREVIEW_EDGE_GUARD", 40)
+    caplog.set_level("ERROR", logger=_FAIL_LOGGER)
+    # The key starts inside the window and is cut by its edge, leaving a
+    # fragment too short for any pattern to recognise.
+    text = "a" * 70 + "sk_live_" + "B" * 30
+    await _fail_scan(text, emitter, state)
+    (record,) = _failure_records(caplog)
+    assert "sk_live" not in _record_dump(record)
+    assert "BBBB" not in _record_dump(record)
+
+
+async def test_failure_log_long_text_carries_integer_length(caplog, emitter, state):
+    caplog.set_level("ERROR", logger=_FAIL_LOGGER)
+    text = "x " * 5000
+    await _fail_scan(text, emitter, state)
+    (record,) = _failure_records(caplog)
+    assert record.text_length == len(text)
+    assert isinstance(record.text_length, int)
+
+
+@pytest.mark.parametrize(
+    "on_error", [OnError.FAIL_CLOSED, OnError.DEGRADE, OnError.FAIL_OPEN]
+)
+async def test_failure_log_omits_preview_when_redaction_fails(
+    caplog, emitter, sink, state, monkeypatch, on_error
+):
+    from harness.adapters.scanners import regex_pii
+    def boom(self, text):
+        raise RuntimeError(text)
+    monkeypatch.setattr(regex_pii.RegexPIIScanner, "scan_sync", boom)
+    caplog.set_level("ERROR", logger=_FAIL_LOGGER)
+
+    verdict = await _fail_scan(_SECRET_TEXT, emitter, state, on_error)
+
+    (record,) = _failure_records(caplog)
+    assert not hasattr(record, "text_preview")
+    assert record.text_preview_unavailable is True
+    assert record.text_preview_error_type == "RuntimeError"
+    assert record.text_length == len(_SECRET_TEXT)
+    dump = _record_dump(record)
+    for original in _ORIGINALS:
+        assert original not in dump
+    # Verdict handling is unchanged by the preview failing.
+    assert verdict.blocked == (on_error == OnError.FAIL_CLOSED)
+    assert len(sink.events) == 2
+
+
+async def test_failure_log_verdicts_per_mode(emitter, sink, state):
+    verdict = await _fail_scan("hello", emitter, state, OnError.DEGRADE)
+    assert not verdict.blocked
+    assert sink.events[-1].decision == Decision.WARN

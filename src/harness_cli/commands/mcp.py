@@ -9,7 +9,8 @@ is never built at all — this command is what gets it connected and its
 tools registered on the harness's next start. Once built, the baseline is
 also what the gate checks on every check_tool_call for that source
 (harness.mcp.gate.McpBaselineGate), so a manifest edited after startup
-denies further calls without needing a restart. See harness.mcp.onboard for
+denies further calls without needing a restart; a re-approved edit takes
+effect on the harness's next start. See harness.mcp.onboard for
 the full pipeline.
 """
 from __future__ import annotations

@@ -692,7 +692,8 @@ class MCPBaselineConfig(BaseModel, frozen=True, extra="forbid"):
     mid-session — checked again on every check_tool_call for that source
     (the gate's R3 pre-gate check, harness.mcp.gate.McpBaselineGate), which
     is what catches a manifest edited after startup without needing a
-    restart; approval stops *actions* from a built source, not its
+    restart. A re-approved edit takes effect on restart: the gate admits only
+    the manifest the process loaded. Approval stops *actions* from a built source, not its
     connection, the same posture agent revocation takes (see
     RevocationConfig). `shai mcp onboard` is the only writer — a clean
     onboarding pass auto-records `{id, file_hash, recorded_at}`.
@@ -704,9 +705,8 @@ class MCPBaselineConfig(BaseModel, frozen=True, extra="forbid"):
 
     cache_ttl_seconds:
         How long a check is cached on the gate's hot path, per source. **This
-        is the re-onboarding/kill latency** — editing a manifest (or running
-        `shai mcp onboard`) takes effect on calls to that source within one
-        TTL. 0 disables caching: every gate call re-hashes the manifest file
+        is the re-onboarding/kill latency** — editing a manifest is caught on calls to that
+        source within one TTL. A re-approved manifest takes effect on restart. 0 disables caching: every gate call re-hashes the manifest file
         and re-reads the baseline store.
     """
     path:              str   = "state/mcp_baseline.db"

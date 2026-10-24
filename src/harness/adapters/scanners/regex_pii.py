@@ -233,6 +233,12 @@ class RegexPIIScanner:
             self._patterns = list(_PATTERNS)
 
     async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
+        return self.scan_sync(text)
+
+    def scan_sync(self, text: str) -> ScanResult:
+        """The scan itself. Pure and synchronous, so a caller that must redact
+        without going through a boundary — the scanner-failure log — runs the
+        same patterns and validators rather than a second copy of them."""
         findings: list[Finding] = []
         redacted = text
 

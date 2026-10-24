@@ -12,6 +12,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **The MCP baseline gate admits only the manifest the process loaded.** After a
+  manifest was edited and re-approved with `shai mcp onboard`, the gate compared
+  the file with the new approval and admitted calls, while the running source
+  still enforced the earlier manifest's tools, rules and URL scope. The gate now
+  also requires the file to equal the manifest the source was built from; a
+  re-approved edit takes effect on restart, and calls against that source are
+  denied with a reason saying so until then.
+- **The scanner-failure log preview is redacted.** When a scanner raised, the
+  error log carried the first 80 characters of the scanned text unredacted. The
+  preview is now taken from text the pipeline's `regex_pii` redactor has already
+  processed, the record carries the text length, and a failure of the redaction
+  step drops the preview instead of falling back to the original.
+- **`ShaiMiddleware` never returns a tool result its scan redacted in the raw.**
+  The result replacer could rewrite only two result shapes and silently returned
+  the original for the rest. It now returns a rewritten copy for every shape the
+  extractor reads, and the blocked-result denial for a shape it cannot rewrite,
+  logging the type and tool name.
 - **The model receives the redacted input when `scan_input` redacts.** `run_turn`
   and `ShaiMiddleware.abefore_agent` ignored `redacted_text`, so the original
   content reached the model while the audit trail showed a redaction. `run_turn`

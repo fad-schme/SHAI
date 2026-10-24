@@ -78,6 +78,40 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Scanner-failure log preview. The preview is redacted text, produced before it
+# is logged. The redactor runs over a leading window larger than the preview,
+# and when the text was cut at the window edge the tail of the redacted window
+# is discarded as well, so a secret straddling the edge leaves no fragment.
+_PREVIEW_CHARS = 80
+_PREVIEW_WINDOW = 2048
+_PREVIEW_EDGE_GUARD = 256
+
+
+def _failure_log_fields(text: str) -> dict[str, Any]:
+    """Log fields describing the text a failed scanner was given.
+
+    Carries the text length and a redacted preview. The redactor is the
+    pipeline's own (regex_pii), called directly: it is not run through
+    run_scan, so a failure here cannot recurse or emit an audit event. If
+    redaction itself fails, the preview is omitted and flagged unavailable,
+    with the error type only — never the original text.
+    """
+    from harness.adapters.scanners.regex_pii import RegexPIIScanner
+
+    fields: dict[str, Any] = {"text_length": len(text)}
+    try:
+        redacted = RegexPIIScanner().scan_sync(text[:_PREVIEW_WINDOW])
+        window = redacted.redacted_text
+        if window is None:
+            window = text[:_PREVIEW_WINDOW]
+        if len(text) > _PREVIEW_WINDOW:
+            window = window[:-_PREVIEW_EDGE_GUARD]
+        fields["text_preview"] = window[:_PREVIEW_CHARS]
+    except Exception as exc:  # noqa: BLE001 — reported in the record below
+        fields["text_preview_unavailable"] = True
+        fields["text_preview_error_type"] = type(exc).__name__
+    return fields
+
 
 class ScanBoundaryConfig(Protocol):
     """What run_scan needs from a boundary's own config section.
@@ -492,12 +526,11 @@ async def run_scan(
                 "boundary": boundary,
                 "on_error": on_error,
                 "error_type": error_type,
-                # Bounded preview, not the exception message: a
-                # third-party scanner's exception text can echo the
-                # substring it choked on, but an operator reading this
-                # line still needs to know what was being scanned — a
-                # hash tells them nothing.
-                "text_preview": text[:80],
+                # The preview is redacted text, produced before logging (see
+                # _failure_log_fields). The exception message stays out: a
+                # third-party scanner's exception text can echo the substring
+                # it choked on.
+                **_failure_log_fields(text),
                 **ctx.to_log_fields(),
             },
         )

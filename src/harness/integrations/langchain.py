@@ -41,12 +41,15 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import copy
+import dataclasses
 import logging
 import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from harness.integrations.base import (  # shai_tool re-exported
+    BLOCKED_RESULT_MESSAGE,
     execute_gated_tool_call,
     invoke_tool,
     run_sync,
@@ -238,7 +241,20 @@ def _build_shai_middleware_class() -> type:
             if not call.allowed:
                 return self._denial_artifact(request, call.message)
             if call.verdict is not None and call.verdict.redacted_text:
-                return _replace_result_text(call.result, call.verdict.redacted_text)
+                try:
+                    return _replace_result_text(call.result, call.verdict.redacted_text)
+                except _ResultNotRewritable:
+                    # The scan supplied a replacement this result's shape cannot
+                    # carry. Returning the raw result would hand the model the
+                    # text the scan just redacted, so the call takes the same
+                    # denial a blocked result gets. Type names only in the log.
+                    log.warning(
+                        "tool result could not be rewritten — blocked",
+                        extra={"tool": tool_name,
+                               "result_type": type(call.result).__name__,
+                               **self._ctx.to_log_fields()},
+                    )
+                    return self._denial_artifact(request, BLOCKED_RESULT_MESSAGE)
             return call.result
 
         @staticmethod
@@ -351,42 +367,84 @@ def _last_ai_message(messages: list) -> str | None:
     return None
 
 
+class _ResultNotRewritable(Exception):
+    """A tool result carries text the extractor reads but the replacer cannot
+    write back. Raised so the caller fails closed; never swallowed."""
+
+
+def _command_messages(result: Any) -> list | None:
+    """A Command's message list, or None when it carries no messages."""
+    try:
+        from langgraph.types import Command
+    except ImportError:  # langgraph absent: no result can be a Command
+        return None
+    if not isinstance(result, Command):
+        return None
+    update = result.update
+    if not isinstance(update, dict):
+        return None
+    messages = update.get("messages")
+    return list(messages) if messages else None
+
+
+def _with_content(obj: Any, text: str) -> Any:
+    """A copy of obj whose `content` is text; obj itself is not touched.
+
+    A pydantic message is copied with model_copy. Anything else is shallow-copied
+    and written to, and an object that refuses the write is not rewritable.
+    """
+    if hasattr(obj, "model_copy"):
+        return obj.model_copy(update={"content": text})
+    clone = copy.copy(obj)
+    try:
+        clone.content = text
+    except (AttributeError, TypeError) as exc:
+        raise _ResultNotRewritable(type(obj).__name__) from exc
+    return clone
+
+
+# The text a tool result carries, and where it lives. The extractor and the
+# replacer both read this one table, so a shape one can read the other can
+# write or refuse by name:
+#   Command with messages  → the last message's `content`
+#   str                    → the string itself
+#   dict with "content"    → that entry
+#   object with `content`  → that attribute
+# Any other shape is read as str(result) and is not rewritable.
 def _extract_result_text(result: Any) -> str | None:
     if result is None:
         return None
-    try:
-        from langgraph.types import Command
-        if isinstance(result, Command):
-            msgs = (result.update or {}).get("messages", [])
-            if msgs:
-                return str(getattr(msgs[-1], "content", ""))
-    except ImportError:
-        pass
+    messages = _command_messages(result)
+    if messages:
+        return str(getattr(messages[-1], "content", ""))
     if isinstance(result, str):
         return result
+    if isinstance(result, dict) and "content" in result:
+        return str(result["content"])
     if hasattr(result, "content"):
         return str(result.content)
     return str(result)
 
 
 def _replace_result_text(result: Any, new_text: str) -> Any:
-    try:
-        from langgraph.types import Command
-        if isinstance(result, Command):
-            msgs = list((result.update or {}).get("messages", []))
-            if msgs and hasattr(msgs[-1], "content"):
-                object.__setattr__(msgs[-1], "content", new_text)
-            return result
-    except ImportError:
-        pass
+    """The result with its text replaced; a new object, never a mutation.
+
+    Raises _ResultNotRewritable for a shape that cannot carry the replacement.
+    """
+    messages = _command_messages(result)
+    if messages:
+        if not hasattr(messages[-1], "content"):
+            raise _ResultNotRewritable(type(result).__name__)
+        messages[-1] = _with_content(messages[-1], new_text)
+        return dataclasses.replace(
+            result, update={**result.update, "messages": messages})
+    if isinstance(result, str):
+        return new_text
+    if isinstance(result, dict) and "content" in result:
+        return {**result, "content": new_text}
     if hasattr(result, "content"):
-        try:
-            object.__setattr__(result, "content", new_text)
-        # Best-effort mutation of a frozen LangChain result type; on failure the
-        # original result is returned unchanged.
-        except Exception:  # nosec B110
-            pass
-    return result
+        return _with_content(result, new_text)
+    raise _ResultNotRewritable(type(result).__name__)
 
 
 async def _run_in_thread(fn: Any, *args: Any) -> Any:

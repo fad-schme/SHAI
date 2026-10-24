@@ -483,6 +483,9 @@ class SHAI:
                     mcp_manifest_paths,
                     baseline_path=config.mcp_baseline.path,
                     secret=config.mcp_baseline.secret.encode(),
+                    loaded_hashes={
+                        r.manifest.id: r.file_hash for r in resolved_manifests
+                    },
                     cache_ttl_seconds=config.mcp_baseline.cache_ttl_seconds,
                 )
 

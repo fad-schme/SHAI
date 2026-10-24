@@ -3,10 +3,17 @@ onboarding approval.
 
 Approval is checked on every `check_tool_call` for an MCP-sourced tool (the
 facade's R3 pre-gate check, `SHAI.check_tool_call`) — not once at
-`from_yaml()` or `load_agent()`. A manifest edited mid-session (or freshly
-approved by `shai mcp onboard`) takes effect on the next call within one
-`cache_ttl_seconds`, the same latency model
+`from_yaml()` or `load_agent()`. A manifest edited mid-session is caught on the next call
+within one `cache_ttl_seconds`, the same latency model
 `harness.agents.revocation.RevocationStore` uses for the agent kill switch.
+
+Approved and enforced are the same manifest. The source a process builds
+registers that manifest's tools, compiles its rules and scopes its tokens at
+startup and keeps them, so the gate admits a call only when the manifest file
+on disk is both the manifest this process loaded and the approved baseline. A
+manifest edited and re-approved while the process runs is therefore denied,
+with a reason saying so, until a restart builds the source from it; reverting
+the file to the loaded manifest admits calls again without one.
 
 A source is only ever built — connected and its tools registered — for a
 name with an approved, matching baseline record at startup (see
@@ -15,8 +22,9 @@ built at all. Once built, though, a source stays connected even if its
 manifest is edited mid-session — this gate stops *actions*, not connection,
 the same posture agent revocation takes (see `revocation.py`'s module
 docstring). A manifest edited after the harness started denies every tool
-call against that source until `shai mcp onboard` (re-)approves it — no
-restart needed.
+call against that source. Re-approving it with `shai mcp onboard` takes
+effect on restart: until then the file differs from the loaded manifest and
+calls stay denied.
 """
 from __future__ import annotations
 
@@ -35,6 +43,9 @@ class McpBaselineGate:
     and checks each against the signed baseline store behind a bounded
     per-source cache.
 
+    `loaded_hashes` maps each source to the hash of the manifest this process
+    built it from (`manifest_file_hash`, over the file's raw bytes).
+
     Construct with an empty `manifest_paths` to disable entirely: `check()`
     then always returns (True, None) and no file or DB is ever touched —
     matches `RevocationStore`'s `path=None` disabled posture.
@@ -46,9 +57,16 @@ class McpBaselineGate:
         *,
         baseline_path: str | Path,
         secret: bytes,
+        loaded_hashes: dict[str, str],
         cache_ttl_seconds: float = 5.0,
     ) -> None:
+        if set(loaded_hashes) != set(manifest_paths):
+            raise ValueError(
+                "loaded_hashes must name exactly the sources in manifest_paths"
+            )
         self._manifest_paths = dict(manifest_paths)
+        # manifest_file_hash of the manifest each source was built from.
+        self._loaded_hashes = dict(loaded_hashes)
         self._baseline_path = baseline_path
         self._secret = secret
         self._ttl = cache_ttl_seconds
@@ -130,5 +148,11 @@ class McpBaselineGate:
                 f"MCP source '{source_name}' manifest changed since it was "
                 f"approved — re-onboarding required. Run: "
                 f"shai mcp onboard {path} --config <harness.yaml>"
+            )
+        if current_hash != self._loaded_hashes[source_name]:
+            return False, (
+                f"MCP source '{source_name}' has an approved manifest that "
+                f"differs from the one this process loaded — restart the "
+                f"harness to activate it"
             )
         return True, None

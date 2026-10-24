@@ -107,8 +107,10 @@ tool call against it: each call re-hashes the manifest (SHA-256 over its raw
 bytes) and checks it against the signed local baseline store, behind a short
 cache (`mcp_baseline.cache_ttl_seconds`). A hash that no longer matches
 denies every subsequent call against that source at the gate — catching a
-manifest edited after the harness started without needing a restart.
-Approve (or re-approve after an edit) with:
+manifest edited after the harness started without needing a restart. The gate
+also requires the file to be the manifest this process loaded: a re-approved
+edit takes effect on restart, and until then calls against that source stay
+denied with a reason that says so. Approve (or re-approve after an edit) with:
 
 ```bash
 shai mcp onboard mcp/slack.yaml --config config/harness.yaml

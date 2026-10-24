@@ -14,7 +14,8 @@ declared `required` flag exactly as any other missing source does (see
 
 `harness.mcp.gate.McpBaselineGate` re-checks the baseline on every call for a
 source that *was* built — that is what catches a manifest edited after
-startup without needing a restart. A manifest that was never onboarded never
+startup without needing a restart, and that a re-approved edit takes effect
+only on restart. A manifest that was never onboarded never
 reaches that check at all, because no source was built for it in the first
 place.
 """

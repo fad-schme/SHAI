@@ -176,8 +176,11 @@ async def test_editing_path_args_changes_the_hash_and_the_source_needs_reonboard
         manifest_path, config=config, provider=provider, emitter=emitter
     )).passed
     # The source is built once at startup, so the edited declaration takes effect
-    # on restart, like every other manifest field.
-    assert (await h.check_tool_call("read_file", call, ctx)).allowed
+    # on restart, like every other manifest field. Until then the gate refuses
+    # the call rather than admit a manifest the process is not enforcing.
+    pending = await h.check_tool_call("read_file", call, ctx)
+    assert not pending.allowed
+    assert "restart" in pending.deny_reason
     await h.close()
 
     restarted = await SHAI.from_yaml(cfg)

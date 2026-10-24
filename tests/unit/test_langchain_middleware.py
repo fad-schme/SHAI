@@ -416,3 +416,120 @@ async def test_abefore_agent_redacts_a_human_message_with_no_id(tmp_path: Path):
     assert [m.content for m in merged] == [
         "earlier", "reply", "mail me at [REDACTED:pii.email]",
     ]
+
+
+# ── awrap_tool_call: result redaction never returns the raw result ────────
+
+_RAW = "api_key = sk_live_ABCDEF1234567890XYZ"
+_REDACTED = "api_key = [REDACTED:secret.api_key]"
+
+
+async def _build_result_redact(tmp_path: Path) -> tuple[SHAI, AgentContext]:
+    cfg = tmp_path / "h.yaml"
+    cfg.write_text(
+        "version: 1\nconnectivity:\n  token_secret: test-connectivity-secret\n"
+        "scan_input:\n  scanners:\n    - name: injection_scan\n"
+        "scan_output:\n  scanners:\n    - name: injection_scan\n"
+        "scan_tool_result:\n  block_at: critical\n  scanners:\n"
+        "    - name: regex_pii\n      action: redact\n"
+        "audit_sinks:\n  - name: stdout\n"
+    )
+    agent = tmp_path / "pay_agent.yaml"
+    agent.write_text(AGENT_YAML)
+    h = await SHAI.from_yaml(cfg)
+    await h.load_agent(agent)
+    await h.register_tools([Tool(name="pay", tags=["read"], transport=Transport.LOCAL)])
+    return h, AgentContext(agent_id="pay_agent")
+
+
+class _ReadOnlyContent:
+    @property
+    def content(self) -> str:
+        return _RAW
+
+
+class _Returns:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    async def __call__(self, request: ToolCallRequest) -> Any:
+        return self.value
+
+
+async def _run_result(tmp_path: Path, value: Any) -> tuple[Any, list[Any]]:
+    h, ctx = await _build_result_redact(tmp_path)
+    mw = await ShaiMiddleware.create([], harness=h, ctx=ctx)
+    with h.collect_events() as events:
+        result = await mw.awrap_tool_call(_request("pay", {"amount": 1}), _Returns(value))
+    return result, events
+
+
+def _text_of(result: Any) -> str:
+    return repr(result)
+
+
+async def test_string_result_is_returned_redacted(tmp_path: Path):
+    result, events = await _run_result(tmp_path, _RAW)
+    assert result == _REDACTED
+    assert _boundaries(events).count("tool_result_scan") == 1
+
+
+async def test_dict_result_with_content_is_returned_redacted(tmp_path: Path):
+    original = {"content": _RAW, "n": 1}
+    result, _ = await _run_result(tmp_path, original)
+    assert result == {"content": _REDACTED, "n": 1}
+    assert "sk_live" not in _text_of(result)
+    assert original["content"] == _RAW  # the tool's own object is not mutated
+
+
+async def test_tool_message_result_is_returned_redacted(tmp_path: Path):
+    result, _ = await _run_result(tmp_path, ToolMessage(content=_RAW, tool_call_id="c"))
+    assert isinstance(result, ToolMessage)
+    assert result.content == _REDACTED and result.tool_call_id == "c"
+    assert "sk_live" not in _text_of(result)
+
+
+async def test_command_with_messages_is_returned_redacted(tmp_path: Path):
+    original = Command(update={
+        "messages": [ToolMessage(content=_RAW, tool_call_id="c")], "other": 1})
+    result, _ = await _run_result(tmp_path, original)
+    assert isinstance(result, Command)
+    assert result.update["messages"][0].content == _REDACTED
+    assert result.update["other"] == 1
+    assert "sk_live" not in _text_of(result)
+    assert original.update["messages"][0].content == _RAW
+
+
+async def _assert_blocked_denial(result: Any) -> None:
+    assert isinstance(result, Command)
+    [msg] = result.update["messages"]
+    assert msg.content == base.BLOCKED_RESULT_MESSAGE
+    assert msg.tool_call_id == "call_1"
+    assert "sk_live" not in _text_of(result)
+
+
+async def test_read_only_content_object_is_denied_not_returned_raw(tmp_path: Path):
+    result, events = await _run_result(tmp_path, _ReadOnlyContent())
+    await _assert_blocked_denial(result)
+    assert _boundaries(events).count("tool_result_scan") == 1
+
+
+async def test_command_without_messages_is_denied_not_returned_raw(tmp_path: Path):
+    result, _ = await _run_result(tmp_path, Command(update={"note": _RAW}))
+    await _assert_blocked_denial(result)
+
+
+async def test_failed_rewrite_logs_type_names_and_no_result_text(tmp_path: Path, caplog):
+    caplog.set_level("WARNING")
+    await _run_result(tmp_path, _ReadOnlyContent())
+    [record] = [r for r in caplog.records if "could not be rewritten" in r.getMessage()]
+    assert record.tool == "pay"
+    assert record.result_type == "_ReadOnlyContent"
+    assert "sk_live" not in record.getMessage() + repr(vars(record))
+
+
+async def test_clean_result_is_returned_unchanged(tmp_path: Path):
+    message = ToolMessage(content="all good", tool_call_id="c")
+    result, events = await _run_result(tmp_path, message)
+    assert result is message
+    assert _boundaries(events).count("tool_result_scan") == 1
