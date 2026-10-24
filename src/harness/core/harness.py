@@ -1482,7 +1482,10 @@ class SHAI:
             gate   = await harness.check_tool_call(tool_name, args, ctx)
             if gate.allowed:
                 source = await harness.get_source("my_mcp_server")
-                result = await source.call(tool_name, gate.redacted_args or args)
+                result = await source.call(
+                    tool_name, gate.redacted_args or args, ctx=ctx,
+                    dispatch_token=gate.dispatch_token,
+                )
         """
         return self._source_registry.get(name)
 

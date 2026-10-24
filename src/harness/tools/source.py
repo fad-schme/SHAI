@@ -19,7 +19,7 @@ Transport routing
 -----------------
 Tool.transport tells the caller (agent dispatch layer) how to invoke the tool:
   LOCAL  → call the Python callable already registered in the agent's runtime
-  MCP    → call MCPSource.call(tool_name, arguments) on the source that owns it
+  MCP    → call MCPSource.call(tool_name, arguments, ctx=...) on the source that owns it
 
 The harness gates; it does not dispatch. MCPSource.call() is the production
 dispatch path for MCP tools — callers hold a reference to the source object
@@ -329,6 +329,22 @@ class MCPSourceParams:
         self.tool_specs         = dict(tool_specs or {})
 
 
+def _request_extensions(ctx: AgentContext | None, dispatch_token: str | None) -> dict:
+    """The request extensions ShaiTransport reads: the caller, and the token.
+
+    A missing ctx is left out, not defaulted: the transport refuses a request
+    that states no caller, so an unattributed request cannot be sent.
+    """
+    from harness.connectivity.transport import CALLER_EXTENSION
+
+    extensions: dict = {}
+    if ctx is not None:
+        extensions[CALLER_EXTENSION] = ctx
+    if dispatch_token:
+        extensions["shai_dispatch_token"] = dispatch_token
+    return extensions
+
+
 class MCPSource:
     """Connects to an MCP server, discovers its tool catalog, and provides
     tool invocation via the MCP JSON-RPC protocol over SSE.
@@ -455,7 +471,7 @@ class MCPSource:
         async with self._lock:
             if self._connected:
                 return list(self._tools)
-            self._agent_ctx = ctx   # used by ShaiTransport for audit events
+            self._agent_ctx = ctx   # the loading agent: owns the connect-phase requests
             await self._connect()
             self._tools = await self._fetch_tools()
             self._connected = True
@@ -469,9 +485,16 @@ class MCPSource:
         tool_name: str,
         arguments: dict[str, Any],
         *,
+        ctx: AgentContext,
         dispatch_token: str | None = None,
     ) -> Any:
         """Invoke a tool on the MCP server. Returns the tool result.
+
+        ctx:
+            The agent making the call. One source serves every agent that
+            declares it, so each request states its own caller: ShaiTransport
+            refuses a token issued to a different agent, subagent or tenant,
+            and records the event under this caller.
 
         dispatch_token:
             Pass gate.dispatch_token here. ShaiTransport validates it,
@@ -501,7 +524,7 @@ class MCPSource:
             },
         }
 
-        response = await self._post(payload, dispatch_token=dispatch_token)
+        response = await self._post(payload, ctx, dispatch_token=dispatch_token)
         self._check_jsonrpc_error(response, tool_name)
 
         result = response.get("result", {})
@@ -627,8 +650,6 @@ class MCPSource:
             source_name=self.name,
             allowed_urls=self._allowed_urls,
             allowed_methods=self._allowed_methods,
-            agent_id=self._agent_ctx.agent_id if self._agent_ctx else "unknown",
-            sub_agent_id=self._agent_ctx.sub_agent_id if self._agent_ctx else None,
             tenant_id=self._tenant_id or "default",
             emitter=self._emitter,
             connectivity=self._connectivity,
@@ -680,7 +701,7 @@ class MCPSource:
             token = await self._connect_token("GET", "/sse")
             async with self._client.stream(
                 "GET", "/sse",
-                extensions={"shai_dispatch_token": token} if token else {},
+                extensions=_request_extensions(self._agent_ctx, token),
             ) as response:
                 if response.status_code != 200:
                     raise ConfigError(
@@ -732,7 +753,8 @@ class MCPSource:
             },
         }
         response = await self._post(
-            payload, dispatch_token=await self._connect_token("POST", "/message"),
+            payload, self._agent_ctx,
+            dispatch_token=await self._connect_token("POST", "/message"),
         )
         self._check_jsonrpc_error(response, "initialize")
 
@@ -765,7 +787,8 @@ class MCPSource:
             "params": {},
         }
         response = await self._post(
-            payload, dispatch_token=await self._connect_token("POST", "/message"),
+            payload, self._agent_ctx,
+            dispatch_token=await self._connect_token("POST", "/message"),
         )
         self._check_jsonrpc_error(response, "tools/list")
 
@@ -821,15 +844,20 @@ class MCPSource:
 
     # ── JSON-RPC helpers ──────────────────────────────────────────────────
 
-    async def _post(self, payload: dict, dispatch_token: str | None = None) -> dict:
+    async def _post(
+        self, payload: dict, ctx: AgentContext | None,
+        dispatch_token: str | None = None,
+    ) -> dict:
         """POST a JSON-RPC request to /message?sessionId=<session_id>.
 
+        ctx is the calling agent; with dispatch_token it travels as the request
+        extensions ShaiTransport reads. A missing ctx is refused there.
         dispatch_token travels as the request extension ShaiTransport reads.
         The transport validates it before turning it into the X-Shai-Token
         header, so it is never set as a header here.
         """
         params = {"sessionId": self._session_id} if self._session_id else {}
-        extensions = {"shai_dispatch_token": dispatch_token} if dispatch_token else {}
+        extensions = _request_extensions(ctx, dispatch_token)
         try:
             response = await self._client.post(
                 "/message",
@@ -860,7 +888,7 @@ class MCPSource:
         try:
             await self._client.post(
                 "/message", json=payload, params=params_q,
-                extensions={"shai_dispatch_token": token} if token else {},
+                extensions=_request_extensions(self._agent_ctx, token),
             )
         except NetworkPolicyError:
             # ShaiTransport refused the notification and has already emitted

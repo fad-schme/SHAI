@@ -12,6 +12,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **An MCP dispatch token binds the agent making the call.** One `MCPSource`
+  serves every agent that declares it, but its transport fixed the first loading
+  agent's identity: later agents' requests were recorded under the first agent,
+  and nothing refused a token presented by an agent other than the one it was
+  issued to. `MCPSource.call()` now takes the calling `ctx`, the transport
+  refuses a token whose agent, subagent or tenant differs (before its nonce is
+  consumed), and every `NetworkAuditEvent` carries the verified caller.
+  `ShaiTransport` no longer takes `agent_id` / `sub_agent_id`, and
+  `dispatch_remote` takes `ctx`.
+- **Every network request is audited, and an audit outage stops it.** A request
+  whose forward raised (connection error, timeout, a read error on the body) or
+  was cancelled left no `NetworkAuditEvent` although its token was consumed, and
+  a total sink outage was logged and swallowed, so the request succeeded
+  unrecorded. Each request now ends with one event: `allowed`, `denied`, or the
+  new `failed` status, which carries the exception type name only and re-raises
+  the original error. `AuditEmissionError` now propagates from the transport.
+- **Corroborated findings now enforce at the boundary.** Cross-method promotion
+  raised a category to HIGH in the verdict and the audit event, but the
+  per-scanner action loop read the findings from before promotion, so a boundary
+  reported HIGH findings at a HIGH threshold and let the content through. Block,
+  alert and the redact fallback now decide on the promoted severities, mapped
+  back to each scanner by position. Learned-candidate findings still never
+  enforce on their own.
 - **The MCP baseline gate admits only the manifest the process loaded.** After a
   manifest was edited and re-approved with `shai mcp onboard`, the gate compared
   the file with the new approval and admitted calls, while the running source

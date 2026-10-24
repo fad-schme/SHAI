@@ -128,7 +128,8 @@ class NetworkAuditEvent(BaseModel, frozen=True):
     tool_name:    str | None    # None for SSE/init requests
     destination:  str           # full URL
     method:       str
-    status:       str           # "allowed" | "denied"
+    status:       str           # "allowed" | "denied" | "failed"
+    # deny_reason: the refusal reason; for "failed", the exception type name only.
     deny_reason:  str | None
     bytes_sent:   int
     bytes_recv:   int

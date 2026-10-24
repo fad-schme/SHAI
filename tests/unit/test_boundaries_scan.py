@@ -845,3 +845,155 @@ async def test_failure_log_verdicts_per_mode(emitter, sink, state):
     verdict = await _fail_scan("hello", emitter, state, OnError.DEGRADE)
     assert not verdict.blocked
     assert sink.events[-1].decision == Decision.WARN
+
+
+# ── Promoted severity drives the boundary's action ────────────────────────
+# Cross-method promotion raises a corroborated category to HIGH. The action loop
+# reads those promoted findings, mapped back to each scanner by position.
+
+class _FamilyScanner:
+    """Emits one finding per call in a shared catalog category, from its own family."""
+
+    def __init__(self, name: str, family: str, *, category: str = "prompt_injection",
+                 severity: Severity = Severity.MEDIUM, supply_text: bool = False) -> None:
+        self.name = name
+        self.method_family = family
+        self._category = category
+        self._severity = severity
+        self._supply = supply_text
+
+    async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
+        return ScanResult(
+            findings=[Finding(scanner=self.name, category=self._category,
+                              severity=self._severity, detail="d")],
+            redacted_text="[X]" if self._supply else None,
+        )
+
+
+def _two_families(**kw):
+    return [ConfiguredScanner(_FamilyScanner("a", "fam_a"), **kw),
+            ConfiguredScanner(_FamilyScanner("b", "fam_b"), **kw)]
+
+
+async def test_corroborated_medium_findings_block_at_high(emitter, sink, state):
+    verdict = await _scan("text", _two_families(), emitter, state, block_at=Severity.HIGH)
+    assert [f.severity for f in verdict.findings] == [Severity.HIGH, Severity.HIGH]
+    assert verdict.blocked
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.BLOCKED
+
+
+async def test_corroborated_medium_findings_warn_under_alert(emitter, sink, state):
+    verdict = await _scan(
+        "text", _two_families(action=ScanAction.ALERT), emitter, state,
+        block_at=Severity.HIGH,
+    )
+    assert not verdict.blocked
+    assert verdict.status.value == "warn"
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.WARN
+
+
+async def test_corroborated_findings_below_a_lower_threshold_are_unchanged(emitter, sink, state):
+    verdict = await _scan("text", _two_families(), emitter, state, block_at=Severity.MEDIUM)
+    assert verdict.blocked
+    assert len(sink.events) == 1
+
+
+async def test_same_family_medium_findings_are_not_promoted(emitter, sink, state):
+    scanners = [ConfiguredScanner(_FamilyScanner("a", "fam_a")),
+                ConfiguredScanner(_FamilyScanner("b", "fam_a"))]
+    verdict = await _scan("text", scanners, emitter, state, block_at=Severity.HIGH)
+    assert [f.severity for f in verdict.findings] == [Severity.MEDIUM, Severity.MEDIUM]
+    assert not verdict.blocked
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.ALLOW
+
+
+async def test_promoted_findings_map_to_scanners_by_position_not_name(emitter, sink, state):
+    # Two instances share the name "dup" and corroborate each other into HIGH.
+    # Each instance's own action applies to its own promoted finding, so the
+    # one at block blocks wherever it sits in the list.
+    scanners = [
+        ConfiguredScanner(_FamilyScanner("dup", "fam_a"), action=ScanAction.ALERT),
+        ConfiguredScanner(_FamilyScanner("dup", "fam_b"), action=ScanAction.BLOCK),
+    ]
+    verdict = await _scan("text", scanners, emitter, state, block_at=Severity.HIGH)
+    assert verdict.blocked
+    assert len(sink.events) == 1
+
+    # Swapped positions: still a block.
+    scanners = [
+        ConfiguredScanner(_FamilyScanner("dup", "fam_a"), action=ScanAction.BLOCK),
+        ConfiguredScanner(_FamilyScanner("dup", "fam_b"), action=ScanAction.ALERT),
+    ]
+    verdict = await _scan("text", scanners, emitter, state, block_at=Severity.HIGH)
+    assert verdict.blocked
+
+
+async def test_each_instance_of_one_scanner_name_uses_its_own_action(emitter, sink, state):
+    # Both instances at alert: WARN, never a block borrowed from the name.
+    scanners = [
+        ConfiguredScanner(_FamilyScanner("dup", "fam_a"), action=ScanAction.ALERT),
+        ConfiguredScanner(_FamilyScanner("dup", "fam_b"), action=ScanAction.ALERT),
+    ]
+    verdict = await _scan("text", scanners, emitter, state, block_at=Severity.HIGH)
+    assert not verdict.blocked
+    assert verdict.status.value == "warn"
+
+
+def _inject_candidate(monkeypatch):
+    from harness.boundaries import _scan as scan_mod
+
+    def _with_candidate(text, findings, state):
+        return [*findings, Finding(
+            scanner="learned_candidate", category="heuristic_anomaly",
+            severity=Severity.MEDIUM, detail="promoted candidate id=1 hits=4",
+            method_family="structural_heuristic",
+        )]
+
+    monkeypatch.setattr(scan_mod, "_check_promoted_candidates", _with_candidate)
+
+
+async def test_scanner_finding_promoted_with_a_candidate_is_enforced(
+    emitter, sink, state, monkeypatch,
+):
+    _inject_candidate(monkeypatch)
+    scanners = [ConfiguredScanner(
+        _FamilyScanner("anom", "fam_a", category="heuristic_anomaly"),
+    )]
+    verdict = await _scan("text", scanners, emitter, state, block_at=Severity.HIGH)
+    severities = {f.scanner: f.severity for f in verdict.findings}
+    assert severities == {"anom": Severity.HIGH, "learned_candidate": Severity.HIGH}
+    assert verdict.blocked
+    assert len(sink.events) == 1
+
+
+async def test_candidate_alone_or_with_a_same_family_finding_does_not_block(
+    emitter, sink, state, monkeypatch,
+):
+    _inject_candidate(monkeypatch)
+    # Candidate alone: nothing from any scanner.
+    quiet = _RecordingScanner("quiet")
+    verdict = await _scan("text", [ConfiguredScanner(quiet)], emitter, state)
+    assert not verdict.blocked
+    # Same family as the candidate: no corroboration, no promotion.
+    same = [ConfiguredScanner(
+        _FamilyScanner("anom", "structural_heuristic", category="heuristic_anomaly"),
+    )]
+    verdict = await _scan("text", same, emitter, state, block_at=Severity.HIGH)
+    assert not verdict.blocked
+    assert [f.severity for f in verdict.findings] == [Severity.MEDIUM, Severity.MEDIUM]
+    assert len(sink.events) == 2
+
+
+async def test_redact_scanner_promoted_to_high_without_text_blocks(emitter, sink, state):
+    scanners = [
+        ConfiguredScanner(_FamilyScanner("r", "fam_a"), action=ScanAction.REDACT),
+        ConfiguredScanner(_FamilyScanner("b", "fam_b"), action=ScanAction.ALERT),
+    ]
+    verdict = await _scan("text", scanners, emitter, state, block_at=Severity.HIGH)
+    assert verdict.blocked
+    assert verdict.redacted_text is None
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.BLOCKED

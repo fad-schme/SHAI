@@ -13,6 +13,7 @@ from harness.connectivity.token import (
     sign_token,
     verify_token,
 )
+from harness.core.context import AgentContext
 
 SECRET = b"test-secret-do-not-use-in-production"
 
@@ -601,8 +602,6 @@ async def test_gate_token_reaches_shai_transport_and_joins_the_network_event(tmp
             source_name="remote_mcp",
             allowed_urls=["https://mcp.example.com/*"],
             allowed_methods=["GET", "POST"],
-            agent_id=ctx.agent_id,
-            sub_agent_id=None,
             tenant_id=harness._tenant_id,
             emitter=harness._emitter,
             connectivity=harness._connectivity,
@@ -612,7 +611,7 @@ async def test_gate_token_reaches_shai_transport_and_joins_the_network_event(tmp
     source._session_id = "sess"
 
     gate = await harness.check_tool_call("remote_read", {}, ctx)
-    await dispatch_remote(harness, "remote_read", {}, gate)
+    await dispatch_remote(harness, "remote_read", {}, gate, ctx)
 
     assert seen[0].headers.get("X-Shai-Token") == gate.dispatch_token
     gate_event = next(e for e in sink.events if e.boundary == "tool_call_gate")
@@ -750,7 +749,7 @@ async def test_runtime_source_cannot_send_an_untokened_request(tmp_path, monkeyp
     connect_requests = len(seen)
 
     with pytest.raises(NetworkPolicyError):
-        await source.call("remote_read", {})
+        await source.call("remote_read", {}, ctx=AgentContext(agent_id="a"))
 
     assert len(seen) == connect_requests
     await harness.close()

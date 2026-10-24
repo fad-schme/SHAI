@@ -76,7 +76,7 @@ async def _world(tmp_path: Path, monkeypatch, manifest: str, allow: str | None =
     async def fake_connect_token(self, method, path):
         return "connect-token"
 
-    async def fake_post(self, payload, dispatch_token=None):
+    async def fake_post(self, payload, ctx, dispatch_token=None):
         names = [{"name": n} for n in self._tool_specs]
         return {"jsonrpc": "2.0", "id": payload["id"], "result": {"tools": names}}
 

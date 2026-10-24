@@ -11,6 +11,11 @@ TurnSignals.compute_risk applies. Two catalog scanners reading different
 YAML files are one detection technique agreeing with itself, which is not
 evidence enough to promote.
 
+A promoted severity is the one the boundary's action decides on: `run_scan`
+maps each scanner's findings back from the promoted list by position, so a
+finding raised to HIGH blocks, alerts or falls back from redaction at
+`block_at` exactly as an emitted HIGH would.
+
 Severity weights: LOW=1, MEDIUM=3, HIGH=6, CRITICAL=10.
 Threshold: 4.0 (two MEDIUMs = 6 > 4.0 → promoted).
 

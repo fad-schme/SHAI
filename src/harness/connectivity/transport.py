@@ -3,12 +3,16 @@
 Sits inside MCPSource's httpx.AsyncClient. Every outbound HTTP request
 from an MCP source passes through it. Per request:
 
+  0. Read the calling AgentContext from request.extensions["shai_caller"];
+     a request that states none is refused
   1. Read dispatch token from request.extensions["shai_dispatch_token"]
   2. Enforce allowed_urls  — NetworkPolicyError if destination not permitted
   3. Enforce allowed_methods — NetworkPolicyError if method not permitted
   4. Inject X-Shai-Token header when token is present
   5. Forward to inner transport (real TCP/TLS connection)
-  6. Emit NetworkAuditEvent to AuditEmitter (same sinks as AuditEvent)
+  6. Emit NetworkAuditEvent to AuditEmitter (same sinks as AuditEvent):
+     one per request — status allowed, denied, or failed (the forward raised
+     or was cancelled). A total audit outage raises AuditEmissionError.
 
 NetworkAuditEvent is distinguished from AuditEvent by event_type="network_egress".
 It carries token_id as the join key for SIEM correlation with the gate AuditEvent.
@@ -24,6 +28,7 @@ Design decisions:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -38,7 +43,8 @@ from harness.connectivity.token import (
     matches_allowed_url,
     verify_token,
 )
-from harness.core.errors import NetworkPolicyError
+from harness.core.context import AgentContext
+from harness.core.errors import AuditEmissionError, NetworkPolicyError
 from harness.core.events import NetworkAuditEvent
 
 if TYPE_CHECKING:
@@ -46,6 +52,10 @@ if TYPE_CHECKING:
     from harness.connectivity.config import ConnectivityConfig
 
 log = logging.getLogger(__name__)
+
+# The request extension that carries the calling AgentContext, next to the
+# dispatch token's "shai_dispatch_token".
+CALLER_EXTENSION = "shai_caller"
 
 # The JSON-RPC methods of the MCP session handshake: all a connect token may
 # carry besides the SSE GET.
@@ -109,8 +119,6 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         source_name:     str,
         allowed_urls:    list[str],
         allowed_methods: list[str],
-        agent_id:        str,
-        sub_agent_id:    str | None,
         tenant_id:       str,
         emitter:         AuditEmitter,
         connectivity:    ConnectivityConfig,
@@ -120,8 +128,6 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         self._source_name     = source_name
         self._allowed_urls    = allowed_urls
         self._allowed_methods = [m.upper() for m in allowed_methods]
-        self._agent_id        = agent_id
-        self._sub_agent_id    = sub_agent_id
         self._tenant_id       = tenant_id
         self._emitter         = emitter
         self._connectivity    = connectivity
@@ -140,6 +146,26 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         token_id  = None
         tool_name = None
 
+        # ── 0. Caller — who is making this request. Every event carries the
+        #    caller's identity, never one fixed when the transport was built,
+        #    because one source serves every agent that declares it. ─────────
+        caller = request.extensions.pop(CALLER_EXTENSION, None)
+        if isinstance(caller, AgentContext):
+            agent_id, sub_agent_id = caller.agent_id, caller.sub_agent_id
+        else:
+            caller, agent_id, sub_agent_id = None, "unknown", None
+        if caller is None:
+            deny_reason = "request states no caller"
+            await self._emit(
+                agent_id=agent_id, sub_agent_id=sub_agent_id,
+                token_id=None, tool_name=None,
+                destination=url_str, method=method,
+                status="denied", deny_reason=deny_reason,
+                bytes_sent=0, bytes_recv=0,
+                duration_ms=int(time.monotonic() * 1000) - start_ms,
+            )
+            raise NetworkPolicyError(deny_reason)
+
         # ── 1. URL enforcement ────────────────────────────────────────────
         if not matches_allowed_url(url_str, self._allowed_urls):
             deny_reason = (
@@ -147,6 +173,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 f"source '{self._source_name}'"
             )
             await self._emit(
+                agent_id=agent_id, sub_agent_id=sub_agent_id,
                 token_id=None, tool_name=None,
                 destination=url_str, method=method,
                 status="denied", deny_reason=deny_reason,
@@ -162,6 +189,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 f"source '{self._source_name}'"
             )
             await self._emit(
+                agent_id=agent_id, sub_agent_id=sub_agent_id,
                 token_id=None, tool_name=None,
                 destination=url_str, method=method,
                 status="denied", deny_reason=deny_reason,
@@ -178,6 +206,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             except TokenError as e:
                 deny_reason = f"invalid dispatch token: {e}"
                 await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
                     token_id=None, tool_name=None,
                     destination=url_str, method=method,
                     status="denied", deny_reason=deny_reason,
@@ -196,6 +225,25 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                     f"transport source '{self._source_name}'"
                 )
                 await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="denied", deny_reason=deny_reason,
+                    bytes_sent=0, bytes_recv=0,
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+                raise NetworkPolicyError(deny_reason)
+
+            # ── Caller binding — a token authorises the agent, subagent and
+            #    tenant it was issued to. Checked before the nonce is consumed,
+            #    so a token presented by the wrong caller is refused, not
+            #    burned. No identifier value appears in the reason. ──────────
+            if (token.agent_id != agent_id
+                    or token.sub_agent_id != sub_agent_id
+                    or token.tenant_id != self._tenant_id):
+                deny_reason = "token was issued for another agent"
+                await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
                     status="denied", deny_reason=deny_reason,
@@ -212,6 +260,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                     f"{method} request for source '{self._source_name}'"
                 )
                 await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
                     status="denied", deny_reason=deny_reason,
@@ -232,6 +281,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                         f"for source '{self._source_name}'"
                     )
                     await self._emit(
+                        agent_id=agent_id, sub_agent_id=sub_agent_id,
                         token_id=token_id, tool_name=tool_name,
                         destination=url_str, method=method,
                         status="denied", deny_reason=deny_reason,
@@ -247,6 +297,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                     f"for source '{self._source_name}'"
                 )
                 await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
                     status="denied", deny_reason=deny_reason,
@@ -262,6 +313,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                     f"for source '{self._source_name}'"
                 )
                 await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
                     status="denied", deny_reason=deny_reason,
@@ -274,6 +326,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             deny_reason = self._nonces.consume(token_id, token.expires_at)
             if deny_reason:
                 await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
                     token_id=token_id, tool_name=tool_name,
                     destination=url_str, method=method,
                     status="denied", deny_reason=deny_reason,
@@ -301,6 +354,7 @@ class ShaiTransport(httpx.AsyncBaseTransport):
                 f"(token_policy=strict)"
             )
             await self._emit(
+                agent_id=agent_id, sub_agent_id=sub_agent_id,
                 token_id=None, tool_name=None,
                 destination=url_str, method=method,
                 status="denied", deny_reason=deny_reason,
@@ -320,28 +374,61 @@ class ShaiTransport(httpx.AsyncBaseTransport):
         # Remove the extension so httpx doesn't try to serialise it
         request.extensions.pop("shai_dispatch_token", None)
 
-        response    = await self._inner.handle_async_request(request)
-        duration_ms = int(time.monotonic() * 1000) - start_ms
+        # Every request that reaches this point ends with exactly one event:
+        # allowed after a response is read, failed if the attempt raises or is
+        # cancelled first. A token's nonce is consumed above, so an attempt that
+        # left no record would be a used token missing from the trail.
+        recorded = (token_id is not None or self._onboarding
+                    or self._connectivity.token_policy == "audit")
+        # The SSE GET is a stream that never ends: it passes through unread,
+        # bytes_recv=0. Buffering it to count bytes would hang the connect
+        # forever. Every other recorded response is buffered and re-attached.
+        streamed = method == "GET"
+        bytes_recv = 0
+        content = b""
+        try:
+            response = await self._inner.handle_async_request(request)
+            if recorded and not streamed:
+                chunks: list[bytes] = []
+                async for chunk in response.aiter_bytes():
+                    chunks.append(chunk)
+                    bytes_recv += len(chunk)
+                content = b"".join(chunks)
+        except asyncio.CancelledError:
+            if recorded:
+                await self._emit_failed(
+                    "cancelled", agent_id, sub_agent_id, token_id, tool_name, url_str, method,
+                    len(request.content), bytes_recv, start_ms,
+                )
+            raise
+        except Exception as exc:
+            if recorded:
+                # The exception type only: its message can echo the URL or
+                # content (Invariant 3).
+                await self._emit_failed(
+                    type(exc).__name__, agent_id, sub_agent_id, token_id, tool_name, url_str, method,
+                    len(request.content), bytes_recv, start_ms,
+                )
+            raise
 
         # ── 5. Emit NetworkAuditEvent — every tokened request, every
         #    untokened one forwarded under audit, and every request of the
-        #    onboarding connection ─────────────────────────────────────────
-        recorded = (token_id is not None or self._onboarding
-                    or self._connectivity.token_policy == "audit")
+        #    onboarding connection. AuditEmissionError propagates: a response
+        #    whose record cannot be written is not returned. ───────────────
         if recorded:
-            # The SSE GET is a stream that never ends: it passes through
-            # unread, bytes_recv=0. Buffering it to count bytes would hang the
-            # connect forever. Every other response is buffered and re-attached.
-            streamed = method == "GET"
-            content = b"" if streamed else await response.aread()
-            await self._emit(
-                token_id=token_id, tool_name=tool_name,
-                destination=url_str, method=method,
-                status="allowed", deny_reason=None,
-                bytes_sent=len(request.content),
-                bytes_recv=len(content),
-                duration_ms=duration_ms,
-            )
+            try:
+                await self._emit(
+                    agent_id=agent_id, sub_agent_id=sub_agent_id,
+                    token_id=token_id, tool_name=tool_name,
+                    destination=url_str, method=method,
+                    status="allowed", deny_reason=None,
+                    bytes_sent=len(request.content),
+                    bytes_recv=len(content),
+                    duration_ms=int(time.monotonic() * 1000) - start_ms,
+                )
+            except AuditEmissionError:
+                await response.aclose()
+                raise
             if not streamed:
                 response = httpx.Response(
                     status_code=response.status_code,
@@ -352,8 +439,23 @@ class ShaiTransport(httpx.AsyncBaseTransport):
 
         return response
 
+    async def _emit_failed(
+        self, reason: str, agent_id: str, sub_agent_id: str | None,
+        token_id: str | None, tool_name: str | None,
+        destination: str, method: str, bytes_sent: int, bytes_recv: int,
+        start_ms: int,
+    ) -> None:
+        await self._emit(
+            agent_id=agent_id, sub_agent_id=sub_agent_id,
+            token_id=token_id, tool_name=tool_name,
+            destination=destination, method=method,
+            status="failed", deny_reason=reason,
+            bytes_sent=bytes_sent, bytes_recv=bytes_recv,
+            duration_ms=int(time.monotonic() * 1000) - start_ms,
+        )
+
     async def _emit(
-        self, *, token_id: str | None, tool_name: str | None,
+        self, *, agent_id: str, sub_agent_id: str | None, token_id: str | None, tool_name: str | None,
         destination: str, method: str, status: str, deny_reason: str | None,
         bytes_sent: int, bytes_recv: int, duration_ms: int,
     ) -> None:
@@ -362,8 +464,8 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             event_type   = "network_egress",
             token_id     = token_id,
             source_name  = self._source_name,
-            agent_id     = self._agent_id,
-            sub_agent_id = self._sub_agent_id,
+            agent_id     = agent_id,
+            sub_agent_id = sub_agent_id,
             tenant_id    = self._tenant_id,
             tool_name    = tool_name,
             destination  = destination,
@@ -374,11 +476,11 @@ class ShaiTransport(httpx.AsyncBaseTransport):
             bytes_recv   = bytes_recv,
             duration_ms  = duration_ms,
         )
-        try:
-            await self._emitter.emit(event)
-        except Exception as e:
-            log.error("failed to emit NetworkAuditEvent",
-                      extra={"source": self._source_name, "error": str(e)})
+        # No catch-all: the emitter absorbs a single sink failure itself and
+        # raises AuditEmissionError only when every sink failed. That error
+        # reaches the caller, so a request is never allowed or refused without
+        # a record.
+        await self._emitter.emit(event)
 
     async def aclose(self) -> None:
         await self._inner.aclose()

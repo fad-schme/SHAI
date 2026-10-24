@@ -577,7 +577,7 @@ class _FakeMCPSource:
     async def load(self, ctx): return []
     async def close(self): pass
 
-    async def call(self, tool_name, arguments, *, dispatch_token=None):
+    async def call(self, tool_name, arguments, *, ctx, dispatch_token=None):
         self.calls.append((tool_name, arguments, dispatch_token))
         return self._result
 

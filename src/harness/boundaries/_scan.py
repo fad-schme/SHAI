@@ -681,7 +681,16 @@ async def run_scan(
     all_findings = promote_findings(all_findings)
 
     # ── Apply action per scanner ──────────────────────────────────────────
-    for findings, result, action, redact_with, scanner_name in per_scanner_data:
+    # The action decides on the same post-promotion severities the verdict
+    # reports. Promotion keeps its input order, and the scanners' findings lead
+    # the combined list in per_scanner_data order (the budget and learned-
+    # candidate findings are appended after them), so each scanner's slice is
+    # found by position. Never by scanner name: two instances can share one.
+    # Candidate findings sit past the last slice, so they never enforce alone.
+    offset = 0
+    for pre_findings, result, action, redact_with, scanner_name in per_scanner_data:
+        findings = all_findings[offset:offset + len(pre_findings)]
+        offset += len(pre_findings)
         triggering = [f for f in findings if f.severity >= config.block_at]
         if not triggering:
             continue

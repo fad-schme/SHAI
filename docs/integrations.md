@@ -68,8 +68,10 @@ source, the call is routed to that source with the gate's `dispatch_token`
 attached — which is what `ShaiTransport` validates on the outbound request.
 `HarnessToolNode` does this for any tool name not in its local list, and
 `gated_dispatch` does it when you omit `dispatch`. Dispatching an MCP tool
-yourself without threading `gate.dispatch_token` into `MCPSource.call()`
-leaves the request untokened: refused under `token_policy: strict` (the
+yourself without threading `gate.dispatch_token` and the calling `ctx` into
+`MCPSource.call(tool_name, args, ctx=ctx, dispatch_token=gate.dispatch_token)`
+leaves the request untokened (and `ctx` is required: the transport refuses a
+token presented by an agent other than the one it was issued to): refused under `token_policy: strict` (the
 default), and forwarded but recorded with no `token_id` under `audit`.
 
 ## Local tools: checking the dispatch token

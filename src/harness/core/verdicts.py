@@ -67,8 +67,8 @@ class GateDecision(BaseModel, frozen=True):
 
     dispatch_token:
         Set on every allowed decision. Base64url-encoded signed
-        DispatchToken. Pass to MCPSource.call() so ShaiTransport can attach
-        it as X-Shai-Token on outbound requests. None when the gate denied.
+        DispatchToken. Pass to MCPSource.call(), with the calling ctx, so
+        ShaiTransport can attach it as X-Shai-Token on outbound requests. None when the gate denied.
 
     token_id:
         The dispatch token's id, the same one on the gate's AuditEvent. Pass

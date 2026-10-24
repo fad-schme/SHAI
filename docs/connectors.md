@@ -279,15 +279,27 @@ the request.
 
 Your MCP HTTP client is `ShaiTransport` — an `httpx.AsyncBaseTransport` subclass that, in order:
 
+0. Reads the calling `AgentContext` from the request. `MCPSource.call(tool_name, arguments, *, ctx, dispatch_token)` takes it as a required argument, and connect-phase requests state the loading agent. A request that states no caller is refused and audited.
 1. Checks the request URL against the source's `allowed_urls` and the method against its `allowed_methods`.
 2. Extracts the token from the outgoing request and verifies its signature and expiry against `token_secret`.
 3. Checks the source binding — a token issued for `slack` reaches `slack` only.
+   Checks the caller binding too: a token issued to one agent, subagent or tenant is refused (`token was issued for another agent`) when another presents it, before its nonce is consumed, so the rightful agent can still use it.
 4. Checks the purpose — a connect token passes on the four connect-phase requests, a tool-call token on `tools/call`.
 5. Checks that the request URL matches one of the token's `allowed_urls` and the method is in its `allowed_methods`.
 6. Checks that the nonce is unused.
 7. Injects the `X-Shai-Token` header, forwards the request, and emits a `NetworkAuditEvent`.
 
 A request that fails any check is refused at the transport layer, with a `denied` `NetworkAuditEvent`, before it reaches the network.
+
+Every event carries the verified caller's `agent_id` and `sub_agent_id`, so one source shared by several agents attributes each request to the agent that made it.
+
+Every request ends with exactly one `NetworkAuditEvent`, whose `status` is one of three values:
+
+- `allowed` — forwarded and the response read.
+- `denied` — refused at the transport layer; `deny_reason` carries the reason.
+- `failed` — forwarded, but the inner transport raised (connection error, timeout, an error while reading the body) or the request was cancelled. `deny_reason` carries the exception type name only (`cancelled` for a cancellation), never its message or the URL, and `bytes_recv` the bytes read before the failure. The original exception is re-raised afterwards.
+
+If every audit sink fails, the transport raises `AuditEmissionError`: a refusal that cannot be recorded raises it in place of `NetworkPolicyError`, and a forwarded request whose event cannot be recorded does not return its response. One failing sink out of several is absorbed by the emitter.
 
 ### What this protects
 

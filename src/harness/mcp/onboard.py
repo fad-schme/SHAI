@@ -92,7 +92,8 @@ async def _fetch_live_tools(
         allowed_methods=manifest.allowed_methods,
     )
     source = MCPSource(params, connectivity=connectivity, emitter=emitter, onboarding=True)
-    source._agent_ctx = AgentContext(agent_id=f"{ONBOARD_AGENT_ID_PREFIX}:{manifest.id}")
+    onboarding_ctx = AgentContext(agent_id=f"{ONBOARD_AGENT_ID_PREFIX}:{manifest.id}")
+    source._agent_ctx = onboarding_ctx
     try:
         await source._connect()
         response = await source._post({
@@ -100,7 +101,7 @@ async def _fetch_live_tools(
             "id": str(uuid.uuid4()),
             "method": "tools/list",
             "params": {},
-        })
+        }, onboarding_ctx)
         source._check_jsonrpc_error(response, "tools/list")
         return response.get("result", {}).get("tools", [])
     finally:

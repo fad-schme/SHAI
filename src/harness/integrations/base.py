@@ -433,6 +433,7 @@ async def dispatch_remote(
     tool_name: str,
     args: dict[str, Any],
     gate: GateDecision,
+    ctx: AgentContext,
 ) -> Any:
     """Invoke a tool on the MCP source that owns it, carrying the gate's token.
 
@@ -442,7 +443,9 @@ async def dispatch_remote(
     default), and forwarded but recorded with no token_id under audit.
     """
     source = await harness.get_source(gate.source_name)
-    return await source.call(tool_name, args, dispatch_token=gate.dispatch_token)
+    return await source.call(
+        tool_name, args, ctx=ctx, dispatch_token=gate.dispatch_token,
+    )
 
 
 async def execute_gated_tool_call(
@@ -495,7 +498,7 @@ async def execute_gated_tool_call(
                 token_id=gate.token_id, source_name=gate.source_name,
             ))
     elif gate.source_name and gate.source_name != "local":
-        result = await dispatch_remote(harness, tool_name, effective_args, gate)
+        result = await dispatch_remote(harness, tool_name, effective_args, gate, ctx)
     else:
         raise LookupError(
             f"no local callable for tool '{tool_name}' and no remote source "

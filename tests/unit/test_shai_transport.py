@@ -19,7 +19,8 @@ from harness.audit.emitter import AuditEmitter
 from harness.connectivity.config import ConnectivityConfig
 from harness.connectivity.token import encode_token, sign_token
 from harness.connectivity.transport import ShaiTransport
-from harness.core.errors import NetworkPolicyError
+from harness.core.context import AgentContext
+from harness.core.errors import AuditEmissionError, NetworkPolicyError
 from harness.core.events import NetworkAuditEvent
 from tests.conftest import RecordingSink
 
@@ -29,6 +30,7 @@ AGENT   = "orchestrator_agent"
 SOURCE  = "slack_mcp"
 ALLOWED = ["https://mcp.slack.com/*", "https://slack.com/api/*"]
 METHODS = ["GET", "POST"]
+CALLER  = AgentContext(agent_id=AGENT)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -57,8 +59,6 @@ def _transport(
         source_name=SOURCE,
         allowed_urls=ALLOWED if allowed_urls is None else allowed_urls,
         allowed_methods=METHODS if allowed_methods is None else allowed_methods,
-        agent_id=AGENT,
-        sub_agent_id=None,
         tenant_id=TENANT,
         emitter=emitter or AuditEmitter([RecordingSink()]),
         connectivity=config or _config(),
@@ -73,6 +73,7 @@ def _request(
     rpc_method: str | None = "tools/call",
     tool_name: str | None = "search_docs",
     params: dict | None = None,
+    caller: AgentContext | None = CALLER,
 ) -> httpx.Request:
     # A POST carries a JSON-RPC body, as MCPSource sends it: a token's purpose
     # is bound to the JSON-RPC method it may carry, and a tool-call token to the
@@ -85,6 +86,8 @@ def _request(
     r = httpx.Request(method, url, json=body)
     if token:
         r.extensions["shai_dispatch_token"] = token
+    if caller is not None:
+        r.extensions["shai_caller"] = caller
     return r
 
 
@@ -166,7 +169,7 @@ async def test_mcp_source_call_carries_dispatch_token_to_the_wire():
     src = _wired_source(seen, sink)
     token = _token()
 
-    await src.call("search_docs", {"q": "x"}, dispatch_token=token)
+    await src.call("search_docs", {"q": "x"}, ctx=CALLER, dispatch_token=token)
 
     assert seen[0].headers.get("X-Shai-Token") == token
     events = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
@@ -180,11 +183,11 @@ async def test_mcp_source_call_refuses_replayed_token():
     seen: list[httpx.Request] = []
     src = _wired_source(seen, RecordingSink())
     token = _token()
-    await src.call("search_docs", {}, dispatch_token=token)
+    await src.call("search_docs", {}, ctx=CALLER, dispatch_token=token)
 
     # A policy refusal reaches the caller as itself, not wrapped in ConfigError.
     with pytest.raises(NetworkPolicyError):
-        await src.call("search_docs", {}, dispatch_token=token)
+        await src.call("search_docs", {}, ctx=CALLER, dispatch_token=token)
     assert len(seen) == 1
     await src.close()
 
@@ -194,7 +197,7 @@ async def test_mcp_source_call_refuses_token_for_another_source():
     src = _wired_source(seen, RecordingSink())
 
     with pytest.raises(NetworkPolicyError):
-        await src.call("search_docs", {}, dispatch_token=_token(source_name="other_mcp"))
+        await src.call("search_docs", {}, ctx=CALLER, dispatch_token=_token(source_name="other_mcp"))
     assert seen == []
     await src.close()
 
@@ -204,7 +207,7 @@ async def test_mcp_source_call_to_a_destination_outside_allowed_urls_raises_poli
     src = _wired_source(seen, RecordingSink(), allowed_urls=["https://other.example.test/*"])
 
     with pytest.raises(NetworkPolicyError, match="allowed_urls"):
-        await src.call("search_docs", {}, dispatch_token=_token())
+        await src.call("search_docs", {}, ctx=CALLER, dispatch_token=_token())
     assert seen == []
     await src.close()
 
@@ -218,7 +221,7 @@ async def test_mcp_source_call_server_error_is_still_a_config_error():
     src = _wired_source(seen, RecordingSink(), status=500)
 
     with pytest.raises(ConfigError, match="POST /message failed"):
-        await src.call("search_docs", {}, dispatch_token=_token())
+        await src.call("search_docs", {}, ctx=CALLER, dispatch_token=_token())
     assert len(seen) == 1
     await src.close()
 
@@ -229,7 +232,7 @@ async def test_mcp_source_call_without_token_sends_no_token_header():
     # reach the wire so the absent header can be checked.
     src = _wired_source(seen, RecordingSink(), config=_config(token_policy="audit"))
 
-    await src.call("search_docs", {})
+    await src.call("search_docs", {}, ctx=CALLER)
 
     assert "X-Shai-Token" not in seen[0].headers
     await src.close()
@@ -379,7 +382,7 @@ async def test_mcp_source_call_refuses_token_issued_for_another_tool():
     src = _wired_source(seen, sink)
 
     with pytest.raises(NetworkPolicyError, match="search_docs.*other_tool"):
-        await src.call("other_tool", {"q": "x"}, dispatch_token=_token())
+        await src.call("other_tool", {"q": "x"}, ctx=CALLER, dispatch_token=_token())
 
     assert seen == []
     events = [e for e in sink.events if isinstance(e, NetworkAuditEvent)]
@@ -727,3 +730,281 @@ async def test_token_binding_checks_order():
     req = _request(token=tok)
     with pytest.raises(NetworkPolicyError, match="source_name"):
         await t.handle_async_request(req)
+
+
+# ── Every request ends with exactly one event; an outage is never swallowed ──
+
+class _FailingSink:
+    name = "failing"
+
+    async def emit(self, event):
+        raise OSError("sink down: https://secret.example/?q=hidden")
+
+    async def close(self):
+        pass
+
+
+def _failing_inner(exc: BaseException):
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(side_effect=exc)
+    return inner
+
+
+async def test_connect_error_emits_one_failed_event_and_reraises():
+    sink = RecordingSink()
+    exc = httpx.ConnectError("boom to https://mcp.slack.com/message?token=hunter2")
+    t = _transport(emitter=AuditEmitter([sink]), inner=_failing_inner(exc))
+    tok = _token()
+    with pytest.raises(httpx.ConnectError) as info:
+        await t.handle_async_request(_request(token=tok))
+    assert info.value is exc
+    assert len(sink.events) == 1
+    event = sink.events[0]
+    assert event.status == "failed"
+    assert event.deny_reason == "ConnectError"
+    assert event.token_id is not None
+    # The token was consumed by the attempt: replaying it is refused (and audited).
+    with pytest.raises(NetworkPolicyError):
+        await t.handle_async_request(_request(token=tok))
+    assert len(sink.events) == 2
+
+
+async def test_read_error_while_buffering_body_emits_one_failed_event():
+    class _Broken(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"abc"
+            raise httpx.ReadError("cut off at https://mcp.slack.com/x?k=v")
+
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(
+        return_value=httpx.Response(200, stream=_Broken()),
+    )
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=inner)
+    with pytest.raises(httpx.ReadError):
+        await t.handle_async_request(_request(token=_token()))
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "failed"
+    assert sink.events[0].deny_reason == "ReadError"
+    assert sink.events[0].bytes_recv == 3
+
+
+async def test_cancelled_request_emits_one_failed_event_and_reraises():
+    sink = RecordingSink()
+    started = asyncio.Event()
+
+    async def hang(request):
+        started.set()
+        await asyncio.sleep(60)
+
+    inner = AsyncMock()
+    inner.handle_async_request = hang
+    t = _transport(emitter=AuditEmitter([sink]), inner=inner)
+    task = asyncio.ensure_future(t.handle_async_request(_request(token=_token())))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "failed"
+    assert sink.events[0].deny_reason == "cancelled"
+
+
+async def test_total_sink_outage_on_an_allowed_request_raises_and_returns_no_response():
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(emitter=AuditEmitter([_FailingSink()]), inner=inner)
+    with pytest.raises(AuditEmissionError):
+        await t.handle_async_request(_request(token=_token()))
+
+
+async def test_total_sink_outage_on_a_failed_request_raises_audit_emission_error():
+    t = _transport(emitter=AuditEmitter([_FailingSink()]),
+                   inner=_failing_inner(httpx.ConnectError("x")))
+    with pytest.raises(AuditEmissionError):
+        await t.handle_async_request(_request(token=_token()))
+
+
+def _refusal_requests():
+    good = _token()
+    return {
+        "url": lambda: _request(url="https://evil.example/x", token=good),
+        "method": lambda: _request(method="DELETE", token=good),
+        "token": lambda: _request(token="not-a-token"),
+        "no_token": lambda: _request(),
+    }
+
+
+@pytest.mark.parametrize("kind", ["url", "method", "token", "no_token"])
+async def test_total_sink_outage_on_a_refusal_raises_audit_emission_error(kind):
+    t = _transport(emitter=AuditEmitter([_FailingSink()]))
+    with pytest.raises(AuditEmissionError):
+        await t.handle_async_request(_refusal_requests()[kind]())
+
+
+async def test_total_sink_outage_on_a_replay_refusal_raises_audit_emission_error():
+    good_sink = RecordingSink()
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    tok = _token()
+    t = _transport(emitter=AuditEmitter([good_sink]), inner=inner)
+    await t.handle_async_request(_request(token=tok))
+    t._emitter = AuditEmitter([_FailingSink()])
+    with pytest.raises(AuditEmissionError):
+        await t.handle_async_request(_request(token=tok))
+
+
+async def test_one_failing_sink_out_of_two_does_not_stop_the_request():
+    sink = RecordingSink()
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(return_value=_response())
+    t = _transport(emitter=AuditEmitter([_FailingSink(), sink]), inner=inner)
+    response = await t.handle_async_request(_request(token=_token()))
+    assert response.status_code == 200
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "allowed"
+
+
+async def test_failure_records_carry_no_exception_message_or_url_query(caplog):
+    sink = RecordingSink()
+    exc = httpx.ConnectError("secret-message https://mcp.slack.com/m?token=hunter2")
+    t = _transport(emitter=AuditEmitter([sink]), inner=_failing_inner(exc))
+    with caplog.at_level("DEBUG"), pytest.raises(httpx.ConnectError):
+        await t.handle_async_request(_request(token=_token()))
+    dumped = sink.events[0].model_dump_json()
+    assert "secret-message" not in dumped
+    assert "hunter2" not in sink.events[0].deny_reason
+    assert "secret-message" not in caplog.text
+    assert "hunter2" not in caplog.text
+
+
+async def test_one_event_per_request_on_an_untokened_audit_failure():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), config=_config(token_policy="audit"),
+                   inner=_failing_inner(httpx.ConnectError("x")))
+    with pytest.raises(httpx.ConnectError):
+        await t.handle_async_request(_request())
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "failed"
+    assert sink.events[0].token_id is None
+
+
+# ── The caller: tokens bind the agent, and events carry it ─────────────────
+
+AGENT_B = AgentContext(agent_id="second_agent", sub_agent_id="sub_b")
+WRONG_AGENT = "token was issued for another agent"
+
+
+async def _ok_inner():
+    inner = AsyncMock()
+    inner.handle_async_request = AsyncMock(side_effect=lambda r: _response())
+    return inner
+
+
+async def test_token_presented_by_its_own_caller_is_allowed_and_attributed():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=await _ok_inner())
+    await t.handle_async_request(_request(token=_token()))
+    assert [(e.status, e.agent_id, e.sub_agent_id) for e in sink.events] == [
+        ("allowed", AGENT, None),
+    ]
+
+
+async def test_token_presented_by_another_agent_is_denied_not_burned():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=await _ok_inner())
+    tok = _token()
+    with pytest.raises(NetworkPolicyError) as info:
+        await t.handle_async_request(_request(token=tok, caller=AGENT_B))
+    assert str(info.value) == WRONG_AGENT
+    denied = sink.events[0]
+    assert (denied.status, denied.deny_reason) == ("denied", WRONG_AGENT)
+    assert (denied.agent_id, denied.sub_agent_id) == ("second_agent", "sub_b")
+    assert AGENT not in denied.deny_reason and "sub_b" not in denied.deny_reason
+
+    # The refusal did not consume the nonce: its own agent can still use it.
+    await t.handle_async_request(_request(token=tok))
+    assert sink.events[1].status == "allowed"
+    assert sink.events[1].agent_id == AGENT
+    assert len(sink.events) == 2
+
+
+async def test_token_with_a_subagent_is_denied_when_the_caller_has_none():
+    t = _transport(inner=await _ok_inner())
+    with pytest.raises(NetworkPolicyError, match=WRONG_AGENT):
+        await t.handle_async_request(_request(token=_token(sub_agent_id="sub_b")))
+
+
+async def test_token_without_a_subagent_is_denied_for_a_subagent_caller():
+    t = _transport(inner=await _ok_inner())
+    caller = AgentContext(agent_id=AGENT, sub_agent_id="sub_b")
+    with pytest.raises(NetworkPolicyError, match=WRONG_AGENT):
+        await t.handle_async_request(_request(token=_token(), caller=caller))
+
+
+async def test_token_for_another_tenant_is_denied():
+    t = _transport(inner=await _ok_inner())
+    with pytest.raises(NetworkPolicyError, match=WRONG_AGENT):
+        await t.handle_async_request(_request(token=_token(tenant_id="other-tenant")))
+
+
+async def test_request_with_no_caller_is_denied_and_audited():
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=await _ok_inner())
+    with pytest.raises(NetworkPolicyError, match="no caller"):
+        await t.handle_async_request(_request(token=_token(), caller=None))
+    assert len(sink.events) == 1
+    assert sink.events[0].status == "denied"
+
+
+async def test_a_caller_that_is_not_an_agent_context_is_refused():
+    t = _transport(inner=await _ok_inner())
+    req = _request(token=_token())
+    req.extensions["shai_caller"] = {"agent_id": AGENT}
+    with pytest.raises(NetworkPolicyError, match="no caller"):
+        await t.handle_async_request(req)
+
+
+@pytest.mark.parametrize("first", ["a", "b"])
+async def test_two_agents_sharing_one_source_are_each_attributed(first):
+    sink = RecordingSink()
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, sink)
+    calls = {
+        "a": (CALLER, _token()),
+        "b": (AGENT_B, _token(agent_id="second_agent", sub_agent_id="sub_b")),
+    }
+    order = [first, "b" if first == "a" else "a"]
+    for key in order:
+        ctx, tok = calls[key]
+        await src.call("search_docs", {}, ctx=ctx, dispatch_token=tok)
+    attributed = [(e.status, e.agent_id, e.sub_agent_id) for e in sink.events]
+    expected = {"a": ("allowed", AGENT, None), "b": ("allowed", "second_agent", "sub_b")}
+    assert attributed == [expected[k] for k in order]
+
+
+async def test_a_source_call_with_another_agents_token_is_refused():
+    sink = RecordingSink()
+    src = _wired_source([], sink)
+    with pytest.raises(NetworkPolicyError, match=WRONG_AGENT):
+        await src.call("search_docs", {}, ctx=AGENT_B, dispatch_token=_token())
+    assert sink.events[0].agent_id == "second_agent"
+
+
+async def test_connect_phase_requests_are_attributed_to_the_loading_agent():
+    sink = RecordingSink()
+    seen: list[httpx.Request] = []
+    src = _wired_source(seen, sink)
+    loader = AgentContext(agent_id="loader", sub_agent_id="sub_l")
+    src._agent_ctx = loader
+
+    async def mint(ctx, *, method, destination):
+        assert ctx is loader
+        return _connect_token(agent_id="loader", sub_agent_id="sub_l")
+
+    src._mint_connect_token = mint
+    await src._initialize_session()
+    assert sink.events, "the handshake sent no requests"
+    assert {(e.agent_id, e.sub_agent_id, e.status) for e in sink.events} == {
+        ("loader", "sub_l", "allowed"),
+    }

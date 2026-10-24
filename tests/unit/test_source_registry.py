@@ -297,7 +297,7 @@ async def test_mcp_source_call_raises_when_not_connected():
     src = _runtime_source(_mcp())
     from harness.core.errors import ConfigError
     with pytest.raises(ConfigError, match="not connected"):
-        await src.call("search", {})
+        await src.call("search", {}, ctx=AgentContext(agent_id="a"))
 
 
 async def test_mcp_source_close_when_not_connected():
@@ -318,7 +318,7 @@ async def test_mcp_fetch_tools_stamps_own_source_name(monkeypatch):
         "get_forecast": {"description": "d", "tags": [], "action": "allow"}
     }))
 
-    async def fake_post(payload, dispatch_token=None):
+    async def fake_post(payload, ctx, dispatch_token=None):
         return {"result": {"tools": [{"name": "get_forecast", "description": "d"}]}}
 
     monkeypatch.setattr(src, "_post", fake_post)
