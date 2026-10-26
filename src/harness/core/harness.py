@@ -1326,46 +1326,51 @@ class SHAI:
     async def scan_output(self, text: str, ctx: AgentContext) -> ScanVerdict:
         session_id = ctx.conversation_id or ctx.agent_id
 
-        # Option A: consolidated risk-based block. Even if no individual
-        # scanner blocks, if the accumulated turn risk crosses RISK_HIGH,
-        # block at scan_output — the last boundary with the full picture.
-        # Computed from TurnSignals recorded by earlier boundaries, so it is
-        # known before this call's own scan runs and can be folded into that
-        # scan's single audit event rather than emitting a second one after
-        # the fact (Invariant 1: exactly one event per boundary call).
-        turn_risk = 0.0
-        forced_block_reason: str | None = None
-        forced_block_extra:  dict[str, Any] | None = None
-        if ctx.turn_signals is not None:
-            turn_risk = ctx.turn_signals.compute_risk()
-            if turn_risk >= RISK_HIGH:
-                forced_block_reason = (
-                    f"consolidated turn risk {turn_risk:.2f} exceeds high "
-                    f"threshold ({RISK_HIGH:.2f})"
-                )
-                forced_block_extra = {
-                    "turn_risk":     round(turn_risk, 4),
-                    "signal_source": "consolidated",
-                }
-
-        verdict = await run_scan(
-            text, ctx,
-            boundary=BoundaryName.OUTPUT_SCAN,
-            scanners=self._output_scanners,
-            config=self._config.scan_output,
-            emitter=self._emitter,
-            tenant_id=self._tenant_id,
-            state=self._scan_state,
-            normalization=self._config.normalization,
-            audit_tags=self._audit_tags_for(ctx),
-            forced_block_reason=forced_block_reason,
-            forced_block_extra=forced_block_extra,
-        )
-
-        # Accumulator record — moved from scan_input to scan_output so the
-        # session score reflects the full-turn consolidated risk, not just
-        # the input scan verdict.
+        # The turn ends here. Everything after this line, including the read of
+        # the signals, sits inside the try, so the single finally clears the
+        # signal bus on every exit: return, cancellation, and the
+        # AuditEmissionError that run_scan raises when every sink fails
+        # (Invariant 7).
         try:
+            # Option A: consolidated risk-based block. Even if no individual
+            # scanner blocks, if the accumulated turn risk crosses RISK_HIGH,
+            # block at scan_output — the last boundary with the full picture.
+            # Computed from TurnSignals recorded by earlier boundaries, so it is
+            # known before this call's own scan runs and can be folded into that
+            # scan's single audit event rather than emitting a second one after
+            # the fact (Invariant 1: exactly one event per boundary call).
+            turn_risk = 0.0
+            forced_block_reason: str | None = None
+            forced_block_extra:  dict[str, Any] | None = None
+            if ctx.turn_signals is not None:
+                turn_risk = ctx.turn_signals.compute_risk()
+                if turn_risk >= RISK_HIGH:
+                    forced_block_reason = (
+                        f"consolidated turn risk {turn_risk:.2f} exceeds high "
+                        f"threshold ({RISK_HIGH:.2f})"
+                    )
+                    forced_block_extra = {
+                        "turn_risk":     round(turn_risk, 4),
+                        "signal_source": "consolidated",
+                    }
+
+            verdict = await run_scan(
+                text, ctx,
+                boundary=BoundaryName.OUTPUT_SCAN,
+                scanners=self._output_scanners,
+                config=self._config.scan_output,
+                emitter=self._emitter,
+                tenant_id=self._tenant_id,
+                state=self._scan_state,
+                normalization=self._config.normalization,
+                audit_tags=self._audit_tags_for(ctx),
+                forced_block_reason=forced_block_reason,
+                forced_block_extra=forced_block_extra,
+            )
+
+            # Accumulator record — moved from scan_input to scan_output so the
+            # session score reflects the full-turn consolidated risk, not just
+            # the input scan verdict.
             if self._threat_accumulator is not None:
                 categories = [f.category for f in verdict.findings]
                 density = wiring._extract_density(verdict)
@@ -1373,11 +1378,9 @@ class SHAI:
                     session_id, text, verdict.status.value, categories,
                     density=density, turn_risk=turn_risk,
                 )
+            return verdict
         finally:
-            # Clear the turn signal bus - the turn ends here, cancelled or not.
             ctx._clear_signals()
-
-        return verdict
 
 
     def collect_events(self) -> AbstractContextManager[list[AnyAuditEvent]]:

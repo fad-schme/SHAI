@@ -11,7 +11,7 @@ import pytest
 
 from harness.core.context import AgentContext
 from harness.core.harness import SHAI
-from harness.core.types import Transport
+from harness.core.types import BoundaryName, Transport
 from harness.core.verdicts import GateDecision
 from harness.tools.tool import Tool
 
@@ -720,3 +720,161 @@ async def test_run_turn_model_receives_clean_input_unchanged(tmp_path: Path):
 
     await run_turn("hello there", ctx, harness=h, llm_fn=llm_fn)
     assert seen == ["hello there"]
+
+
+# ── PydanticAI add_harness_middleware against the real framework ──────────
+
+def _tool_returns(result) -> dict[str, str]:
+    """Tool name -> text the model was given for it."""
+    out: dict[str, str] = {}
+    for message in result.all_messages():
+        for part in getattr(message, "parts", []):
+            if part.part_kind == "tool-return":
+                out[part.tool_name] = str(part.content)
+    return out
+
+
+async def _pai_agent(tmp_path: Path):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    h, ctx = await _poisoned_harness(tmp_path)
+    await h.register_tools([
+        Tool(name="list_inbox", tags=["read", "internal"], transport=Transport.LOCAL),
+    ])
+    ran: list[str] = []
+
+    def search_docs(query: str) -> str:
+        """Search the docs."""
+        ran.append("search_docs")
+        return "search ok"
+
+    def list_inbox(folder: str) -> str:
+        """List an inbox folder."""
+        ran.append("list_inbox")
+        return _POISONED
+
+    def not_registered(n: int) -> str:
+        """A tool the harness has never heard of."""
+        ran.append("not_registered")
+        return "secret"
+
+    agent = Agent(TestModel(), tools=[search_docs, list_inbox, not_registered])
+    return h, ctx, agent, ran
+
+
+async def test_pydantic_ai_agent_tools_are_ungated_without_the_call(tmp_path: Path):
+    """Control: the framework runs the tools directly."""
+    h, ctx, agent, ran = await _pai_agent(tmp_path)
+    with h.collect_events() as events:
+        result = await agent.run("go")
+    assert sorted(ran) == ["list_inbox", "not_registered", "search_docs"]
+    assert not events
+    assert _tool_returns(result)["not_registered"] == "secret"
+
+
+async def test_pydantic_ai_add_harness_middleware_gates_every_tool(tmp_path: Path):
+    from harness.integrations.pydantic_ai import add_harness_middleware
+
+    h, ctx, agent, ran = await _pai_agent(tmp_path)
+    add_harness_middleware(agent, harness=h, ctx=ctx)
+
+    with h.collect_events() as events:
+        result = await agent.run("go")
+    returns = _tool_returns(result)
+
+    assert returns["search_docs"] == "search ok"
+    # Denied by the gate: not registered, so the tool never ran.
+    assert "not_registered" not in ran
+    assert returns["not_registered"] != "secret"
+    assert "denied" in returns["not_registered"].lower() or "not " in returns["not_registered"].lower()
+    # A poisoned result is blocked at scan_tool_result.
+    assert "blocked" in returns["list_inbox"].lower()
+    assert "system prompt" not in returns["list_inbox"]
+    # Exactly one gate event per call, plus one result scan per allowed call.
+    gate = [e for e in events if e.boundary == BoundaryName.TOOL_CALL_GATE]
+    assert len(gate) == 3
+    assert len([e for e in events if e.boundary == BoundaryName.TOOL_RESULT_SCAN]) == 2
+
+
+async def test_pydantic_ai_add_harness_middleware_twice_gates_once(tmp_path: Path):
+    from harness.integrations.pydantic_ai import add_harness_middleware
+
+    h, ctx, agent, ran = await _pai_agent(tmp_path)
+    add_harness_middleware(agent, harness=h, ctx=ctx)
+    add_harness_middleware(agent, harness=h, ctx=ctx)
+    with h.collect_events() as events:
+        await agent.run("go")
+    gate = [e for e in events if e.boundary == BoundaryName.TOOL_CALL_GATE]
+    assert len(gate) == 3
+
+
+async def test_pydantic_ai_gated_tools_keep_their_model_facing_schema(tmp_path: Path):
+    from harness.integrations.pydantic_ai import add_harness_middleware
+
+    h, ctx, agent, _ = await _pai_agent(tmp_path)
+    before = {n: (t.description, t.tool_def.parameters_json_schema)
+              for n, t in agent._function_toolset.tools.items()}
+    add_harness_middleware(agent, harness=h, ctx=ctx)
+    after = {n: (t.description, t.tool_def.parameters_json_schema)
+             for n, t in agent._function_toolset.tools.items()}
+    assert before == after
+
+
+async def test_pydantic_ai_tool_with_run_context_raises_and_leaves_agent_unchanged(
+    tmp_path: Path,
+):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai.models.test import TestModel
+
+    from harness.core.errors import ConfigError
+    from harness.integrations.pydantic_ai import add_harness_middleware
+
+    h, ctx = await _poisoned_harness(tmp_path)
+
+    def plain(query: str) -> str:
+        """Plain."""
+        return "ok"
+
+    def needs_ctx(run, query: str) -> str:
+        """Takes a RunContext."""
+        return "ok"
+
+    # The module uses postponed annotations; resolve the type by hand.
+    needs_ctx.__annotations__ = {"run": RunContext[None], "query": str, "return": str}
+
+    agent = Agent(TestModel(), tools=[plain, needs_ctx])
+    originals = dict(agent._function_toolset.tools)
+    with pytest.raises(ConfigError, match="needs_ctx"):
+        add_harness_middleware(agent, harness=h, ctx=ctx)
+    assert agent._function_toolset.tools == originals
+
+
+async def test_pydantic_ai_non_function_toolset_raises(tmp_path: Path):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.toolsets import ExternalToolset
+
+    from harness.core.errors import ConfigError
+    from harness.integrations.pydantic_ai import add_harness_middleware
+
+    h, ctx = await _poisoned_harness(tmp_path)
+    agent = Agent(TestModel(), toolsets=[ExternalToolset([])])
+    with pytest.raises(ConfigError, match="ExternalToolset"):
+        add_harness_middleware(agent, harness=h, ctx=ctx)
+
+
+async def test_pydantic_ai_agent_without_tools_warns_and_returns(tmp_path: Path, caplog):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    from harness.integrations.pydantic_ai import add_harness_middleware
+
+    h, ctx = await _poisoned_harness(tmp_path)
+    with caplog.at_level("WARNING"):
+        add_harness_middleware(Agent(TestModel()), harness=h, ctx=ctx)
+    assert "nothing to gate" in caplog.text

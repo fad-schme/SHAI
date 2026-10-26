@@ -9,6 +9,8 @@ Section 4 — Integration through check_tool_call.run(): confirms both checks
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from typing import Any
 
 import pytest
@@ -126,10 +128,64 @@ def test_non_numeric_value_fails_max_check():
     result = ArgumentRule(arg="amount", max_value=100).evaluate({"amount": "not_a_number"})
     assert result is not None
 
-def test_nan_string_passes_silently():
-    # float("nan") is valid Python — nan comparisons are always False, so
-    # nan never exceeds a numeric bound. This is expected behaviour.
-    assert ArgumentRule(arg="amount", max_value=100).evaluate({"amount": "nan"}) is None
+_BOTH = ArgumentRule(arg="amount", max_value=100, min_value=0)
+_MAX_ONLY = ArgumentRule(arg="amount", max_value=100)
+_MIN_ONLY = ArgumentRule(arg="amount", min_value=0)
+_NAN_BAD = [float("nan"), "nan", "-nan", "NaN"]
+_BOOLS = [True, False]
+_HUGE = 10**400
+
+
+@pytest.mark.parametrize("rule", [_BOTH, _MAX_ONLY, _MIN_ONLY])
+@pytest.mark.parametrize("value", _NAN_BAD + _BOOLS)
+def test_nan_and_booleans_violate_a_numeric_bound(rule, value):
+    result = rule.evaluate({"amount": value})
+    assert result is not None and "not numeric" in result
+    assert "nan" not in result.lower()
+
+
+@pytest.mark.parametrize("value", _NAN_BAD + _BOOLS)
+def test_nan_and_booleans_pass_rules_without_a_numeric_bound(value):
+    assert ArgumentRule(arg="amount", allowlist=[str(value)]).evaluate({"amount": value}) is None
+    assert ArgumentRule(arg="amount", pattern=".*").evaluate({"amount": value}) is None
+
+
+def test_huge_int_is_compared_exactly_not_converted():
+    assert "exceeds max" in _BOTH.evaluate({"amount": _HUGE})
+    assert "exceeds max" in _MAX_ONLY.evaluate({"amount": _HUGE})
+    assert _MIN_ONLY.evaluate({"amount": _HUGE}) is None
+    assert "below min" in _BOTH.evaluate({"amount": -_HUGE})
+    assert "below min" in _MIN_ONLY.evaluate({"amount": -_HUGE})
+    assert _MAX_ONLY.evaluate({"amount": -_HUGE}) is None
+
+
+@pytest.mark.parametrize("value,fragment", [
+    (float("inf"), "exceeds max"), (float("-inf"), "below min"),
+])
+def test_infinity_is_compared_as_a_number(value, fragment):
+    assert fragment in _BOTH.evaluate({"amount": value})
+
+
+def test_numeric_strings_still_compare():
+    assert _BOTH.evaluate({"amount": "50"}) is None
+    assert "exceeds max" in _BOTH.evaluate({"amount": "150"})
+
+
+@pytest.mark.parametrize("value", ["1e999", "-1e999", object(), [1], {"a": 1}, b""])
+def test_unconvertible_or_overflowing_values_never_raise(value):
+    result = _BOTH.evaluate({"amount": value})
+    assert result is None or "amount" in result
+
+
+def test_numeric_string_overflowing_float_is_compared_as_infinity():
+    assert "exceeds max" in _BOTH.evaluate({"amount": "1e999"})
+
+
+def test_violation_messages_never_contain_the_value():
+    for value in ["nan", True, _HUGE, "secret-value-xyz", 5000]:
+        result = _BOTH.evaluate({"amount": value})
+        assert result is not None
+        assert str(value) not in result
 
 
 # ── scope_policy: ArgumentRule wiring (matching logic itself is tested in
@@ -670,3 +726,31 @@ def test_violation_messages_still_distinguish_the_constraint():
     ]
     assert all(m is not None and arg in m for m in msgs)
     assert len(set(msgs)) == len(msgs)
+
+
+# ── Gate: numeric rule edge values give a verdict and one audit event ─────
+
+@pytest.mark.parametrize("value", [float("nan"), "nan", "-nan", True, False,
+                                   _HUGE, -_HUGE, float("inf"), "1e999", 50])
+async def test_gate_numeric_rule_always_returns_a_verdict_with_one_event(value):
+    tool = Tool(name="pay_invoice", tags=["financial"],
+                argument_rules=[ArgumentRule(arg="amount", max_value=100, min_value=0)])
+    gate, sink = await _gate(tool, {"amount": value})
+    assert len(sink.events) == 1
+    expect_allow = value == 50
+    assert gate.allowed is expect_allow
+
+
+@pytest.mark.parametrize("signature", [5, 1.5, True, None, [], {}, "", "x" * 100_000, "sïgnature"])
+async def test_gate_malformed_grant_signature_denies_with_one_event(signature):
+    tool = Tool(name="pay_invoice", tags=["financial"],
+                irreversibility=Irreversibility.SENSITIVE)
+    good = _grants("pay_invoice", {}, "alex")[0]
+    raw = json.loads(base64.urlsafe_b64decode(good))
+    raw["signature"] = signature
+    bad = base64.urlsafe_b64encode(json.dumps(raw).encode()).decode()
+    ctx = AgentContext(agent_id="test_agent", approvals=(bad,))
+    gate, sink = await _gate(tool, {}, ctx=ctx, approvals=_POLICY)
+    assert not gate.allowed
+    assert len(sink.events) == 1
+    assert sink.events[0].decision == Decision.DENY

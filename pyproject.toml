@@ -48,8 +48,17 @@ shell = [
     # only useful where the deployment registers shell-executing tools.
     "bashlex>=0.18",
 ]
+documents = [
+    # PDF and DOCX text extraction for the scan_file content chain. Without
+    # them those documents are reported as file.content_unreadable.
+    "pypdf>=4.0",
+    "python-docx>=1.0",
+]
 dev = [
     "bashlex>=0.18",
+    "pypdf>=4.0",
+    "python-docx>=1.0",
+    "pydantic-ai-slim>=2.61",
     "langchain>=1.0",
     "langgraph>=1.0",
     "pytest>=8.0",

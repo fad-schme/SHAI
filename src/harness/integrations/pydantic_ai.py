@@ -29,6 +29,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
+from harness.core.errors import ConfigError
 from harness.integrations.base import (  # shai_tool re-exported
     ShaiTool,
     make_gated_tool,
@@ -82,35 +83,104 @@ async def create_tools(
     return result
 
 
-def add_harness_middleware(agent: Any, *, harness: SHAI, ctx: AgentContext) -> None:
-    """Patch a PydanticAI agent to gate all tool calls through the harness.
+_GATED_MARK = "__shai_gated__"
 
-    Modifies the agent in-place. Must be called after all tools are
-    registered and before agent.run().
+
+def add_harness_middleware(agent: Any, *, harness: SHAI, ctx: AgentContext) -> None:
+    """Gate every function tool of a PydanticAI agent through the harness.
+
+    Modifies the agent in place. Call it after all tools are registered and
+    before ``agent.run()``. The tools must also be registered with the harness
+    (``harness.register_tools``), as for any gated tool.
+
+    Tools are discovered through the agent's public ``toolsets``: each function
+    toolset's ``tools`` mapping has every tool replaced by one whose function
+    runs ``check_tool_call`` and ``scan_tool_result`` and renders a denial the
+    way ``create_tools`` does. Verified against pydantic-ai-slim 2.61.
+
+    Raises ConfigError, before the agent runs and with the agent left
+    unchanged, when a tool or toolset cannot be gated: a toolset that is not a
+    ``FunctionToolset`` (MCP servers, dynamic toolsets), a tool that takes a
+    ``RunContext``, or a tool whose gated form would expose a different schema
+    to the model. An agent with no tools logs a warning and returns.
     """
-    tools = getattr(agent, "_function_tools", None) or getattr(agent, "tools", [])
-    if not tools:
+    try:
+        from pydantic_ai import Tool
+        from pydantic_ai.toolsets import FunctionToolset
+    except ImportError as e:
+        raise ImportError(
+            "pydantic-ai is required for add_harness_middleware. "
+            "pip install pydantic-ai-slim"
+        ) from e
+
+    toolsets = getattr(agent, "toolsets", None)
+    if toolsets is None:
+        raise ConfigError(
+            f"add_harness_middleware: {type(agent).__name__} exposes no toolsets"
+        )
+
+    replacements: list[tuple[dict[str, Any], str, Any]] = []
+    for toolset in toolsets:
+        if not isinstance(toolset, FunctionToolset):
+            raise ConfigError(
+                f"add_harness_middleware: cannot gate a toolset of type "
+                f"{type(toolset).__name__}; only function toolsets are supported"
+            )
+        for name, tool in toolset.tools.items():
+            if getattr(tool.function, _GATED_MARK, False):
+                continue   # already gated by an earlier call
+            replacements.append(
+                (toolset.tools, name, _gated_tool(tool, name, Tool, harness, ctx))
+            )
+
+    if not replacements and not any(ts.tools for ts in toolsets):
         log.warning("add_harness_middleware: no tools found on agent — nothing to gate")
         return
-    for tool_obj in tools:
-        _patch_tool(tool_obj, harness=harness, ctx=ctx)
+    for tools, name, gated in replacements:
+        tools[name] = gated
 
 
-def _patch_tool(tool_obj: Any, *, harness: SHAI, ctx: AgentContext) -> None:
-    original_fn = (getattr(tool_obj, "function", None)
-                   or getattr(tool_obj, "_function", None))
-    if original_fn is None:
-        return
-    tool_name = getattr(tool_obj, "name", original_fn.__name__)
-
-    gated = functools.wraps(original_fn)(
-        make_gated_tool(original_fn, harness=harness, ctx=ctx, tool_name=tool_name)
+def _gated_tool(tool: Any, name: str, tool_cls: type, harness: SHAI, ctx: AgentContext) -> Any:
+    """A copy of `tool` whose function is gated, or ConfigError."""
+    if tool.takes_ctx:
+        raise ConfigError(
+            f"add_harness_middleware: tool {name!r} takes a RunContext and cannot "
+            "be gated; use create_tools() instead"
+        )
+    gated_fn = functools.wraps(tool.function)(
+        make_gated_tool(tool.function, harness=harness, ctx=ctx, tool_name=name)
     )
-
-    for attr in ("function", "_function"):
-        if hasattr(tool_obj, attr):
-            try:
-                setattr(tool_obj, attr, gated)
-                return
-            except (AttributeError, TypeError):
-                pass
+    setattr(gated_fn, _GATED_MARK, True)
+    try:
+        gated = tool_cls(
+            gated_fn,
+            takes_ctx=False,
+            name=name,
+            description=tool.description,
+            max_retries=tool.max_retries,
+            prepare=tool.prepare,
+            args_validator=tool.args_validator,
+            docstring_format=tool.docstring_format,
+            strict=tool.strict,
+            sequential=tool.sequential,
+            requires_approval=tool.requires_approval,
+            metadata=tool.metadata,
+            tool_kind=tool.tool_kind,
+            timeout=tool.timeout,
+            defer_loading=tool.defer_loading,
+            include_return_schema=tool.include_return_schema,
+        )
+        same_schema = (
+            gated.tool_def.parameters_json_schema == tool.tool_def.parameters_json_schema
+        )
+    except Exception as e:
+        raise ConfigError(
+            f"add_harness_middleware: tool {name!r} cannot be wrapped "
+            f"({type(e).__name__})"
+        ) from None
+    if not same_schema:
+        raise ConfigError(
+            f"add_harness_middleware: tool {name!r} would change its parameter "
+            "schema when gated"
+        )
+    return gated

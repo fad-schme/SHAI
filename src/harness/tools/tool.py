@@ -61,6 +61,23 @@ class ScopeRulePolicy(BaseModel, frozen=True):
         )
 
 
+def _comparable(value: Any) -> int | float | None:
+    """The value as a real number for a max/min bound, or None when it is not
+    one. Never raises. An int compares exactly (Python orders int and float
+    exactly, so 10**400 needs no float conversion); a bool, NaN, or a value
+    that does not convert is None, which the caller reports as non-numeric.
+    Infinity is a number and is compared as one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return None if number != number else number
+
+
 class ArgumentRule(BaseModel, frozen=True):
     """A single deterministic constraint on one argument of a tool call.
 
@@ -70,8 +87,8 @@ class ArgumentRule(BaseModel, frozen=True):
     Fields
     ------
     arg          Name of the argument this rule applies to.
-    max_value    Numeric upper bound (inclusive).
-    min_value    Numeric lower bound (inclusive).
+    max_value    Numeric upper bound (inclusive). NaN and booleans fail it.
+    min_value    Numeric lower bound (inclusive). NaN and booleans fail it.
     allowlist    Value must be one of these strings (exact match).
     pattern      Value must match this regex (re.search semantics).
     scope_policy Value must be a URL whose canonical host/IP is in scope —
@@ -122,22 +139,18 @@ class ArgumentRule(BaseModel, frozen=True):
             return None  # absent optional arg — no further checks
 
         if self.max_value is not None:
-            try:
-                if float(value) > self.max_value:
-                    return (
-                        f"argument '{self.arg}' exceeds max {self.max_value}"
-                    )
-            except (TypeError, ValueError):
+            number = _comparable(value)
+            if number is None:
                 return f"argument '{self.arg}' is not numeric (max_value check)"
+            if number > self.max_value:
+                return f"argument '{self.arg}' exceeds max {self.max_value}"
 
         if self.min_value is not None:
-            try:
-                if float(value) < self.min_value:
-                    return (
-                        f"argument '{self.arg}' is below min {self.min_value}"
-                    )
-            except (TypeError, ValueError):
+            number = _comparable(value)
+            if number is None:
                 return f"argument '{self.arg}' is not numeric (min_value check)"
+            if number < self.min_value:
+                return f"argument '{self.arg}' is below min {self.min_value}"
 
         if self.allowlist is not None:
             if str(value) not in self.allowlist:

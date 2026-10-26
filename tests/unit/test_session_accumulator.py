@@ -351,3 +351,118 @@ async def test_close_survives_a_failing_accumulator(tmp_path: Path):
 
     h._threat_accumulator = _Boom()
     await h.close()   # must not raise
+
+
+# ── TTL: check() expires a stale session ──────────────────────────────────
+
+import json as _json
+import time as _time
+
+from harness.boundaries.session_accumulator import StateStoreUnavailable
+
+_SKEY = "session:"
+_TKEY = "turns:"
+
+
+async def _stale(acc: ThreatAccumulator, sid: str, *, age_s: float, score: float = 0.95) -> None:
+    """A high-risk session whose last recorded turn was `age_s` seconds ago."""
+    await _feed(acc, sid, [("bad", "block")] * 4)
+    await acc._kv.put(_SKEY + sid, _json.dumps(
+        {"risk_score": score, "updated_at": _time.time() - age_s}).encode())
+
+
+async def test_check_expires_a_session_past_its_ttl(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "s1", age_s=2 * 3600)
+    assert await acc.check("s1") == (False, None)
+    assert await acc._kv.get(_SKEY + "s1") is None
+    assert await acc._log.tail(_TKEY + "s1", 10) == []
+
+
+async def test_record_after_expiry_starts_from_zero(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "s1", age_s=2 * 3600)
+    await acc.check("s1")
+    await acc.record("s1", "hello", "allow", [])
+    assert await acc.check("s1") == (False, None)
+    assert len(await acc._log.tail(_TKEY + "s1", 10)) == 1
+
+
+async def test_check_keeps_a_session_inside_its_ttl_escalated(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "s1", age_s=1800)
+    escalated, _ = await acc.check("s1")
+    assert escalated
+    assert await acc._kv.get(_SKEY + "s1") is not None
+
+
+async def test_expired_session_with_no_other_traffic_stays_clear(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "s1", age_s=2 * 3600)
+    for _ in range(5):
+        assert await acc.check("s1") == (False, None)
+
+
+async def test_check_expiry_leaves_other_sessions_alone(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "old", age_s=2 * 3600)
+    await _stale(acc, "fresh", age_s=10)
+    await acc.check("old")
+    assert (await acc.check("fresh"))[0]
+
+
+async def test_check_and_record_racing_on_a_stale_session_stay_consistent(tmp_path: Path):
+    import asyncio
+
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "s1", age_s=2 * 3600)
+    await asyncio.gather(acc.check("s1"), acc.record("s1", "hi", "allow", []))
+    row = await acc._kv.get(_SKEY + "s1")
+    turns = await acc._log.tail(_TKEY + "s1", 10)
+    if row is None:
+        assert turns == []
+    else:
+        assert _json.loads(row)["risk_score"] < 0.6
+        assert len(turns) <= 1
+
+
+async def test_check_raises_store_unavailable_on_an_unreadable_row(tmp_path: Path):
+    acc = _acc(tmp_path)
+    await acc._kv.put(_SKEY + "s1", b'{"risk_score": 0.1}')   # no updated_at
+    with pytest.raises(StateStoreUnavailable):
+        await acc.check("s1")
+
+
+async def test_check_raises_store_unavailable_when_expiry_cannot_be_written(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1)
+    await _stale(acc, "s1", age_s=2 * 3600)
+
+    async def boom(_key):
+        raise OSError("disk")
+
+    acc._log.delete = boom
+    with pytest.raises(StateStoreUnavailable):
+        await acc.check("s1")
+
+
+async def test_check_expiry_under_flag_action(tmp_path: Path):
+    acc = _acc(tmp_path, ttl_hours=1, on_escalation="flag")
+    await _stale(acc, "s1", age_s=2 * 3600)
+    assert await acc.check("s1") == (False, None)
+
+
+async def test_scan_input_judges_an_expired_blocked_session_afresh(tmp_path: Path):
+    h, ctx = await _setup_harness(tmp_path)
+    acc = h._threat_accumulator
+    await _feed(acc, "conv-test", [("bad", "block")] * 4)
+    rec = _recording_sink(h)
+    assert (await h.scan_input("benign message", ctx)).blocked
+    assert len(rec.events) == 1
+
+    row = _json.loads(await acc._kv.get(_SKEY + "conv-test"))
+    row["updated_at"] = _time.time() - 100 * 3600     # past the 72h TTL
+    await acc._kv.put(_SKEY + "conv-test", _json.dumps(row).encode())
+
+    verdict = await h.scan_input("benign message", ctx)
+    assert not verdict.blocked
+    assert len(rec.events) == 2

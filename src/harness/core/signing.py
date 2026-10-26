@@ -71,7 +71,7 @@ def decode(
     """Decode, verify, and return the claims of one envelope.
 
     Checks in order: well-formed base64/JSON, a JSON object, every signed field
-    plus `signature` present, HMAC match, parsable timestamps, not expired.
+    plus `signature` present, signature is a string, HMAC match, parsable timestamps, not expired.
     Raises `error` on the first failure. Binding — whether this envelope
     authorises *this* call — is the caller's, since only it knows the call.
 
@@ -98,10 +98,13 @@ def decode(
         raise error(f"{noun} missing fields: {sorted(missing)}")
 
     claimed_sig = data.pop("signature")
+    if not isinstance(claimed_sig, str):
+        raise error(f"{noun} signature is not a string")
 
     # Re-encode whatever remains, not just the fields expected: a field smuggled
     # into the envelope changes the bytes and must fail the comparison.
-    if not hmac.compare_digest(sign(data, secret), claimed_sig):
+    # Compared as bytes: compare_digest raises TypeError on a non-ASCII str.
+    if not hmac.compare_digest(sign(data, secret).encode(), claimed_sig.encode()):
         raise error(f"{noun} signature mismatch")
 
     try:

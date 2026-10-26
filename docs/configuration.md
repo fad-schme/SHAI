@@ -68,6 +68,13 @@ minimal config is a protected one:
 | `scan_mcp_metadata` | `mcp_metadata_scan` |
 | `check_tool_call` (arguments of tools tagged in `scan_args_for_tags`) | `exec_config_scan` |
 
+`scan_file` reads PDF and DOCX text through the `documents` extra
+(`pip install 'shai-harness[documents]'`, which installs `pypdf` and
+`python-docx`). A document it cannot read — reader not installed, corrupt or
+encrypted file — produces a MEDIUM `file.content_unreadable` finding, so
+`block_at` decides whether it blocks; a document that was read and holds no text
+produces none.
+
 Declaring `scanners:` replaces that list outright. `heuristic_scan` is added
 automatically to a text boundary if it is not already listed, and `scan_file`
 always runs its structural pass, so `scanners: []` is a coherent minimum: the

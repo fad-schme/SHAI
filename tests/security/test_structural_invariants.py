@@ -808,6 +808,72 @@ async def test_signals_cleared_when_scan_output_blocks(tmp_path: Path):
     assert ctx.turn_signals is None
 
 
+async def test_signals_cleared_when_scan_output_is_cancelled(tmp_path: Path):
+    """Cancellation leaves the boundary early — the bus must still be cleared."""
+    import asyncio
+
+    h, _ = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.scan_input("hello", ctx)
+    assert ctx.turn_signals is not None
+
+    class _Cancelled:
+        name = "cancelled"
+
+        async def scan(self, text: str, ctx: AgentContext) -> ScanResult:
+            raise asyncio.CancelledError
+
+    _set_scanners(h, _Cancelled())
+    with pytest.raises(asyncio.CancelledError):
+        await h.scan_output("payload", ctx)
+    assert ctx.turn_signals is None
+
+
+async def test_signals_cleared_when_every_audit_sink_fails_at_scan_output(
+    tmp_path: Path,
+):
+    h, _ = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.scan_input("hello", ctx)
+    assert ctx.turn_signals is not None
+
+    h._emitter._sinks = [_ExplodingSink()]
+    with pytest.raises(AuditEmissionError):
+        await h.scan_output("world", ctx)
+    assert ctx.turn_signals is None
+
+
+async def test_signals_cleared_when_the_accumulator_raises_at_scan_output(
+    tmp_path: Path,
+):
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.scan_input("hello", ctx)
+
+    class _Boom:
+        async def record(self, *a: Any, **kw: Any) -> None:
+            raise RuntimeError("accumulator down")
+
+    h._threat_accumulator = _Boom()
+    with pytest.raises(RuntimeError):
+        await h.scan_output("world", ctx)
+    assert ctx.turn_signals is None
+
+
+async def test_scan_output_normal_return_clears_signals_with_one_event(
+    tmp_path: Path,
+):
+    h, sink = await _harness(tmp_path)
+    ctx = AgentContext(agent_id="orchestrator_agent")
+    await h.scan_input("hello", ctx)
+    before = len(sink.events)
+
+    verdict = await h.scan_output("world", ctx)
+    assert verdict.status is ScanStatus.ALLOW
+    assert ctx.turn_signals is None
+    assert len(sink.events) - before == 1
+
+
 async def test_signals_not_propagated_to_subagents(tmp_path: Path):
     """A subagent invocation is a separate turn and starts with no evidence.
 

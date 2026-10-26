@@ -17,14 +17,16 @@ where the format declares no reliable size; tar is additionally checked for
 path traversal and symlink escapes. Formats with no stdlib reader (7z, rar)
 are reported as uninspectable rather than passed silently.
 
-All external dependencies are optional and gracefully skipped if not
-installed. The scanner degrades to extension/size checks only.
+External dependencies are optional. A missing optional library skips its
+structural check; a missing or failing document reader (pypdf, python-docx)
+is reported as a MEDIUM `file.content_unreadable` finding, never as a clean
+empty document.
 
 Optional dependencies:
   python-magic   — MIME type detection (pip install python-magic)
-  pypdf          — PDF text extraction and JS detection
+  pypdf          — PDF text extraction and JS detection (`documents` extra)
   Pillow         — image EXIF metadata inspection
-  python-docx    — DOCX text extraction
+  python-docx    — DOCX text extraction (`documents` extra)
   oletools       — Office VBA macro detection (pip install oletools)
 
 The scanner never includes file content, matched text, or EXIF values
@@ -133,35 +135,51 @@ _ARCHIVE_BACKED_EXTS = _ZIP_FAMILY_EXTS | _STREAM_COMP_EXTS | _TAR_EXTS
 
 # ── Text extraction helpers ───────────────────────────────────────────────
 
+class _Unreadable(Exception):
+    """An extractor could not read the document.
+
+    Carries only a reason class, never the underlying exception's message —
+    that can quote file content (Invariant 3). An empty string from an
+    extractor always means "read, and empty"; failure is this exception.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+_REASON_NO_READER = "no_reader"
+_REASON_REJECTED = "rejected"
+
+
 def _extract_pdf_text(path: Path) -> str:
     try:
         from pypdf import PdfReader  # type: ignore
-        reader = PdfReader(str(path))
-        return "\n".join(p.extract_text() or "" for p in reader.pages)
     except ImportError:
-        try:
-            from PyPDF2 import PdfReader  # type: ignore
-            reader = PdfReader(str(path))
-            return "\n".join(
-                p.extract_text() or "" for p in reader.pages
-            )
-        except ImportError:
-            return ""
+        raise _Unreadable(_REASON_NO_READER) from None
+    try:
+        reader = PdfReader(str(path))
+        if reader.is_encrypted:
+            raise _Unreadable(_REASON_REJECTED)
+        return "\n".join(p.extract_text() or "" for p in reader.pages)
+    except _Unreadable:
+        raise
     except Exception as e:
-        log.debug("pdf text extraction failed: %s", e)
-        return ""
+        log.warning("pdf text extraction failed: %s", type(e).__name__)
+        raise _Unreadable(_REASON_REJECTED) from None
 
 
 def _extract_docx_text(path: Path) -> str:
     try:
         import docx  # type: ignore
+    except ImportError:
+        raise _Unreadable(_REASON_NO_READER) from None
+    try:
         doc = docx.Document(str(path))
         return "\n".join(p.text for p in doc.paragraphs)
-    except ImportError:
-        return ""
     except Exception as e:
-        log.debug("docx text extraction failed: %s", e)
-        return ""
+        log.warning("docx text extraction failed: %s", type(e).__name__)
+        raise _Unreadable(_REASON_REJECTED) from None
 
 
 def _svg_bytes(path: Path) -> bytes:
@@ -189,11 +207,12 @@ def _extract_svg_text(path: Path) -> str:
     try:
         return _svg_bytes(path).decode("utf-8", errors="ignore")
     except Exception as e:
-        log.debug("SVG text extraction failed: %s", e)
-        return ""
+        log.warning("SVG text extraction failed: %s", type(e).__name__)
+        raise _Unreadable(_REASON_REJECTED) from None
 
 
 def _extract_text(path: Path) -> str:
+    """The document's text. Raises _Unreadable when it could not be read."""
     ext = path.suffix.lower()
     if ext == ".pdf":
         return _extract_pdf_text(path)
@@ -204,9 +223,24 @@ def _extract_text(path: Path) -> str:
     if ext in {".txt", ".md", ".csv", ".json", ".xml", ".html", ".yaml", ".yml"}:
         try:
             return path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            return ""
+        except Exception as e:
+            log.warning("text extraction failed: %s", type(e).__name__)
+            raise _Unreadable(_REASON_REJECTED) from None
     return ""
+
+
+def _unreadable_finding(ext: str, reason: str) -> Finding:
+    """Fixed-text finding for a document whose contents were not inspected."""
+    if reason == _REASON_NO_READER:
+        detail = f"No reader available for {ext} — contents were not inspected"
+    else:
+        detail = f"Could not read {ext} — contents were not inspected"
+    return Finding(
+        scanner="file_scanner",
+        category="file.content_unreadable",
+        severity=Severity.MEDIUM,
+        detail=detail,
+    )
 
 
 # ── Structural check helpers ──────────────────────────────────────────────
@@ -961,11 +995,18 @@ class FileContentScanner:
         self._max_size_mb   = max_size_mb
         self._normalization = normalization
 
-    def _payloads_blocking(self, text: str) -> list[tuple[str, str]]:
-        """Extract the surfaces to scan. Blocking — run off the event loop."""
+    def _payloads_blocking(
+        self, text: str
+    ) -> tuple[list[tuple[str, str]], list[Finding]]:
+        """Extract the surfaces to scan. Blocking — run off the event loop.
+
+        Returns the payloads and a finding for each surface that could not be
+        read. An empty payload is never a failure: it is a document that was
+        read and holds no text.
+        """
         path = Path(text)
         if not self._text_scanners or not path.exists():
-            return []
+            return [], []
         if not _within_size_limit(path, self._max_size_mb):
             # Refused, not partly inspected: the structural scanner reports
             # file.size_exceeded at HIGH, which blocks at the default posture,
@@ -974,20 +1015,25 @@ class FileContentScanner:
             # bounded portion instead would let an attacker choose how much
             # scanning work each upload costs, and the limit exists to bound
             # exactly that. Do not read it.
-            return []
+            return [], []
         if not _safe_to_extract(path, self._max_size_mb):
             # Archive bomb. A size gate cannot catch these — they are small on
             # disk. Structural scanner reports file.archive_bomb; do not unpack.
-            return []
+            return [], []
 
         payloads: list[tuple[str, str]] = []
-        extracted = _extract_text(path)
-        if extracted.strip():
-            payloads.append(("content", extracted))
+        unreadable: list[Finding] = []
+        try:
+            extracted = _extract_text(path)
+        except _Unreadable as e:
+            unreadable.append(_unreadable_finding(path.suffix.lower(), e.reason))
+        else:
+            if extracted.strip():
+                payloads.append(("content", extracted))
         metadata = _image_metadata_blob(path)
         if metadata.strip():
             payloads.append(("image_metadata", metadata))
-        return payloads
+        return payloads, unreadable
 
     def _views(self, payload: str) -> tuple[list[str], str | None]:
         """De-obfuscated views of one extracted payload.
@@ -1041,12 +1087,13 @@ class FileContentScanner:
         A fresh loop per call is safe here: no chain scanner touches asyncio, so
         none of them hold state bound to the caller's loop.
         """
-        payloads = await asyncio.to_thread(self._payloads_blocking, text)
+        payloads, unreadable = await asyncio.to_thread(self._payloads_blocking, text)
         if not payloads:
-            return ScanResult()
-        return await asyncio.to_thread(
+            return ScanResult(findings=unreadable)
+        chain = await asyncio.to_thread(
             lambda: asyncio.run(self._scan_chain(payloads, ctx))
         )
+        return ScanResult(findings=[*unreadable, *chain.findings])
 
     async def _scan_chain(
         self, payloads: list[tuple[str, str]], ctx: AgentContext

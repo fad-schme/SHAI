@@ -37,7 +37,7 @@ async def transfer_funds(recipient: str, amount: int) -> str:
     return await _transfer(recipient, amount)
 ```
 
-- **`argument_rules`** — per-argument constraints enforced at gate layer 2 (`max_value`, `min_value`, `allowlist`, `pattern`, `scope_policy`, `required`). `user_origin=True` is enforced at layer 6: the call is denied when that argument's value entered the turn through a tool result rather than the user's prompt. Declare it only where the user is the one who names the value — a recipient, a grantee. On an argument the agent legitimately resolves from something it read, it denies ordinary work.
+- **`argument_rules`** — per-argument constraints enforced at gate layer 2 (`max_value`, `min_value`, `allowlist`, `pattern`, `scope_policy`, `required`). A numeric bound (`max_value` / `min_value`) admits only real numbers: NaN and booleans are violations, and an integer too large for a float is compared exactly rather than converted. `user_origin=True` is enforced at layer 6: the call is denied when that argument's value entered the turn through a tool result rather than the user's prompt. Declare it only where the user is the one who names the value — a recipient, a grantee. On an argument the agent legitimately resolves from something it read, it denies ordinary work.
 - **`irreversibility`** — `SENSITIVE` or `IRREVERSIBLE` makes layer 3 deny until the configured quorum of signed approval grants is present. The default, `REVERSIBLE`, needs none.
 - **`path_args`** — the arguments that name filesystem paths, each mapped to the access the tool needs (`"read"` or `"write"`), for example `path_args={"src": "read", "dst": "write"}`. A tool tagged `fs` must declare them; registration refuses it otherwise, whatever the tool's source.
 
@@ -261,7 +261,7 @@ gated = await create_tools([search_docs], harness=harness, ctx=ctx)
 agent = Agent(model="openai:gpt-4o", tools=gated)
 ```
 
-For an agent that already holds its tools, `add_harness_middleware(agent, harness=harness, ctx=ctx)` gates them in place. `harness_tool(harness=..., ctx=...)` gates a third-party function that `@shai_tool` can't wrap.
+For an agent that already holds its tools, `add_harness_middleware(agent, harness=harness, ctx=ctx)` gates them in place: every function tool the agent exposes to the model runs through `check_tool_call` and `scan_tool_result`, rendered as `create_tools` renders them, and the tools must be registered with the harness. It is verified against `pydantic-ai-slim` 2.61 and later. It raises `ConfigError` before the agent runs, leaving the agent unchanged, for a toolset it cannot gate (an MCP server or dynamic toolset), a tool that takes a `RunContext`, or a tool that cannot be wrapped; use `create_tools()` for those tools. `harness_tool(harness=..., ctx=...)` gates a third-party function that `@shai_tool` can't wrap.
 
 ```python
 ```

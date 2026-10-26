@@ -12,6 +12,39 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **`add_harness_middleware` gates every PydanticAI tool, or raises.** It guessed
+  private attribute names, skipped a registry keyed by tool name without a warning,
+  and rebound a function attribute the framework no longer calls, so tools could run
+  ungated while the call reported nothing. It now replaces each tool in the agent's
+  function toolsets through the public `toolsets` API and raises `ConfigError`
+  (before the agent runs, agent unchanged) for a toolset or tool it cannot gate.
+  PydanticAI 2.61 or later is the supported range.
+- **`scan_output` clears the turn signals on every exit.** The cleanup started after
+  the output scan, so a cancelled scan or an `AuditEmissionError` left the signal bus
+  attached to the context. The `try/finally` now encloses the whole boundary body.
+- **A document `scan_file` cannot read is reported instead of passed as clean.**
+  The PDF, DOCX, SVG and plain-text extractors turned a missing reader or a
+  failed read into an empty string, so unread text came back with no findings.
+  They now report failure, and the content chain records a MEDIUM
+  `file.content_unreadable` finding that follows `block_at` like
+  `file.unscannable_archive`. The `PyPDF2` fallback is removed and `pypdf` and
+  `python-docx` ship as the `documents` extra.
+- **A session past its TTL no longer stays blocked.** `ThreatAccumulator.check()`
+  read the stored risk score without looking at its age, and a blocked session
+  records nothing, so with no other traffic its block outlived `ttl_hours`
+  indefinitely. `check()` now expires a session whose last recorded turn is older
+  than the TTL (kv row and turn log together, under the session lock, through the
+  same routine the sweep uses) and judges the input as a new session's first turn.
+- **A numeric argument rule always returns a verdict.** `ArgumentRule` converted
+  the value with `float()`: NaN passed both `max_value` and `min_value`, a JSON
+  boolean passed as 0 or 1, and an integer above the float range raised
+  `OverflowError` out of `check_tool_call` with no audit event. Integers now
+  compare exactly; NaN and booleans are violations under a numeric bound.
+- **A malformed envelope signature is denied through the normal audited path.**
+  The shared signed-envelope decoder passed a non-string or non-ASCII `signature`
+  to `hmac.compare_digest`, raising `TypeError` out of `ShaiTransport` and
+  `check_tool_call` with no audit event. `decode` now raises the caller's error
+  for a non-string signature and compares digests as bytes.
 - **An MCP dispatch token binds the agent making the call.** One `MCPSource`
   serves every agent that declares it, but its transport fixed the first loading
   agent's identity: later agents' requests were recorded under the first agent,

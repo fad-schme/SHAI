@@ -43,9 +43,15 @@ Score formula (capped at 1.0):
 
 TTL
 ---
-Sessions whose kv row's `updated_at` predates `ttl_hours` ago are purged by
-record() at most once a minute (lazy GC): the session's kv row and its entire turn log
-are deleted together. This is whole-*session* expiry, not per-turn expiry —
+A session expires `ttl_hours` after its last recorded turn. Expiry is seen two
+ways, both through one routine that deletes the session's kv row and its entire
+turn log together: check() expires the session it is reading when that row is
+stale (the input is then judged as the first turn of a new session), and
+record() sweeps every stale session at most once a minute (lazy GC). check()
+must expire its own session because a blocked session records nothing, so
+nothing else would ever refresh or sweep it. The turn log goes with the row:
+leaving it would let the next record() recompute the old score and re-escalate.
+This is whole-*session* expiry, not per-turn expiry —
 an active, low-traffic session's early turns must survive past `ttl_hours`
 as long as the session itself keeps getting used; only an inactive session's
 history is dropped.
@@ -189,19 +195,28 @@ class ThreatAccumulator:
     async def check(self, session_id: str) -> tuple[bool, str | None]:
         """Read persisted risk score. Called BEFORE run_scan.
 
-        Returns (escalated, reason). One kv get(). Raises StateStoreUnavailable
-        when the store cannot answer, so the caller can tell "no escalation"
-        from "could not tell".
+        Returns (escalated, reason). A session whose last recorded turn is
+        older than `ttl_hours` is expired here (kv row and turn log, under the
+        session lock) and reported as not escalated. Raises
+        StateStoreUnavailable when the store cannot answer or the expiry cannot
+        be written, so the caller can tell "no escalation" from "could not tell".
         """
-        try:
-            raw = await self._kv.get(_SESSION_PREFIX + session_id)
-            if raw is None:
-                return False, None
-            score = _number(json.loads(raw)["risk_score"])
-        except Exception as e:
-            log.error("session accumulator store unreachable",
-                      exc_info=True, extra={"session_id": session_id})
-            raise StateStoreUnavailable from e
+        lock = await self._session_lock(session_id)
+        async with lock:
+            try:
+                raw = await self._kv.get(_SESSION_PREFIX + session_id)
+                if raw is None:
+                    return False, None
+                row = json.loads(raw)
+                score = _number(row["risk_score"])
+                updated_at = _number(row["updated_at"])
+                if updated_at < time.time() - self._ttl:
+                    await self._expire(session_id)
+                    return False, None
+            except Exception as e:
+                log.error("session accumulator store unreachable",
+                          exc_info=True, extra={"session_id": session_id})
+                raise StateStoreUnavailable from e
         if score < self._threshold:
             return False, None
         return True, (
@@ -305,9 +320,12 @@ class ThreatAccumulator:
                             extra={"key": key})
                 continue
             if updated_at < cutoff:
-                session_id = key[len(_SESSION_PREFIX):]
-                await self._kv.delete(key)
-                await self._log.delete(_TURNS_PREFIX + session_id)
+                await self._expire(key[len(_SESSION_PREFIX):])
+
+    async def _expire(self, session_id: str) -> None:
+        """The one expiry routine: a session's kv row and turn log, together."""
+        await self._kv.delete(_SESSION_PREFIX + session_id)
+        await self._log.delete(_TURNS_PREFIX + session_id)
 
     def _compute_score(
         self,

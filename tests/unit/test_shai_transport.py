@@ -1008,3 +1008,21 @@ async def test_connect_phase_requests_are_attributed_to_the_loading_agent():
     assert {(e.agent_id, e.sub_agent_id, e.status) for e in sink.events} == {
         ("loader", "sub_l", "allowed"),
     }
+
+
+# ── A malformed token signature is an audited denial, never a TypeError ────
+
+@pytest.mark.parametrize("signature", [5, 1.5, True, None, [], {}, "", "x" * 100_000,
+                                       "sïgnature", "0" * 64])
+async def test_malformed_token_signature_is_an_audited_denial(signature):
+    import base64
+
+    raw = json.loads(base64.urlsafe_b64decode(_token()))
+    raw["signature"] = signature
+    token = base64.urlsafe_b64encode(json.dumps(raw).encode()).decode()
+    sink = RecordingSink()
+    t = _transport(emitter=AuditEmitter([sink]), inner=_network())
+
+    with pytest.raises(NetworkPolicyError):
+        await t.handle_async_request(_request(token=token))
+    assert [e.status for e in sink.events] == ["denied"]
