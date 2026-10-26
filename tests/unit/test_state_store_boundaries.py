@@ -217,13 +217,13 @@ async def test_close_waits_for_a_pending_budget_reset_and_leaves_no_connection(t
     await h.load_agent(AGENTS / "orchestrator_agent.yaml")
     key = "budget:orchestrator_agent:c"
     await h._session_budget._kv.put(key, b"{}")            # opens the file
-    lock = await h._session_budget._lock_for(key)
-    await lock.acquire()                                    # keeps the reset genuinely pending
+    holder = h._session_budget._locks.hold(key)
+    await holder.__aenter__()                               # keeps the reset genuinely pending
     h.maintenance.deregister_agent("orchestrator_agent")
 
     closing = asyncio.ensure_future(h.close())
     await asyncio.sleep(0.05)
-    lock.release()
+    await holder.__aexit__(None, None, None)
     await closing
     await asyncio.sleep(0.1)
 
@@ -313,8 +313,8 @@ async def _budget_harness(tmp_path):
     await h.load_agent(AGENTS / "orchestrator_agent.yaml")
     key = "budget:orchestrator_agent:c"
     await h._session_budget._kv.put(key, b"{}")            # opens the file
-    lock = await h._session_budget._lock_for(key)
-    await lock.acquire()                                    # the reset can never finish
+    h._stuck_holder = h._session_budget._locks.hold(key)   # kept alive: never released
+    await h._stuck_holder.__aenter__()                      # the reset can never finish
     h.maintenance.deregister_agent("orchestrator_agent")
     return h
 

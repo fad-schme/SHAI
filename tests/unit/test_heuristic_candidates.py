@@ -304,3 +304,53 @@ def test_unreadable_candidate_cache_recovers_to_none_and_says_so(tmp_path, caplo
     with caplog.at_level(logging.DEBUG, logger="harness.patterns.candidates_store"):
         assert load_promoted_candidates(db) == []
     assert "unreadable" in caplog.text
+
+
+_PREVIOUSLY_MISSING_TOKENS = (
+    "act", "assistant", "curl", "delete", "disable", "download", "elevate",
+    "enable", "escalate", "exfiltrate", "export", "fetch", "forward", "grant",
+    "instructions", "invoke", "leak", "post", "prompt", "send", "simulate",
+    "system", "transmit", "upload", "wget",
+)
+
+
+class TestSharedControlVocabulary:
+    def test_scanner_and_fingerprint_share_one_vocabulary_object(self):
+        from harness.adapters.scanners import heuristic_scan
+        from harness.core import control_vocabulary
+        from harness.patterns import fingerprint
+
+        assert fingerprint._CONTROL_TOKENS is control_vocabulary.CONTROL_TOKENS
+        assert heuristic_scan._CONTROL_TOKENS is control_vocabulary.CONTROL_TOKENS
+        assert fingerprint._STRUCTURAL_RE is control_vocabulary.STRUCTURAL_RE
+        assert heuristic_scan._STRUCTURAL_RE is control_vocabulary.STRUCTURAL_RE
+
+    @pytest.mark.parametrize("token", _PREVIOUSLY_MISSING_TOKENS)
+    def test_skeleton_includes_previously_missing_token(self, token):
+        assert token in extract_skeleton(f"please {token} the thing")
+
+    @pytest.mark.parametrize("token", _PREVIOUSLY_MISSING_TOKENS)
+    def test_fingerprint_includes_previously_missing_token(self, token):
+        fp = extract_fingerprint(f"please {token} the thing", 0.0, 0.0, 0.0, 0.0)
+        assert token in fp["control_tokens"]
+
+    def test_texts_differing_only_in_a_previously_missing_token_differ(self):
+        a = extract_fingerprint("please exfiltrate the thing", 0.0, 0.0, 0.0, 0.0)
+        b = extract_fingerprint("please the thing", 0.0, 0.0, 0.0, 0.0)
+        assert a["control_tokens"] != b["control_tokens"]
+        assert extract_skeleton("please exfiltrate the thing") != extract_skeleton(
+            "please the thing"
+        )
+
+    def test_skeleton_stays_capped_and_free_of_raw_text(self):
+        text = "secret-value-123 " + " ".join(_PREVIOUSLY_MISSING_TOKENS) * 20
+        skel = extract_skeleton(text)
+        assert len(skel) <= 200
+        assert "secret-value-123" not in skel
+
+
+def test_fingerprint_markers_do_not_grow_with_padding():
+    padded = "[system]" + " " * 200_000 + ":"
+    fp = extract_fingerprint(padded, 0.0, 0.0, 0.0, 1.0)
+    assert fp["markers"] == ["[system] :"]
+    assert len(fingerprint_to_json(fp)) < 1000

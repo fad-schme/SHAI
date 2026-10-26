@@ -11,24 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 
-# Same markers and tokens as heuristic_scan.py — single source of truth
-_STRUCTURAL_RE = re.compile(
-    r"<\|(?:system|user|assistant|im_start|im_end)\|>"
-    r"|\[/?INST\]"
-    r"|### (?:Instruction|System|Response)"
-    r"|```(?:system|tool_call)"
-    r"|</?(?:system|tool_use|function_call|result)>"
-    r"|\{\"(?:role|function|tool_calls)\":",
-    re.IGNORECASE,
-)
-
-_CONTROL_TOKENS = frozenset({
-    "ignore", "override", "forget", "disregard", "bypass", "skip",
-    "instead", "always", "never", "must", "execute", "run", "call",
-    "output", "print", "reveal", "repeat", "respond", "pretend",
-})
+from harness.core.control_vocabulary import CONTROL_TOKENS as _CONTROL_TOKENS
+from harness.core.control_vocabulary import STRUCTURAL_RE as _STRUCTURAL_RE
 
 _MAX_SKELETON_LEN = 200
 _LSH_K = 64      # number of hash functions for MinHash
@@ -99,7 +84,9 @@ def extract_fingerprint(
     structural_score: float,
 ) -> dict:
     """Extract a structural fingerprint from text and heuristic sub-scores."""
-    markers = _STRUCTURAL_RE.findall(text)
+    # Whitespace inside a marker is collapsed: the pattern lets an attacker pad a
+    # marker with unbounded whitespace, and the stored fingerprint must stay small.
+    markers = [" ".join(m.split()) for m in _STRUCTURAL_RE.findall(text)]
     tokens_lower = text.lower().split()
     control_hits = sorted({
         t.rstrip(".:,;!?") for t in tokens_lower

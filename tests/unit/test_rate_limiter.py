@@ -101,3 +101,61 @@ def test_concurrent_safety():
 
     allowed_count = sum(1 for r in results if r)
     assert allowed_count == 50  # exactly 50 allowed, 10 denied
+
+
+# ── Reclaiming empty buckets ──────────────────────────────────────────────
+
+def _key_count(rl: RateLimiter) -> int:
+    return len(rl._global_buckets) + len(rl._tool_buckets)
+
+
+def test_empty_buckets_are_removed_after_the_window(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    rl = RateLimiter(window_seconds=10, max_calls_per_window=5, max_calls_per_tool=5)
+    rl.check("agent1", "a")
+    rl.check("agent2", "b")
+    assert _key_count(rl) == 4
+    now[0] += 11
+    rl.check("agent3", "c")
+    assert set(rl._global_buckets) == {"agent3"}
+    assert set(rl._tool_buckets) == {("agent3", "c")}
+
+
+def test_bucket_with_live_timestamps_is_kept_across_a_sweep(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    rl = RateLimiter(window_seconds=10, max_calls_per_window=5, max_calls_per_tool=5)
+    rl.check("agent1", "a")
+    now[0] += 6
+    rl.check("agent2", "b")
+    now[0] += 6   # agent1's call is 12s old, agent2's is 6s old; a sweep runs
+    rl.check("agent3", "c")
+    assert "agent1" not in rl._global_buckets
+    assert "agent2" in rl._global_buckets
+    assert ("agent2", "b") in rl._tool_buckets
+
+
+def test_limits_still_apply_across_a_prune_boundary(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    rl = RateLimiter(window_seconds=10, max_calls_per_window=2, max_calls_per_tool=2)
+    assert rl.check("agent1", "a")[0]
+    now[0] += 5
+    assert rl.check("agent1", "a")[0]
+    assert not rl.check("agent1", "a")[0]
+    now[0] += 6   # first call aged out, second still live
+    assert rl.check("agent1", "a")[0]
+    assert not rl.check("agent1", "a")[0]
+
+
+def test_invented_tool_names_across_windows_do_not_accumulate(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    rl = RateLimiter(window_seconds=10, max_calls_per_window=60, max_calls_per_tool=20)
+    for window in range(40):
+        for i in range(50):
+            rl.check("agent1", f"invented-{window}-{i}")
+        now[0] += 11
+    rl.check("agent1", "real")
+    assert _key_count(rl) <= 4

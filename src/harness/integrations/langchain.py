@@ -44,10 +44,12 @@ import contextvars
 import copy
 import dataclasses
 import logging
+import re
 import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from harness.core.normalize import canonicalize
 from harness.integrations.base import (  # shai_tool re-exported
     BLOCKED_RESULT_MESSAGE,
     execute_gated_tool_call,
@@ -384,7 +386,13 @@ def _command_messages(result: Any) -> list | None:
     if not isinstance(update, dict):
         return None
     messages = update.get("messages")
-    return list(messages) if messages else None
+    if not messages:
+        return None
+    if isinstance(messages, (list, tuple)):
+        return list(messages)
+    if isinstance(messages, (str, dict)) or hasattr(messages, "content"):
+        return [messages]      # add_messages accepts one message in place of a list
+    return None                # a shape this reader does not know: read as str(result)
 
 
 def _with_content(obj: Any, text: str) -> Any:
@@ -406,17 +414,66 @@ def _with_content(obj: Any, text: str) -> Any:
 # The text a tool result carries, and where it lives. The extractor and the
 # replacer both read this one table, so a shape one can read the other can
 # write or refuse by name:
-#   Command with messages  → the last message's `content`
+#   Command with messages  → every message's text, joined by _MESSAGE_SEP, where a
+#                            message is an object with `content`, a dict with
+#                            "content", a (role, content) tuple or list, or a str
 #   str                    → the string itself
 #   dict with "content"    → that entry
 #   object with `content`  → that attribute
 # Any other shape is read as str(result) and is not rewritable.
+#
+# A Command's messages are scanned as one text, so one scan and one audit event
+# cover the whole result. _MESSAGE_SEP joins them and splits a redaction back into
+# per-message pieces. The separator is set off by spaces, and the scan's normalised
+# view collapses whitespace around it, so it is split on `\s*␞\s*`; a redaction
+# pattern that runs to the end of a word cannot cross it; a redaction whose pieces
+# do not number one per message, or a message that itself holds the separator
+# character, cannot be written back and is refused (fail closed), never guessed.
+_MESSAGE_SEP = " \u241e "
+_SEP_CHAR = "\u241e"
+_SEP_SPLIT = re.compile(r"\s*\u241e\s*")
+
+
+def _surface_form(text: str) -> str:
+    """The text as the scan's folded surface view carries it, from the one
+    normaliser. A message whose redacted piece equals this held nothing to redact
+    and is returned as it was."""
+    return canonicalize(text, decode=False).views[0]
+
+
+def _message_text(message: Any) -> str:
+    """The text one Command message carries. A shape with no readable text is read
+    as str(message) so that it is still scanned."""
+    if isinstance(message, str):
+        return message
+    if isinstance(message, dict) and "content" in message:
+        return str(message["content"])
+    if isinstance(message, (tuple, list)) and len(message) == 2:
+        return str(message[1])
+    if hasattr(message, "content"):
+        return str(message.content)
+    return str(message)
+
+
+def _message_with_text(message: Any, text: str) -> Any:
+    """A copy of one Command message carrying text; the original is not touched."""
+    if isinstance(message, str):
+        return text
+    if isinstance(message, dict) and "content" in message:
+        return {**message, "content": text}
+    if isinstance(message, (tuple, list)) and len(message) == 2:
+        return (message[0], text) if isinstance(message, tuple) else [message[0], text]
+    if hasattr(message, "content"):
+        return _with_content(message, text)
+    raise _ResultNotRewritable(type(message).__name__)
+
+
 def _extract_result_text(result: Any) -> str | None:
     if result is None:
         return None
     messages = _command_messages(result)
     if messages:
-        return str(getattr(messages[-1], "content", ""))
+        return _MESSAGE_SEP.join(_message_text(m) for m in messages)
     if isinstance(result, str):
         return result
     if isinstance(result, dict) and "content" in result:
@@ -433,11 +490,22 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
     """
     messages = _command_messages(result)
     if messages:
-        if not hasattr(messages[-1], "content"):
-            raise _ResultNotRewritable(type(result).__name__)
-        messages[-1] = _with_content(messages[-1], new_text)
+        texts = [_message_text(m) for m in messages]
+        if len(messages) == 1:
+            pieces = [new_text]
+        else:
+            if any(_SEP_CHAR in t for t in texts):
+                raise _ResultNotRewritable(type(result).__name__)
+            pieces = _SEP_SPLIT.split(new_text)
+            if len(pieces) != len(messages):
+                raise _ResultNotRewritable(type(result).__name__)
+        rewritten = []
+        for message, text, piece in zip(messages, texts, pieces, strict=True):
+            keep = piece == text or piece == _surface_form(text)
+            rewritten.append(message if keep else _message_with_text(message, piece))
+        single = not isinstance(result.update["messages"], (list, tuple))
         return dataclasses.replace(
-            result, update={**result.update, "messages": messages})
+            result, update={**result.update, "messages": rewritten[0] if single else rewritten})
     if isinstance(result, str):
         return new_text
     if isinstance(result, dict) and "content" in result:

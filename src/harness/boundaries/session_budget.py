@@ -32,13 +32,13 @@ Returns (allowed: bool, reason: str | None).
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from harness.boundaries._keyed_locks import KeyedLocks
 from harness.core.types import OnError
 
 if TYPE_CHECKING:
@@ -150,14 +150,8 @@ class SessionBudget:
         self._on_error = on_error
         # Per-session asyncio locks — serialise concurrent calls on the same
         # session without blocking unrelated sessions on the same store.
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._locks_lock = asyncio.Lock()
-
-    async def _lock_for(self, key: str) -> asyncio.Lock:
-        async with self._locks_lock:
-            if key not in self._locks:
-                self._locks[key] = asyncio.Lock()
-            return self._locks[key]
+        # Entries exist only while a call holds or waits for the session.
+        self._locks = KeyedLocks()
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -194,8 +188,7 @@ class SessionBudget:
             return True, None
 
         key = _key(agent_id, session_id)
-        lock = await self._lock_for(key)
-        async with lock:
+        async with self._locks.hold(key):
             try:
                 return await self._check_locked(key, tool_name, args, limits, prompt_id)
             except Exception:
@@ -295,7 +288,7 @@ class SessionBudget:
         if not limits.any_enabled():
             return
         key = _key(agent_id, session_id)
-        async with await self._lock_for(key):
+        async with self._locks.hold(key):
             try:
                 raw = await self._kv.get(key)
                 if raw is None:
@@ -330,7 +323,7 @@ class SessionBudget:
         else:
             keys = await self._kv.list(_key(agent_id, ""))
         for key in keys:
-            async with await self._lock_for(key):
+            async with self._locks.hold(key):
                 await self._kv.delete(key)
 
     async def snapshot(self, agent_id: str, session_id: str) -> dict:

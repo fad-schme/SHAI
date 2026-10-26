@@ -67,13 +67,14 @@ StateStoreUnavailable and scan_input applies `session.on_error` instead, so
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
 import re
 import time
 from typing import TYPE_CHECKING
+
+from harness.boundaries._keyed_locks import KeyedLocks
 
 if TYPE_CHECKING:
     from harness.adapters.state_store.base import StateStore
@@ -175,20 +176,14 @@ class ThreatAccumulator:
         self._density_threshold = density_threshold
         self._next_sweep = 0.0
         # Per-session asyncio locks — serialise concurrent turns on same session
-        self._session_locks: dict[str, asyncio.Lock] = {}
-        self._locks_lock = asyncio.Lock()
+        # Entries exist only while a turn holds or waits for the session.
+        self._session_locks = KeyedLocks()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     async def close(self) -> None:
         """Close the underlying store. Idempotent — called from SHAI.close()."""
         await self._store.close()
-
-    async def _session_lock(self, session_id: str) -> asyncio.Lock:
-        async with self._locks_lock:
-            if session_id not in self._session_locks:
-                self._session_locks[session_id] = asyncio.Lock()
-            return self._session_locks[session_id]
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -201,8 +196,7 @@ class ThreatAccumulator:
         StateStoreUnavailable when the store cannot answer or the expiry cannot
         be written, so the caller can tell "no escalation" from "could not tell".
         """
-        lock = await self._session_lock(session_id)
-        async with lock:
+        async with self._session_locks.hold(session_id):
             try:
                 raw = await self._kv.get(_SESSION_PREFIX + session_id)
                 if raw is None:
@@ -239,8 +233,7 @@ class ThreatAccumulator:
         Holds the per-session lock for the duration so concurrent turns
         on the same session cannot interleave writes.
         """
-        lock = await self._session_lock(session_id)
-        async with lock:
+        async with self._session_locks.hold(session_id):
             try:
                 await self._record_locked(session_id, text, status, categories,
                                           density, turn_risk)

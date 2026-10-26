@@ -12,6 +12,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- **The LangChain middleware scans every message in a returned `Command`.** It read
+  only the last message of the update, so an earlier message could carry an injection
+  or a secret into the model's context unscanned. All messages are now covered by the
+  one `scan_tool_result`: a block on any of them blocks the result, and a redaction
+  rewrites each message that held the text. A redaction that cannot be mapped back to
+  its messages takes the existing blocked-result denial.
+- **Per-session locks and empty rate-limit buckets are reclaimed.** The session budget
+  and threat accumulator kept a lock per session forever, and the rate limiter kept
+  every agent and tool-name key after its timestamps aged out. A session lock is now
+  dropped when no call holds or awaits it, and empty buckets are swept at most once
+  per window. Limits, windows and per-session serialisation are unchanged.
+- **The candidate fingerprint uses the heuristic scanner's vocabulary.** The control
+  tokens and structural markers now live in one module, `harness.core.control_vocabulary`,
+  imported by both, so a candidate's skeleton and fingerprint include every token the
+  scanner counted (25 were missing). Candidates stored before this change keep their old
+  fingerprints and match again once their pattern recurs; there is no migration.
 - **`add_harness_middleware` gates every PydanticAI tool, or raises.** It guessed
   private attribute names, skipped a registry keyed by tool name without a warning,
   and rebound a function attribute the framework no longer calls, so tools could run

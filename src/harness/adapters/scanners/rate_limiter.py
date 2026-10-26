@@ -8,7 +8,8 @@ Two independent sliding-window counters per agent:
 
 Both limits must be satisfied for a call to proceed.
 Counters are maintained in memory using deques of timestamps.
-Keys expire after the window elapses with no activity to prevent unbounded growth.
+A bucket whose timestamps have all aged out is removed with its key, so memory tracks
+agents and tools with activity in the last window, not every name ever seen.
 
 Not a Scanner — called directly by check_tool_call before the gate runs.
 Returns (allowed: bool, reason: str | None).
@@ -48,6 +49,7 @@ class RateLimiter:
         # {(agent_id, tool_name): deque[float]} — per-tool timestamps
         self._tool_buckets: dict[tuple, deque] = {}
         self._lock = threading.Lock()
+        self._next_sweep = 0.0
 
     def check(self, agent_id: str, tool_name: str) -> tuple[bool, str | None]:
         """Check and record a tool call attempt.
@@ -60,6 +62,8 @@ class RateLimiter:
         cutoff = now - self._window
 
         with self._lock:
+            self._sweep(now, cutoff)
+
             # ── Global bucket ──────────────────────────────────────────────
             if agent_id not in self._global_buckets:
                 self._global_buckets[agent_id] = deque()
@@ -98,6 +102,18 @@ class RateLimiter:
             keys = [k for k in self._tool_buckets if k[0] == agent_id]
             for k in keys:
                 del self._tool_buckets[k]
+
+    def _sweep(self, now: float, cutoff: float) -> None:
+        """Drop every bucket whose timestamps have all aged out, at most once per
+        window. Caller holds the lock. Buckets with live timestamps are kept."""
+        if now < self._next_sweep:
+            return
+        self._next_sweep = now + self._window
+        for buckets in (self._global_buckets, self._tool_buckets):
+            for bucket in buckets.values():
+                self._prune(bucket, cutoff)
+            for key in [k for k, b in buckets.items() if not b]:
+                del buckets[key]
 
     @staticmethod
     def _prune(bucket: deque, cutoff: float) -> None:

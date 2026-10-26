@@ -180,8 +180,7 @@ async def test_budget_reset_waits_for_in_flight_check():
     b = SessionBudget(store)
     limits = ExecutionLimits(max_steps=5)
     await b.check("a", "s", "t", {}, limits)
-    lock = await b._lock_for("budget:a:s")
-    async with lock:
+    async with b._locks.hold("budget:a:s"):
         import asyncio
         task = asyncio.ensure_future(b.reset("a", "s"))
         await asyncio.sleep(0)

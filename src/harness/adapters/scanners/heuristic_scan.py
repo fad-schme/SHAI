@@ -19,6 +19,8 @@ from dataclasses import dataclass
 
 from harness.adapters.scanners.base import ScanResult, SeverityScale
 from harness.core.context import AgentContext
+from harness.core.control_vocabulary import CONTROL_TOKENS as _CONTROL_TOKENS
+from harness.core.control_vocabulary import STRUCTURAL_RE as _STRUCTURAL_RE
 from harness.core.types import Severity
 from harness.core.verdicts import Finding
 
@@ -29,32 +31,6 @@ from harness.core.verdicts import Finding
 _ENTROPY_THRESHOLD = 4.8
 _ENTROPY_WINDOW = 64
 _DENSITY_THRESHOLD = 0.08
-
-_CONTROL_TOKENS = frozenset({
-    # imperative / override verbs
-    "ignore", "override", "forget", "disregard", "bypass", "skip",
-    "instead", "always", "never", "must", "execute", "run", "call",
-    "output", "print", "reveal", "repeat", "respond", "pretend",
-    # agentic action verbs — tool coercion and exfiltration surface
-    "invoke", "fetch", "download", "upload", "send", "forward", "export",
-    "delete", "disable", "enable", "grant", "escalate", "elevate",
-    "leak", "exfiltrate", "transmit", "post", "curl", "wget",
-    # instruction-framing tokens
-    "system", "assistant", "instructions", "prompt", "act", "simulate",
-})
-
-_STRUCTURAL_RE = re.compile(
-    r"<\|(?:system|user|assistant|im_start|im_end)\|>"
-    r"|\[/?INST\]"
-    r"|<<SYS>>|<</SYS>>"
-    r"|\[(?:system|assistant|user)\]\s*[:>]"
-    r"|### (?:Instruction|System|Response)"
-    r"|```(?:system|tool_call)"
-    r"|</?(?:system|tool_use|function_call|result)>"
-    r"|\{\"(?:role|function|tool_calls)\":",
-    re.IGNORECASE,
-)
-
 
 def _shannon_entropy(text: str) -> float:
     if not text:
