@@ -294,8 +294,11 @@ leaves the request untokened: refused under `token_policy: strict` (the
 default), and forwarded but recorded with no `token_id` under `audit`.
 
 **Local tools check their own token.** A local tool calls
-`harness.verify_tool_dispatch("<tool name>")` first. It is sync, passes once
-per token for an unexpired token issued for this tool, agent and local source,
+`harness.verify_tool_dispatch("<tool name>", args)` first, with the arguments the
+tool will act on. It is sync, passes once per token for an unexpired token issued
+for this tool, agent and local source whose argument digest matches `args` — the dictionary the gate saw. `make_gated_tool`
+applies parameter defaults before the gate and the `invoke_tool` wrappers do not, so
+prefer tools without defaulted parameters —
 and otherwise raises `DispatchRefused` — which every integration renders as
 the standard denial. Each check emits one `tool_dispatch_check` event with the
 call's `token_id`. A tool that touches a file opens it with

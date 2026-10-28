@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import logging
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
@@ -33,7 +34,7 @@ from harness.config.protected_paths import protected_paths
 from harness.config.schema import HarnessConfig, SourceConfig
 from harness.connectivity.token import NonceStore, TokenError, verify_token
 from harness.core import wiring
-from harness.core.approval import ApprovalPolicy
+from harness.core.approval import ApprovalPolicy, args_digest
 from harness.core.attestation import STARTUP_AGENT_ID, build_attestation
 from harness.core.context import AgentContext
 from harness.core.errors import (
@@ -1078,7 +1079,8 @@ class SHAI:
             source_name=source_name,
             # The gate calls this only when it allows, and before it emits, so
             # token_id lands on the event that authorised the dispatch.
-            issue_token=lambda: self._mint_dispatch_token(name, source_name, manifest, ctx),
+            issue_token=lambda effective_args: self._mint_dispatch_token(
+                name, source_name, manifest, ctx, effective_args),
             approvals=self._approvals,
             normalization=self._config.normalization,
             scan_state=self._scan_state,
@@ -1262,15 +1264,18 @@ class SHAI:
                                   sub_agent_id=ctx.sub_agent_id, tenant_id=self._tenant_id)
         return handle
 
-    def verify_tool_dispatch(self, tool_name: str) -> None:
+    def verify_tool_dispatch(self, tool_name: str, args: dict[str, Any]) -> None:
         """Refuse the running local tool call unless the gate authorised it.
 
         A local tool calls this first — it is sync, so sync and async tools
         call it alike — and proceeds when it returns. It reads the token
         dispatch_scope put in scope and accepts only an unexpired, correctly
         signed tool_call token issued for this tool, the scope's agent and this
-        tenant, from the local source the agent's tool resolves to. The token
-        is consumed: a second check on one allow is refused.
+        tenant, from the local source the agent's tool resolves to, whose
+        args_digest matches `args` — the arguments the tool is about to act on.
+        A changed, added or removed argument refuses, and the reason names no
+        argument value. The token is consumed: a second check on one allow is
+        refused.
 
         Raises DispatchRefused on refusal, which execute_gated_tool_call
         renders as the standard denial the model sees. Fail-closed: a defect in
@@ -1306,6 +1311,11 @@ class SHAI:
                         or token.source_name != entry[0]):
                     reason = (f"token source '{token.source_name}' is not the "
                               f"local source of '{tool_name}'")
+                elif token.args_digest is None:
+                    reason = "token binds no arguments — the gate did not issue it for a local call"
+                elif not hmac.compare_digest(
+                        token.args_digest.encode(), args_digest(args).encode()):
+                    reason = "arguments differ from those the gate allowed"
                 else:
                     reason = self._dispatch_nonces.consume(token_id, token.expires_at)
         except TokenError as e:
@@ -1508,6 +1518,7 @@ class SHAI:
         source_name: str,
         manifest: MCPManifest | None,
         ctx: AgentContext,
+        args: dict[str, Any],
     ) -> tuple[str, str]:
         """Issue a dispatch token for an allowed call. Returns (encoded, token_id).
 
@@ -1517,6 +1528,11 @@ class SHAI:
         ShaiTransport enforces for the source; an approved manifest always
         declares allowed_urls. Any other tool has no network target, so its
         token binds no URL and no method, and ShaiTransport refuses it.
+
+        args are the arguments the gate allowed to dispatch (redactions
+        applied). A local tool's token commits to their digest, which
+        verify_tool_dispatch compares with the arguments the tool is about to
+        act on; an MCP tool's token carries None.
         """
         from harness.connectivity.token import encode_token, sign_token
 
@@ -1529,6 +1545,7 @@ class SHAI:
             purpose="tool_call",
             allowed_urls=list(manifest.allowed_urls) if manifest else [],
             allowed_methods=list(manifest.allowed_methods) if manifest else [],
+            args_digest=args_digest(args) if manifest is None else None,
             secret=self._connectivity_secret,
             ttl_seconds=self._connectivity.token_ttl_seconds,
         )

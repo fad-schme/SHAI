@@ -83,13 +83,24 @@ doing anything else — it needs a reference to the SHAI instance:
 ```python
 @shai_tool(tags=["financial", "external"])
 def transfer_funds(recipient: str, amount: int) -> str:
-    harness.verify_tool_dispatch("transfer_funds")
+    harness.verify_tool_dispatch("transfer_funds", {"recipient": recipient, "amount": amount})
     return _transfer(recipient, amount)
 ```
 
-The check is sync, so sync and async tools call it the same way. It passes
-only for an unexpired token the gate issued for this tool, this agent and its
-local source, and each token passes once. Otherwise it raises
+The check is sync, so sync and async tools call it the same way. Pass the
+arguments the tool is about to act on: the token commits to the arguments the
+gate allowed to dispatch (redactions applied, the ones `execute_gated_tool_call`
+hands to `invoke`), and a changed, added or removed argument is refused. The
+digest covers exactly the dictionary the gate saw, and what the gate sees depends
+on the wrapper: `make_gated_tool` (CrewAI, OpenAI Agents SDK, PydanticAI) applies
+parameter defaults before the gate, so the digest includes them, while `wrap_tool`,
+`HarnessToolNode`, the LangChain middleware and the Anthropic SDK helpers do not,
+and LangChain coerces types through the args schema. A tool with defaulted
+parameters therefore has no single correct form across wrappers; declare tools
+without defaults, as above, or pass the arguments as the wrapper in use presents
+them. It
+passes only for an unexpired token the gate issued for this tool, this agent and
+its local source, and each token passes once. Otherwise it raises
 `DispatchRefused`, which every integration on this page turns into the same
 denial a gate deny produces, so the model receives the refusal reason.
 Each check emits one `tool_dispatch_check` audit event carrying the same

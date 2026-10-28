@@ -310,6 +310,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NetworkAuditEvent` joined a tool call to its gate event.
 
 ### Changed
+- **A local tool's dispatch token binds the arguments the gate allowed.**
+  `verify_tool_dispatch` now takes the arguments the tool is about to act on,
+  `verify_tool_dispatch(tool_name, args)`, and refuses when their digest differs from
+  the one the gate signed into the token (layer 5 and 7 redactions applied). The
+  refusal reason names no argument value. `DispatchToken` gains a signed `args_digest`,
+  `None` on connect and MCP tokens; every local tool's call must pass its arguments.
 - **`exec_config_scan` joins the recommended scanners.** An omitted `scanners:`
   block at `scan_input`, `scan_tool_result` and `scan_file` now runs it, and an
   omitted `check_tool_call.scanners` runs it over the arguments of tools tagged

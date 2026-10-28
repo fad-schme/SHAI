@@ -78,7 +78,7 @@ async def run(
     scan_args_for_tags: frozenset[str] = frozenset({"sensitive"}),
     turn_signals: TurnSignals | None = None,
     source_name: str = "local",
-    issue_token: Callable[[], tuple[str, str]] | None = None,
+    issue_token: Callable[[dict[str, Any]], tuple[str, str]] | None = None,
     approvals: ApprovalPolicy | None = None,
     normalization: NormalizationConfig | None = None,
     scan_state: ScanState | None = None,
@@ -92,8 +92,10 @@ async def run(
     turn_signals: cross-boundary signal bus. When present, layer 6 correlates
                   earlier boundary findings against the proposed tool call.
     source_name:  which source owns the tool; stamped on the returned decision.
-    issue_token:  mints a dispatch token, returning (encoded, token_id). Called
-                  only when the gate allows, and before the audit event is built
+    issue_token:  mints a dispatch token, returning (encoded, token_id). It
+                  receives the arguments the call is allowed to dispatch with —
+                  layer 5 and layer 7 redactions applied — which a local tool's
+                  token binds. Called only when the gate allows, and before the audit event is built
                   so token_id joins the event to the NetworkAuditEvent the
                   dispatch produces. None when connectivity is disabled.
     approvals:    resolved approval policy for layer 3. None means unconfigured,
@@ -529,7 +531,7 @@ async def run(
     # outage leaves as AuditEmissionError, after the release.
     try:
         try:
-            token: tuple[str, str] | None = issue_token() if issue_token is not None else None
+            token: tuple[str, str] | None = issue_token(effective_args) if issue_token is not None else None
 
             event = AuditEvent.build(
                 boundary=BoundaryName.TOOL_CALL_GATE,

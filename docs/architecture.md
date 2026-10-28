@@ -71,8 +71,8 @@ source, with a signed `purpose` of `connect` or `tool_call`.
   source's onboarding approval, so a manifest edited since approval cannot
   connect. Each request emits a `NetworkAuditEvent` that joins the gate event on
   `token_id`.
-- **Local tools** call `SHAI.verify_tool_dispatch(tool_name)` inside
-  `dispatch_scope`; each check emits one `tool_dispatch_check` event.
+- **Local tools** call `SHAI.verify_tool_dispatch(tool_name, args)` inside
+  `dispatch_scope`, and the token binds the arguments the gate allowed; each check emits one `tool_dispatch_check` event.
 - `connectivity.token_policy` decides a request with no token: `strict` (default)
   refuses it with a denied event, `audit` forwards it with an event carrying no
   `token_id`.

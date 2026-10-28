@@ -87,7 +87,8 @@ bound to the tool, agent, and source:
 gate.dispatch_token  # str | None — pass to source.call()
 ```
 `ShaiTransport` checks it on every MCP request; a local tool checks it with
-`verify_tool_dispatch` (`tool_dispatch_check` event). A local tool opens files
+`verify_tool_dispatch(tool_name, args)` (`tool_dispatch_check` event), which
+refuses arguments other than those the gate allowed. A local tool opens files
 with `harness.fs.open(path, mode)` inside `dispatch_scope`, which repeats the L2
 path check at the moment of use and refuses a link in the final component.
 
