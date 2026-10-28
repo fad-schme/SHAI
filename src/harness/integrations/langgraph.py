@@ -151,12 +151,17 @@ class HarnessToolNode:
                 # text handed to the model as a tool result.
                 raise
             except Exception as exc:
-                # One failing tool must not abort the rest of the batch.
+                # One failing tool must not abort the rest of the batch. The
+                # model sees the exception TYPE only: exception text is an
+                # unscanned channel — an MCP server that raises instead of
+                # returning would otherwise land its message in model context
+                # with no scan_tool_result in between — and the same text in a
+                # log field is raw third-party content (Invariant 3).
                 log.error("tool execution error",
-                          extra={"tool": name, "error": str(exc),
+                          extra={"tool": name, "error_type": type(exc).__name__,
                                  **self._ctx.to_log_fields()})
                 results.append(ToolMessage(
-                    content=f"Tool error: {exc}",
+                    content=f"Tool error: {type(exc).__name__}",
                     tool_call_id=call_id,
                     status="error",
                 ))

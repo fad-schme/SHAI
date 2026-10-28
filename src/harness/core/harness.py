@@ -43,6 +43,7 @@ from harness.core.errors import (
     DispatchRefused,
     NetworkPolicyError,
     SubAgentNotDeclaredError,
+    ToolTagConflict,
 )
 from harness.core.events import AuditEvent, NetworkAuditEvent, now_ms
 from harness.core.governed_fs import LinkRefused, open_resolved
@@ -687,16 +688,23 @@ class SHAI:
         # evaluates policy against the fully-enriched tag set.
         overrides: dict[str, Tool] = {}
         for tool in source_tools:
-            # Checked before the registry attempt below: its catch-all treats any
-            # failure as a tag mismatch, and an `fs` tag merged in from the source
-            # config must not turn a refused tool into a per-agent override.
+            # Checked before the registry attempt below, so an `fs` tag merged
+            # in from the source config cannot turn a refused tool into a
+            # per-agent override.
             require_path_args(tool)
             try:
                 self._tool_registry.register(tool)
                 # Registered cleanly (new tool from MCP or first registration)
-            except Exception:
-                # Tag mismatch with an existing registry entry — store as override
-                # so this agent sees the enriched version without polluting others.
+            except ToolTagConflict:
+                # Tags-only mismatch with an existing registry entry — store as
+                # override so this agent sees the enriched version without
+                # polluting others. Only this one rejection is absorbed: any
+                # other difference (transport, path_args, rules,
+                # irreversibility) propagates and fails the agent's wiring,
+                # because an override that wins over the registry entry in
+                # _resolve_tools would otherwise let a colliding source tool —
+                # an untrusted MCP server's, say — silently shadow a trusted
+                # local definition.
                 overrides[tool.name] = tool
         self._source_overrides[cfg.id] = overrides
 

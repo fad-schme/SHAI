@@ -126,15 +126,15 @@ def cmd_audit_verify(args: argparse.Namespace) -> int:
 
     try:
         if use_stdin:
-            counts, failures = _verify_lines(sys.stdin, secret, verify_line)
+            counts, failures, sequences = _verify_lines(sys.stdin, secret, verify_line)
         else:
             with path.open(encoding="utf-8") as fh:
-                counts, failures = _verify_lines(fh, secret, verify_line)
+                counts, failures, sequences = _verify_lines(fh, secret, verify_line)
     except (OSError, UnicodeDecodeError) as e:
         console.error(f"error: {e}")
         return 1
 
-    ok, tampered, unsigned, malformed = counts
+    ok, tampered, unsigned, malformed, unsequenced = counts
     bad = tampered + unsigned + malformed
     if failures:
         console.write("failures:")
@@ -143,21 +143,51 @@ def cmd_audit_verify(args: argparse.Namespace) -> int:
         if bad > len(failures):
             console.write(f"  ... and {bad - len(failures)} more")
 
+    # Continuity: within each run_id the verified records' seq values must be
+    # contiguous between the lowest and highest seen, with no repeat. A
+    # missing seq is a deleted line, a repeated one a duplicated or spliced
+    # line — the per-line HMAC cannot see either, which is what this check
+    # exists for. The range is anchored at the lowest seen, not zero, because
+    # a rotated file legitimately holds a mid-run slice; a trimmed head or
+    # tail is therefore only detectable across the full set of rotated files.
+    gaps = 0
+    for run_id, seqs in sorted(sequences.items()):
+        expected = set(range(min(seqs), max(seqs) + 1))
+        missing = expected - set(seqs)
+        repeats = len(seqs) - len(set(seqs))
+        if missing or repeats:
+            gaps += 1
+            console.write(
+                f"run {run_id}: SEQUENCE BROKEN - {len(missing)} missing, "
+                f"{repeats} repeated in seq range {min(seqs)}..{max(seqs)}"
+            )
+    if unsequenced:
+        console.write(f"note: {unsequenced} verified record(s) carry no run_id/seq "
+                      "(written before trail sequencing) - continuity not checkable")
+
     total = ok + bad
     console.write(
         f"{total} records: {ok} verified, {tampered} mismatched, "
-        f"{unsigned} unsigned, {malformed} malformed"
+        f"{unsigned} unsigned, {malformed} malformed, "
+        f"{gaps} run(s) with broken sequence"
     )
     if total == 0:
         console.error("error: no records found")
         return 1
-    return 0 if bad == 0 else 1
+    return 0 if bad == 0 and gaps == 0 else 1
 
 
-def _verify_lines(lines, secret: bytes, verify) -> tuple[tuple[int, int, int, int], list[str]]:
-    """Classify every record as verified / mismatched / unsigned / malformed."""
-    ok = tampered = unsigned = malformed = 0
+def _verify_lines(
+    lines, secret: bytes, verify
+) -> tuple[tuple[int, int, int, int, int], list[str], dict[str, list[int]]]:
+    """Classify every record as verified / mismatched / unsigned / malformed,
+    and collect each VERIFIED record's (run_id, seq) for the continuity check.
+    Only verified records count toward continuity — a forged line must not be
+    able to fill the gap its insertion is meant to hide. The fifth count is
+    verified records carrying no run_id/seq (pre-sequencing format)."""
+    ok = tampered = unsigned = malformed = unsequenced = 0
     failures: list[str] = []
+    sequences: dict[str, list[int]] = {}
 
     def record(lineno: int, kind: str) -> None:
         if len(failures) < _MAX_REPORTED:
@@ -180,11 +210,16 @@ def _verify_lines(lines, secret: bytes, verify) -> tuple[tuple[int, int, int, in
             record(lineno, "no signature")
         elif verify(event, secret):
             ok += 1
+            run_id, seq = event.get("run_id"), event.get("seq")
+            if isinstance(run_id, str) and isinstance(seq, int):
+                sequences.setdefault(run_id, []).append(seq)
+            else:
+                unsequenced += 1
         else:
             tampered += 1
             record(lineno, "SIGNATURE MISMATCH - record altered or wrong key")
 
-    return (ok, tampered, unsigned, malformed), failures
+    return (ok, tampered, unsigned, malformed, unsequenced), failures, sequences
 
 
 def _signing_secret(env_var: str) -> bytes | None:

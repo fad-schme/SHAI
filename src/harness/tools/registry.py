@@ -18,7 +18,7 @@ import logging
 import threading
 from collections.abc import Iterable
 
-from harness.core.errors import ConfigError, ToolNotRegisteredError
+from harness.core.errors import ConfigError, ToolNotRegisteredError, ToolTagConflict
 from harness.tools.tool import Tool, require_path_args
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,15 @@ class ToolRegistry:
                             "argument_rules", "irreversibility", "path_args")
                 if getattr(existing, f) != getattr(item, f)
             ]
+            if diff == ["tags"]:
+                # The one difference a source activation may absorb as a
+                # per-agent override (see ToolTagConflict). Everything the
+                # gate enforces — transport, rules, paths, irreversibility —
+                # is identical, so the override cannot redirect or weaken.
+                raise ToolTagConflict(
+                    f"tool '{item.name}' already registered with different tags",
+                    op="register_tool",
+                )
             # Names only for description and argument_rules — a tool description is
             # attacker-controlled MCP metadata and must not reach logs verbatim.
             raise ConfigError(

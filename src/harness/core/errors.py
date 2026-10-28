@@ -58,6 +58,16 @@ class SubAgentNotDeclaredError(HarnessError):
 class ToolNotRegisteredError(HarnessError):
     """Registry lookup miss. Maps to deny in check_tool_call."""
 
+class ToolTagConflict(ConfigError):
+    """Same tool name already registered and the ONLY difference is tags.
+
+    The one registry rejection a source activation may absorb: a source that
+    merges extra tags onto a known tool becomes a per-agent override
+    (harness._wire_agent). Any other difference — transport, path_args,
+    argument_rules, irreversibility, description — stays a plain ConfigError
+    and fails agent wiring, so a colliding source tool can never silently
+    shadow a registered definition."""
+
 class PolicyEvaluationError(HarnessError):
     """Policy engine failed to evaluate. A normal deny is PolicyDecision, not this."""
 
@@ -86,6 +96,11 @@ class MCPInvocationError(HarnessError):
     """MCP server returned a JSON-RPC error during tool invocation.
 
     Attributes: source, tool, code, message mirror the JSON-RPC error fields.
+
+    The formatted string deliberately omits `message`: it is text an untrusted
+    server chose, and `str(e)` from this type reaches log fields and, through
+    some frameworks' error handling, the model's context. The structured
+    attribute keeps the full text for callers that handle it deliberately.
     """
 
     def __init__(self, source: str, tool: str, code: int, message: str) -> None:
@@ -94,8 +109,7 @@ class MCPInvocationError(HarnessError):
         self.code    = code
         self.message = message
         super().__init__(
-            f"MCP invocation error [{source}] tool={tool!r} "
-            f"code={code} message={message!r}",
+            f"MCP invocation error [{source}] tool={tool!r} code={code}",
             op="mcp_invoke",
         )
 

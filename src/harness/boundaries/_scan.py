@@ -478,9 +478,10 @@ async def run_scan(
     per_scanner_data: list[
         tuple[list[Finding], ScanResult | None, ScanAction, str | None, str]
     ] = []
-    # Scanners at action=redact that offered a replacement on the original pass,
-    # in configured order: the input to the redaction chain below.
-    redactors: list[tuple[Scanner, ScanResult, str | None]] = []
+    # Scanners at action=redact that produced findings, in configured order:
+    # the input to the redaction chain below, keyed by their position in
+    # per_scanner_data (never by name — two instances can share one).
+    redactors: list[tuple[int, Scanner, str | None]] = []
     # Set when a redact-action scanner crossed block_at without supplying text.
     redact_block_reason: str | None = None
 
@@ -628,41 +629,41 @@ async def run_scan(
         )
         all_findings.extend(findings)
         # Redaction is a content transform, so it applies whenever the scanner
-        # produced one and the operator asked for it — independent of block_at.
-        # (Block/alert actions still respect block_at; redaction does not.)
-        #
-        # It applies ONLY under action=redact. A scanner returning redacted_text
-        # under block or alert is offering a transform the config did not ask
-        # for: every caller follows the documented `verdict.redacted_text or
-        # text` pattern, so propagating it silently enforces redaction on an
-        # alert-configured scanner and mutates content the operator chose to
-        # let through.
-        if result.redacted_text is not None and effective_action == ScanAction.REDACT:
-            redactors.append((scanner, result, redact_with))
+        # found something and the operator asked for it — independent of
+        # block_at. (Block/alert actions still respect block_at; redaction does
+        # not.) It applies ONLY under action=redact. A scanner returning
+        # redacted_text under block or alert is offering a transform the config
+        # did not ask for: every caller follows the documented
+        # `verdict.redacted_text or text` pattern, so propagating it silently
+        # enforces redaction on an alert-configured scanner and mutates content
+        # the operator chose to let through.
+        if findings and effective_action == ScanAction.REDACT:
+            redactors.append((len(per_scanner_data) - 1, scanner, redact_with))
 
     # ── Redaction chain ───────────────────────────────────────────────────
-    # Every scanner redacted from the original text, so taking the last one's
-    # output would restore whatever an earlier one removed. The first redactor
-    # supplies its text from the original pass; each later one scans the text
-    # produced so far, so every redaction survives and adding a redactor can
-    # only remove more. Only the surface text is re-scanned, and only after an
-    # earlier redactor changed it; a redactor that finds nothing in what it is
-    # handed leaves it as it is.
+    # Each redactor scans the RAW text as transformed by the redactors before
+    # it — never a normalized view. A view-pass redaction is computed over
+    # folded text (whitespace collapsed, unicode rewritten) and substituting it
+    # for the original silently rewrites the whole document; and a finding that
+    # fired only in a decoded view has no surface span to redact at all. The
+    # chain's own findings per scanner are kept: the action loop below blocks
+    # any block_at-crossing finding this raw pass could not reproduce and
+    # redact, so "detected but not redacted" can never pass as ALLOW.
     current_text = text
-    for scanner, result, redact_with in redactors:
-        if current_text == text:
-            step = result
-        else:
-            try:
-                step = await scanner.scan(current_text, ctx)
-            except (asyncio.CancelledError, Exception) as exc:
-                failed = await _scanner_failed(scanner, exc)
-                if failed is not None:
-                    return failed
-                continue
-            if step.redacted_text is None:
-                continue
-        current_text = _apply_redaction(current_text, step.findings, step, redact_with)
+    raw_categories: dict[int, set[str]] = {}
+    redacted_passes: set[int] = set()
+    for index, scanner, redact_with in redactors:
+        try:
+            step = await scanner.scan(current_text, ctx)
+        except (asyncio.CancelledError, Exception) as exc:
+            failed = await _scanner_failed(scanner, exc)
+            if failed is not None:
+                return failed
+            continue
+        raw_categories[index] = {f.category for f in step.findings}
+        if step.redacted_text is not None:
+            redacted_passes.add(index)
+            current_text = _apply_redaction(current_text, step.findings, step, redact_with)
 
     if budget_exhausted:
         all_findings.append(Finding(
@@ -688,7 +689,9 @@ async def run_scan(
     # found by position. Never by scanner name: two instances can share one.
     # Candidate findings sit past the last slice, so they never enforce alone.
     offset = 0
-    for pre_findings, result, action, redact_with, scanner_name in per_scanner_data:
+    for index, (pre_findings, result, action, redact_with, scanner_name) in enumerate(
+        per_scanner_data
+    ):
         findings = all_findings[offset:offset + len(pre_findings)]
         offset += len(pre_findings)
         triggering = [f for f in findings if f.severity >= config.block_at]
@@ -705,17 +708,25 @@ async def run_scan(
                 final_status = ScanStatus.WARN
 
         elif action == ScanAction.REDACT:
-            # Redaction was applied by the chain above. Status stays ALLOW —
-            # content passed through with PII replaced — unless this scanner
-            # crossed block_at and supplied nothing to substitute: there is
-            # then no redaction to rely on, so the content is blocked, as the
-            # gate's layer 7 does. Read from the scanner's own original-pass
-            # result, never from a chain re-scan.
-            if result is not None and result.redacted_text is None:
+            # Redaction was applied by the chain above, over the raw text.
+            # Status stays ALLOW only when every block_at-crossing category
+            # this scanner reported was re-found AND redacted on that raw
+            # pass. A category detected only in a decoded or folded view has
+            # no raw span to redact — the content would pass through intact —
+            # and a scanner that found but could not substitute has nothing
+            # to rely on either; both block, as the gate's layer 7 does.
+            # (An earlier redactor can, rarely, remove a later scanner's match
+            # before its pass; that reads as uncovered and blocks — the
+            # cautious direction.) Category names are catalog taxonomy, not
+            # scanned content (Invariant 3).
+            found = raw_categories.get(index, set())
+            covered = found if index in redacted_passes else set()
+            missing = {f.category for f in triggering} - covered
+            if missing:
                 final_status = ScanStatus.BLOCK
                 redact_block_reason = (
-                    f"scanner '{scanner_name}' is set to redact but supplied "
-                    "no replacement text"
+                    f"scanner '{scanner_name}' is set to redact but its "
+                    f"redaction does not cover: {', '.join(sorted(missing))}"
                 )
                 break
 
@@ -908,7 +919,7 @@ async def run_tool_result_scan(
     signals = ctx.turn_signals
     if (signals is not None
             and signals.input_has_injection
-            and signals.gate_tool_name is not None):
+            and signals.gate_allowed_tools):
         effective_config = config.model_copy(
             update={"block_at": _one_lower(config.block_at)}
         )

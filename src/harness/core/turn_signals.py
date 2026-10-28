@@ -116,9 +116,10 @@ class TurnSignals:
         "input_categories",
         "input_max_severity",
         "input_method_families",
-        "gate_verdict",
-        "gate_tool_name",
-        "gate_tool_tags",
+        "gate_any_denied",
+        "gate_allowed_tools",
+        "gate_allowed_tags",
+        "gate_allowed_with_injection",
         "tool_result_verdict",
         "tool_result_categories",
         "input_digests",
@@ -137,10 +138,19 @@ class TurnSignals:
         self.input_max_severity: Severity | None = None
         self.input_method_families: set[str] = set()
 
-        # Execution signals
-        self.gate_verdict: str | None = None            # "allowed" | "denied"
-        self.gate_tool_name: str | None = None
-        self.gate_tool_tags: frozenset[str] = frozenset()
+        # Execution signals. Monotone — they accumulate across the turn's gate
+        # calls exactly as result-side signals do, and for the same reason:
+        # replacing on every call let one final, deliberately denied call
+        # overwrite the evidence that an injected call had been allowed, and
+        # compute_risk then scored the laundered turn below the block
+        # threshold. Evidence only ever grows.
+        self.gate_any_denied: bool = False
+        self.gate_allowed_tools: set[str] = set()
+        self.gate_allowed_tags: frozenset[str] = frozenset()
+        # Set at record time, not read back from input state later: the flag
+        # freezes "the gate allowed a call while the input scan had flagged
+        # injection", which no later mutation of input signals can rewrite.
+        self.gate_allowed_with_injection: bool = False
 
         # Tool result signals
         self.tool_result_verdict: ScanStatus | None = None
@@ -178,10 +188,18 @@ class TurnSignals:
 
     def record_gate(self, allowed: bool, tool_name: str,
                     tool_tags: frozenset[str] = frozenset()) -> None:
-        """Record check_tool_call verdict. Called by SHAI.check_tool_call."""
-        self.gate_verdict = "allowed" if allowed else "denied"
-        self.gate_tool_name = tool_name
-        self.gate_tool_tags = tool_tags
+        """Record check_tool_call verdict. Called by SHAI.check_tool_call.
+
+        Accumulates — see the field comments in __init__. A denial can only
+        add evidence (gate_any_denied), never remove what an earlier allow
+        established."""
+        if allowed:
+            self.gate_allowed_tools.add(tool_name)
+            self.gate_allowed_tags |= tool_tags
+            if self.input_has_injection:
+                self.gate_allowed_with_injection = True
+        else:
+            self.gate_any_denied = True
 
     def record_tool_result(self, verdict: ScanVerdict, *,
                            text: str | None = None) -> None:
@@ -272,9 +290,11 @@ class TurnSignals:
         # Denial = harness contained it. Small positive weight because a
         # denial still indicates someone tried something.
         # Allowed-with-injection = the exposure path opened.
-        if self.gate_verdict == "denied":
+        # Both can contribute: evidence is monotone in gate activity, so a
+        # denied call after an allowed one raises the score, never lowers it.
+        if self.gate_any_denied:
             execution_risk += 0.08
-        elif self.gate_verdict == "allowed" and self.input_has_injection:
+        if self.gate_allowed_with_injection:
             execution_risk += 0.18
 
         # ── Tool result ───────────────────────────────────────────────
@@ -293,16 +313,15 @@ class TurnSignals:
             result_risk += 0.05
 
         # Indirect injection targeting an authorized tool is live — the
-        # agent could act on it. Small additive term.
-        if (self.tool_result_has_injection
-                and self.gate_verdict == "allowed"
-                and self.gate_tool_name is not None):
+        # agent could act on it. Small additive term. Keyed on "any call was
+        # allowed this turn", which no later denial can clear.
+        if self.tool_result_has_injection and self.gate_allowed_tools:
             result_risk += 0.08
 
         # ── Chain multiplier ──────────────────────────────────────────
         raw = input_risk + execution_risk + result_risk
 
-        if self.input_has_injection and self.gate_verdict == "allowed":
+        if self.gate_allowed_with_injection:
             if self.tool_result_has_injection:
                 raw *= 1.20   # full chain: injection → tool call → injection in result
             else:

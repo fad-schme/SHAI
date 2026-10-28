@@ -117,10 +117,23 @@ async def _scan_declared_tools(manifest: MCPManifest) -> list[Finding]:
     findings: list[Finding] = []
     for tool in manifest.tools:
         tool_dict = {"name": tool.name, "description": tool.description}
-        metadata_result = await metadata_scanner.scan_tool(tool_dict, source_name=manifest.id)
-        defense_result = await defense_scanner.scan_tool(tool_dict, source_name=manifest.id)
-        findings.extend(metadata_result.findings)
-        findings.extend(defense_result.findings)
+        for scanner in (metadata_scanner, defense_scanner):
+            try:
+                result = await scanner.scan_tool(tool_dict, source_name=manifest.id)
+            except Exception as exc:
+                # Fail closed: a tool whose metadata could not be examined must
+                # not onboard as clean. A HIGH synthetic finding fails _decide
+                # at every supported block_at, and the onboarding event still
+                # emits normally. Type name only (Invariant 3).
+                findings.append(Finding(
+                    scanner=getattr(scanner, "name", type(scanner).__name__),
+                    category="metadata.scan_failed",
+                    severity=Severity.HIGH,
+                    detail=f"metadata scanner raised {type(exc).__name__}; "
+                           "tool metadata was not examined",
+                ))
+                continue
+            findings.extend(result.findings)
     return findings
 
 

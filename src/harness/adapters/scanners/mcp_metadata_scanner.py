@@ -99,7 +99,12 @@ class MCPMetadataScanner:
         Returns a ScanResult. The caller blocks registration when a finding
         reaches scan_mcp_metadata.block_at, and logs the rest.
 
-        Never raises — exceptions are caught and logged as warnings.
+        A scanner failure PROPAGATES. This runs at registration and onboarding
+        time, where "could not examine the metadata" and "the metadata is
+        clean" must not be the same answer — swallowing the exception
+        registered the tool with the failed surface unexamined, a fail-open at
+        the one boundary that admits tools. Callers refuse the tool on an
+        exception (see MCPSource._scan_tool_metadata, onboard._scan_declared_tools).
         """
         findings = []
 
@@ -109,26 +114,19 @@ class MCPMetadataScanner:
         for surface_name, text in surfaces:
             if not text:
                 continue
-            try:
-                from harness.core.context import AgentContext
-                ctx = AgentContext(agent_id=f"mcp_metadata:{source_name}")
-                result = await self._scanner.scan(text, ctx)
-                for f in result.findings:
-                    # Annotate which metadata field the finding came from
-                    # without including the raw text
-                    log.debug("mcp metadata finding",
-                              extra={"source": source_name,
-                                     "tool": mcp_tool.get("name", "?"),
-                                     "surface": surface_name,
-                                     "category": f.category,
-                                     "severity": str(f.severity)})
-                findings.extend(result.findings)
-            except Exception as e:
-                log.warning("mcp metadata scan error — skipped",
-                            extra={"source": source_name,
-                                   "tool": mcp_tool.get("name", "?"),
-                                   "surface": surface_name,
-                                   "error": str(e)})
+            from harness.core.context import AgentContext
+            ctx = AgentContext(agent_id=f"mcp_metadata:{source_name}")
+            result = await self._scanner.scan(text, ctx)
+            for f in result.findings:
+                # Annotate which metadata field the finding came from
+                # without including the raw text
+                log.debug("mcp metadata finding",
+                          extra={"source": source_name,
+                                 "tool": mcp_tool.get("name", "?"),
+                                 "surface": surface_name,
+                                 "category": f.category,
+                                 "severity": str(f.severity)})
+            findings.extend(result.findings)
 
         return ScanResult(findings=findings)
 

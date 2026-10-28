@@ -935,7 +935,21 @@ def _iter_views(
                         return
                     seen.add(digest)
                     next_frontier.append(decoded)
-                    yield decoded, [name]
+                    # Scanners see the folded form: a decoded view can carry the
+                    # same homoglyphs, invisibles and spacing the surface fold
+                    # strips, and one encoding layer must not re-open that gap —
+                    # the transform set stays closed under composition. The raw
+                    # decode stays on the frontier so encodings nested inside it
+                    # are still found.
+                    folded_view, _, fold_fired = _fold(decoded)
+                    if folded_view == decoded:
+                        yield decoded, [name]
+                        continue
+                    fold_digest = _digest(folded_view)
+                    if fold_digest in seen:
+                        continue
+                    seen.add(fold_digest)
+                    yield folded_view, [name, *fold_fired]
             frontier = next_frontier
             depth += 1
 

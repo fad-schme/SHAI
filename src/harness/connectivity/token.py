@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from harness.connectivity.scope import canonicalize_host
 from harness.core.signing import claims_of, decode, encode, sign
@@ -58,6 +58,31 @@ class DispatchToken:
 
 # ── URL matching ────────────────────────────────────────────────────────────
 
+def _path_is_safe(path: str) -> bool:
+    """False when the path's decoded form could escape a prefix allowlist.
+
+    The prefix match below compares path strings verbatim, but the server at
+    the other end percent-decodes and resolves dot segments — `/api/%2e%2e/x`
+    matches the pattern `/api/*` here and lands on `/x` there. So any path
+    that still carries a dot segment, a backslash or a NUL after decoding is
+    refused, checking each decode pass so double-encoding (`%252e`) cannot
+    hide one. Deny-only: a clean path is matched exactly as before, and no
+    previously-denied URL becomes allowed.
+    """
+    current = path
+    for _ in range(3):
+        if "\\" in current or "\x00" in current:
+            return False
+        if any(seg in ("..", ".") for seg in current.split("/")):
+            return False
+        decoded = unquote(current)
+        if decoded == current:
+            return True
+        current = decoded
+    # Still decoding after three passes — refuse the ambiguity.
+    return False
+
+
 @lru_cache(maxsize=512)
 def _canonicalize_url(url: str) -> str | None:
     """Rebuild url with its host canonicalized, leaving scheme, port, path,
@@ -65,7 +90,9 @@ def _canonicalize_url(url: str) -> str | None:
     comparing what it always compared, on everything except the host.
 
     Returns None (deny) if the host fails to canonicalize (see
-    canonicalize_host) or the URL carries a malformed port.
+    canonicalize_host), the URL carries a malformed port, or the path fails
+    _path_is_safe — a dot segment, encoded or not, would let the verbatim
+    prefix match claim a destination the server resolves elsewhere.
 
     Cached: matches_allowed_url calls this on the same small set of
     allowlist patterns on every dispatch, same rationale as
@@ -79,6 +106,9 @@ def _canonicalize_url(url: str) -> str | None:
         parsed = urlsplit(url)
         port = parsed.port
     except ValueError:
+        return None
+
+    if not _path_is_safe(parsed.path):
         return None
 
     netloc_host = f"[{canonical_host}]" if ":" in canonical_host else canonical_host

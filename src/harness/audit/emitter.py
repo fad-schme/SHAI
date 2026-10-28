@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import logging
+import uuid
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -92,6 +93,15 @@ class AuditEmitter:
             raise ValueError("AuditEmitter requires at least one sink")
         self._sinks          = sinks
         self._signing_secret = signing_secret
+        # Trail position: one run_id per emitter (= per process run, anchored
+        # by the startup attestation at seq 0), one strictly increasing seq
+        # across every event shape. Assigned synchronously in emit() — no
+        # await between the increment and the signing — so the sequence is
+        # total even under concurrent turns, and a verifier can order the
+        # trail by (run_id, seq) and see any deleted or duplicated line as a
+        # gap or repeat.
+        self._run_id = uuid.uuid4().hex
+        self._seq    = 0
         # Subscribers added by collect_events() — notified after all sinks
         self._subscribers: list[list[AnyAuditEvent]] = []
 
@@ -112,6 +122,11 @@ class AuditEmitter:
             event = event.model_copy(update={
                 "deny_reason": event.deny_reason[:_MAX_DENY_REASON - 3] + "...",
             })
+
+        # Stamped before signing, so the trail position is covered by the
+        # signature. The increment and the copy are synchronous — see __init__.
+        event = event.model_copy(update={"run_id": self._run_id, "seq": self._seq})
+        self._seq += 1
 
         if self._signing_secret is not None:
             try:
