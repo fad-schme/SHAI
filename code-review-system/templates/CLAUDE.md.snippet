@@ -1,0 +1,20 @@
+<!-- Append this section to the project's CLAUDE.md. Keep CLAUDE.md short:
+stack, conventions, goals, non-goals — and link out to longer docs. -->
+
+## Verification (run these, show output)
+
+Never claim success without showing command output. Before considering any
+change done, run:
+
+- Tests: [EDIT: e.g. `npm test` / `pytest -q`]
+- Lint: [EDIT: e.g. `npm run lint` / `ruff check .`]
+- Types: [EDIT: e.g. `npm run typecheck` / `mypy src`]
+- Build: [EDIT: e.g. `npm run build`]
+
+## Review
+
+- Reviewer instructions live in [REVIEW.md](REVIEW.md) — follow them for every review.
+- Before opening a PR, run `/pre-pr` (checks + fresh-context review + security pass).
+- Every review finding is fixed or resolved with a written reason; never merge
+  with an open security finding.
+- Risk tiers and required human approvals: see [docs/RISK_TIERS.md](docs/RISK_TIERS.md).

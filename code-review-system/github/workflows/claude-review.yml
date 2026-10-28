@@ -1,0 +1,68 @@
+# AI review on every PR, using the Claude Code GitHub Action.
+# Setup: add the ANTHROPIC_API_KEY secret (or install the Claude GitHub App and
+# follow its setup; `/install-github-app` in Claude Code also sets this up).
+# Roll out to one repo first, tune REVIEW.md for a few weeks, then expand.
+
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+jobs:
+  review:
+    # Skip drafts; skip trivial branches if you like
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request's diff against the whole repo and the PR's
+            stated intent. Follow the repo's REVIEW.md exactly (scope, skipped
+            paths, nit cap, evidence rules); read CLAUDE.md for conventions.
+
+            Only report defects this PR introduces, with file/line evidence and
+            a concrete failure scenario each. Tag every finding Important, Nit,
+            or Pre-existing. No style/diagnostic/cleanup-only findings. For bug
+            fixes, verify root cause. Post findings as inline PR comments.
+
+            On re-review (synchronize), review only the new diff since your
+            last review and never repeat a finding that was already resolved
+            with a reason. If this is the fourth or later round, instead of new
+            line comments, ask the author to reconsider the approach.
+
+            Finish with a summary comment that starts with the count, e.g.
+            "2 findings: 1 Important, 1 Nit" or
+            "0 findings — nothing needs fixing."
+          claude_args: "--max-turns 30"
+
+  security:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Anthropic's open-source security review action; pairs with the local
+      # /security-review command. Blocks merge via branch protection when it
+      # leaves an unresolved finding.
+      - name: Security review
+        uses: anthropics/claude-code-security-review@main
+        with:
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment-pr: true
