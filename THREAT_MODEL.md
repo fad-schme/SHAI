@@ -112,7 +112,8 @@ decides what each agent may do; SHAI enforces that decision on every call.
 Every allowed call carries a signed, single-use dispatch token bound to the
 tool, agent and source. `ShaiTransport` checks it on every MCP request; a local
 tool checks it with `verify_tool_dispatch` inside `dispatch_scope`, which
-raises `DispatchRefused` on refusal. The gate, token check and
+raises `DispatchRefused` on refusal. A local tool's token also commits to the
+arguments the gate allowed, and the check refuses any other. The gate, token check and
 `scan_tool_result` events join on one `token_id`.
 
 The operator grants each agent the filesystem paths it may read and write

@@ -50,6 +50,7 @@ class DispatchToken:
     purpose:         str              # "connect" | "tool_call" — see TOKEN_PURPOSES
     allowed_urls:    list[str]        # URL prefix patterns — e.g. ["https://slack.com/api/*"]
     allowed_methods: list[str]        # HTTP methods — e.g. ["GET", "POST"]
+    args_digest:     str | None       # sha256 of the arguments the gate allowed a local tool to run with; None on connect and MCP tokens
     issued_at:       datetime
     expires_at:      datetime
     signature:       str              # HMAC-SHA256 hex digest — always last field
@@ -132,7 +133,7 @@ def matches_allowed_url(url: str, patterns: list[str]) -> bool:
 _SIGNED_FIELDS: tuple[str, ...] = (
     "version", "token_id", "agent_id", "sub_agent_id", "tenant_id",
     "tool_name", "source_name", "purpose", "allowed_urls", "allowed_methods",
-    "issued_at", "expires_at",
+    "args_digest", "issued_at", "expires_at",
 )
 
 # What a token authorises. A connect token is minted from a source's onboarding
@@ -153,12 +154,16 @@ def sign_token(
     allowed_urls:    list[str],
     allowed_methods: list[str],
     secret:          bytes,
+    args_digest:     str | None = None,
     ttl_seconds:     int = 15,
 ) -> DispatchToken:
     """Issue a new signed DispatchToken.
 
     Args:
         secret: HMAC-SHA256 key — resolved from connectivity.token_secret.
+        args_digest: digest (core.approval.args_digest) of the arguments a local
+            tool's call was allowed to run with. None for connect and MCP
+            tokens, which bind a destination, not arguments.
         ttl_seconds: token lifetime. Short by design; default 15s.
 
     Returns a frozen DispatchToken with signature set.
@@ -179,6 +184,7 @@ def sign_token(
         purpose=purpose,
         allowed_urls=list(allowed_urls),
         allowed_methods=list(allowed_methods),
+        args_digest=args_digest,
         issued_at=now,
         expires_at=now + timedelta(seconds=ttl_seconds),
         signature="",   # placeholder — replaced below
@@ -250,6 +256,8 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
     # authorises nothing, and its value is not echoed into the deny reason.
     if data["purpose"] not in TOKEN_PURPOSES:
         raise TokenError("token purpose is not recognised")
+    if data["args_digest"] is not None and not isinstance(data["args_digest"], str):
+        raise TokenError("token args_digest is not a string")
     return DispatchToken(
         version=data["version"],
         token_id=data["token_id"],
@@ -261,6 +269,7 @@ def verify_token(encoded: str, secret: bytes) -> DispatchToken:
         purpose=data["purpose"],
         allowed_urls=data["allowed_urls"],
         allowed_methods=data["allowed_methods"],
+        args_digest=data["args_digest"],
         issued_at=data["issued_at"],
         expires_at=data["expires_at"],
         signature=data["signature"],

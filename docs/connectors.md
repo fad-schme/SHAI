@@ -13,7 +13,8 @@ between "the gate said yes" and "what actually went out on the network."
 
 Both run together: connectivity is always on, every MCP source runs through
 `ShaiTransport`, and local tools check their own token through
-`verify_tool_dispatch` (see [integrations.md](integrations.md)).
+`verify_tool_dispatch(tool_name, args)`, which also checks the arguments the tool
+acts on against the token (see [integrations.md](integrations.md)).
 
 ## MCP manifests
 

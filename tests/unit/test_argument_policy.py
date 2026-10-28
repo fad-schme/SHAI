@@ -591,7 +591,7 @@ async def test_a_token_mint_failure_denies_with_one_event_and_gives_the_grant_ba
     policy = _policy()
     ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
 
-    def broken_mint():
+    def broken_mint(_args):
         raise RuntimeError("token mint failed: secret-detail")
 
     tool, sink = _pay(), RecordingSink()
@@ -611,7 +611,7 @@ async def test_a_token_mint_failure_denies_with_one_event_and_gives_the_grant_ba
 async def test_a_token_mint_failure_denies_a_call_that_carries_no_grants_too():
     tool, sink = Tool(name="search", tags=["read"]), RecordingSink()
 
-    def broken_mint():
+    def broken_mint(_args):
         raise RuntimeError("boom")
 
     gate = await check_tool_call.run(
@@ -640,7 +640,7 @@ async def test_grants_are_released_once_when_the_deny_event_also_cannot_be_writt
     policy = _policy(kv)
     ctx = AgentContext(agent_id="test_agent", approvals=_grants("pay_invoice", {}, "alex"))
 
-    def broken_mint():
+    def broken_mint(_args):
         raise RuntimeError("boom")
 
     tool = _pay()

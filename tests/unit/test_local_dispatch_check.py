@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from harness.connectivity.token import _SIGNED_FIELDS, encode_token, sign_token
+from harness.core.approval import args_digest
 from harness.core.context import AgentContext
 from harness.core.errors import DispatchRefused
 from harness.core.harness import SHAI
@@ -67,6 +68,9 @@ async def _harness(tmp_path: Path) -> tuple[SHAI, RecordingSink]:
     return h, sink
 
 
+ARGS = {"query": "q"}
+
+
 def _events(sink: RecordingSink, boundary: BoundaryName) -> list[Any]:
     return [e for e in sink.events if getattr(e, "boundary", None) == boundary]
 
@@ -76,6 +80,7 @@ def _signed(h: SHAI, **overrides: Any) -> str:
         agent_id="orchestrator_agent", sub_agent_id=None, tenant_id=h._tenant_id,
         tool_name="search_docs", source_name="local", purpose="tool_call",
         allowed_urls=[], allowed_methods=[], secret=h._connectivity_secret,
+        args_digest=args_digest(ARGS),
     )
     fields.update(overrides)
     return encode_token(sign_token(**fields))
@@ -86,6 +91,7 @@ def _expired(h: SHAI) -> str:
         agent_id="orchestrator_agent", sub_agent_id=None, tenant_id=h._tenant_id,
         tool_name="search_docs", source_name="local", purpose="tool_call",
         allowed_urls=[], allowed_methods=[], secret=h._connectivity_secret,
+        args_digest=args_digest(ARGS),
     )
     aged = dataclasses.replace(
         tok, expires_at=datetime.now(UTC) - timedelta(seconds=60), signature="",
@@ -103,7 +109,7 @@ def _tampered(h: SHAI) -> str:
 
 async def _gated(h: SHAI, ctx: AgentContext, invoke: Any, tool: str = "search_docs"):
     return await execute_gated_tool_call(
-        harness=h, ctx=ctx, tool_name=tool, tool_args={"query": "q"}, invoke=invoke,
+        harness=h, ctx=ctx, tool_name=tool, tool_args=ARGS, invoke=invoke,
     )
 
 
@@ -114,7 +120,7 @@ async def test_wrapped_call_passes_and_joins_gate_check_and_result(tmp_path: Pat
     ctx = AgentContext(agent_id="orchestrator_agent")
 
     async def tool(args: dict) -> str:
-        h.verify_tool_dispatch("search_docs")
+        h.verify_tool_dispatch("search_docs", args)
         return "benign result"
 
     call = await _gated(h, ctx, tool)
@@ -135,7 +141,7 @@ async def test_sync_tool_on_a_worker_thread_is_checked(tmp_path: Path):
     ctx = AgentContext(agent_id="orchestrator_agent")
 
     def search_docs(query: str) -> str:
-        h.verify_tool_dispatch("search_docs")
+        h.verify_tool_dispatch("search_docs", {"query": query})
         return "benign result"
 
     call = await _gated(h, ctx, lambda args: invoke_tool(search_docs, args))
@@ -151,7 +157,7 @@ async def test_refusal_is_rendered_as_the_standard_denial(tmp_path: Path):
     ran: list[bool] = []
 
     async def tool(args: dict) -> str:
-        h.verify_tool_dispatch("list_inbox")   # not the tool the gate allowed
+        h.verify_tool_dispatch("list_inbox", args)   # not the tool the gate allowed
         ran.append(True)
         return "should not run"
 
@@ -171,8 +177,8 @@ async def test_token_is_single_use(tmp_path: Path):
     ctx = AgentContext(agent_id="orchestrator_agent")
 
     async def tool(args: dict) -> str:
-        h.verify_tool_dispatch("search_docs")
-        h.verify_tool_dispatch("search_docs")
+        h.verify_tool_dispatch("search_docs", args)
+        h.verify_tool_dispatch("search_docs", args)
         return "ok"
 
     call = await _gated(h, ctx, tool)
@@ -210,11 +216,16 @@ async def test_gate_deny_never_reaches_the_tool(tmp_path: Path):
      "another tool"),
     ("other agent", lambda h: _signed(h, agent_id="someone_else"), "search_docs",
      "another agent"),
-    ("mcp source", lambda h: _signed(h, source_name="slack_mcp",
+    ("mcp source", lambda h: _signed(h, source_name="slack_mcp", args_digest=None,
                                      allowed_urls=["https://slack.com/*"]),
      "search_docs", "source"),
-    ("connect token", lambda h: _signed(h, purpose="connect", tool_name=None),
+    ("connect token", lambda h: _signed(h, purpose="connect", tool_name=None,
+                                        args_digest=None),
      "search_docs", "purpose"),
+    ("token binds no arguments", lambda h: _signed(h, args_digest=None),
+     "search_docs", "binds no arguments"),
+    ("other arguments", lambda h: _signed(h, args_digest=args_digest({"query": "z"})),
+     "search_docs", "arguments differ"),
     ("tool outside the agent's set", lambda h: _signed(h, tool_name="unknown_tool"),
      "unknown_tool", "source"),
 ])
@@ -225,7 +236,7 @@ async def test_refused_with_one_event(tmp_path: Path, case, make_token, tool, re
 
     with pytest.raises(DispatchRefused, match=reason):
         async with h.dispatch_scope(ctx, gate):
-            h.verify_tool_dispatch(tool)
+            h.verify_tool_dispatch(tool, ARGS)
 
     [event] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
     assert event.decision == Decision.DENY, case
@@ -243,7 +254,7 @@ async def test_a_defect_in_the_check_refuses(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(h._dispatch_nonces, "consume", broken)
 
     async def tool(args: dict) -> str:
-        h.verify_tool_dispatch("search_docs")
+        h.verify_tool_dispatch("search_docs", args)
         return "should not run"
 
     call = await _gated(h, ctx, tool)
@@ -258,4 +269,133 @@ def test_no_scope_raises(tmp_path: Path):
     h = SHAI.__new__(SHAI)
     h._tenant_id = "t"
     with pytest.raises(DispatchRefused, match="no dispatch token in scope"):
-        h.verify_tool_dispatch("search_docs")
+        h.verify_tool_dispatch("search_docs", ARGS)
+
+
+# ── Argument binding ──────────────────────────────────────────────────────
+
+async def test_matching_arguments_pass_and_token_carries_their_digest(tmp_path: Path):
+    h, sink = await _harness(tmp_path)
+    ctx  = AgentContext(agent_id="orchestrator_agent")
+    gate = await h.check_tool_call("search_docs", dict(ARGS), ctx)
+    assert gate.allowed
+
+    from harness.connectivity.token import verify_token
+    assert verify_token(gate.dispatch_token, h._connectivity_secret).args_digest \
+        == args_digest(ARGS)
+
+    async with h.dispatch_scope(ctx, gate):
+        h.verify_tool_dispatch("search_docs", dict(ARGS))
+    [check] = _events(sink, BoundaryName.TOOL_DISPATCH_CHECK)
+    assert check.decision == Decision.ALLOW
+
+
+@pytest.mark.parametrize("case, used", [
+    ("changed value", {"query": "other"}),
+    ("added key", {"query": "q", "path": "/etc/passwd"}),
+    ("removed key", {}),
+])
+async def test_other_arguments_refuse_with_one_event_and_no_value(
+        tmp_path: Path, case, used):
+    h, sink = await _harness(tmp_path)
+    ctx  = AgentContext(agent_id="orchestrator_agent")
+    gate = await h.check_tool_call("search_docs", dict(ARGS), ctx)
+    sink.events.clear()
+
+    with pytest.raises(DispatchRefused, match="arguments differ") as exc:
+        async with h.dispatch_scope(ctx, gate):
+            h.verify_tool_dispatch("search_docs", used)
+
+    [event] = sink.events
+    assert event.boundary == BoundaryName.TOOL_DISPATCH_CHECK, case
+    assert event.decision == Decision.DENY, case
+    for value in ("other", "/etc/passwd", "path"):
+        assert value not in str(exc.value) and value not in event.deny_reason, case
+
+
+async def test_digest_is_of_the_redacted_arguments(tmp_path: Path):
+    """The gate's final arguments are what the token commits to: a tool handed
+    the redacted arguments passes, one given the originals is refused."""
+    from harness.agents.agent_config import AgentConfig, RuleConfig, RuleMatchConfig
+    from harness.boundaries import check_tool_call
+    from harness.connectivity.token import verify_token
+    from harness.policy.rules import RuleBasedPolicy
+
+    h, sink = await _harness(tmp_path)
+    ctx  = AgentContext(agent_id="orchestrator_agent")
+    agent = AgentConfig(
+        id="orchestrator_agent", allowed_tool_names=["search_docs"],
+        allowed_tags=["read", "internal"],
+        policy_rules=[RuleConfig(
+            id="mask", match=RuleMatchConfig(tool_names=["search_docs"]),
+            action="redact", redact={"query": "[GONE]"},
+        )],
+    )
+    gate = await check_tool_call.run(
+        "search_docs", dict(ARGS), ctx, agent_config=agent,
+        tools={"search_docs": TOOLS[0]}, policy=RuleBasedPolicy(), arg_scanners=[],
+        emitter=h._emitter, tenant_id=h._tenant_id,
+        issue_token=lambda a: h._mint_dispatch_token("search_docs", "local", None, ctx, a),
+    )
+    assert gate.allowed and gate.redacted_args == {"query": "[GONE]"}
+
+    token = verify_token(gate.dispatch_token, h._connectivity_secret)
+    assert token.args_digest == args_digest(gate.redacted_args)
+    assert token.args_digest != args_digest(ARGS)
+
+    sink.events.clear()
+    with pytest.raises(DispatchRefused, match="arguments differ"):
+        async with h.dispatch_scope(ctx, gate):
+            h.verify_tool_dispatch("search_docs", dict(ARGS))
+
+    # The token was refused before it was consumed; the redacted form passes.
+    async with h.dispatch_scope(ctx, gate):
+        h.verify_tool_dispatch("search_docs", gate.redacted_args)
+
+
+async def test_tampered_args_digest_fails_signature_verification(tmp_path: Path):
+    import base64
+    import json
+
+    from harness.connectivity.token import TokenError, verify_token
+
+    h, _ = await _harness(tmp_path)
+    good = _signed(h)
+    claims = json.loads(base64.urlsafe_b64decode(good.encode() + b"=="))
+    claims["args_digest"] = args_digest({"query": "z"})
+    forged = base64.urlsafe_b64encode(
+        json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()).decode()
+
+    with pytest.raises(TokenError, match="signature mismatch"):
+        verify_token(forged, h._connectivity_secret)
+
+
+@pytest.mark.parametrize("bad", [True, 7, 10**30, float("nan"), ["x"], {"a": 1}])
+def test_non_string_args_digest_is_a_token_error(bad):
+    from harness.connectivity.token import TokenError, verify_token
+
+    secret = b"a-strong-test-secret-1234567890ab"
+    tok = dataclasses.replace(
+        sign_token(
+            agent_id="a", sub_agent_id=None, tenant_id="t", tool_name="search_docs",
+            source_name="local", purpose="tool_call", allowed_urls=[],
+            allowed_methods=[], secret=secret,
+        ),
+        args_digest=bad, signature="",
+    )
+    tok = dataclasses.replace(tok, signature=sign(claims_of(tok, _SIGNED_FIELDS), secret))
+    with pytest.raises(TokenError, match="args_digest"):
+        verify_token(encode_token(tok), secret)
+
+
+async def test_mcp_and_connect_tokens_carry_no_digest(tmp_path: Path):
+    from harness.connectivity.token import verify_token
+
+    h, _ = await _harness(tmp_path)
+    for fields in (
+        dict(source_name="slack_mcp", allowed_urls=["https://slack.com/*"],
+             allowed_methods=["POST"]),
+        dict(purpose="connect", tool_name=None),
+    ):
+        tok = verify_token(_signed(h, args_digest=None, **fields), h._connectivity_secret)
+        assert tok.args_digest is None
