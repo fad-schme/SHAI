@@ -62,5 +62,11 @@ async def test_an_ordinary_tool_error_stays_per_call_and_the_batch_continues(tmp
 
     messages = result["messages"]
     assert [m.tool_call_id for m in messages] == ["1", "2"]
-    assert all(m.status == "error" and "boom" in m.content for m in messages)
+    # The model sees the exception TYPE only, never its text: exception
+    # messages are an unscanned channel into model context (an MCP server that
+    # raises instead of returning chooses its own message), so the previous
+    # assertion that "boom" reaches the ToolMessage asserted the defect.
+    assert all(m.status == "error" for m in messages)
+    assert all("ValueError" in m.content for m in messages)
+    assert all("boom" not in m.content for m in messages)
     assert tool.calls == 2

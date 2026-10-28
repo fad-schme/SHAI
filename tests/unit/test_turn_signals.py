@@ -170,8 +170,9 @@ class TestRiskAlgorithm:
         ts = TurnSignals()
         ts.input_verdict = ScanStatus.WARN
         ts.input_categories = {"tool_injection"}
-        ts.gate_verdict = "allowed"
-        ts.gate_tool_name = "send_email"
+        # Through the writer, not field pokes: gate evidence accumulates and
+        # gate_allowed_with_injection freezes at record time (anti-laundering).
+        ts.record_gate(True, "send_email")
         # raw = (0.18 + 0.15 + 0.18) × 1.08 = 0.5508 → ≈ 0.424
         risk = ts.compute_risk()
         assert 0.40 < risk < 0.45
@@ -181,8 +182,7 @@ class TestRiskAlgorithm:
         ts = TurnSignals()
         ts.input_verdict = ScanStatus.WARN
         ts.input_categories = {"tool_injection"}
-        ts.gate_verdict = "allowed"
-        ts.gate_tool_name = "send_email"
+        ts.record_gate(True, "send_email")
         ts.tool_result_verdict = ScanStatus.WARN
         ts.tool_result_categories = {"tool_injection"}
         # Full chain multiplier × 1.20 — result should cross RISK_ELEVATED
@@ -195,8 +195,7 @@ class TestRiskAlgorithm:
         ts = TurnSignals()
         ts.input_verdict = ScanStatus.WARN
         ts.input_categories = {"tool_injection"}
-        ts.gate_verdict = "allowed"
-        ts.gate_tool_name = "send_email"
+        ts.record_gate(True, "send_email")
         ts.tool_result_verdict = ScanStatus.BLOCK
         ts.tool_result_categories = {"tool_injection"}
         risk = ts.compute_risk()
@@ -209,8 +208,7 @@ class TestRiskAlgorithm:
         ts.input_verdict = ScanStatus.BLOCK
         ts.input_categories = {"tool_injection", "prompt_injection"}
         ts.input_method_families = {"regex_catalog", "structural_heuristic", "regex_pii"}
-        ts.gate_verdict = "allowed"
-        ts.gate_tool_name = "delete_all"
+        ts.record_gate(True, "delete_all")
         ts.tool_result_verdict = ScanStatus.BLOCK
         ts.tool_result_categories = {"tool_injection", "prompt_injection"}
         risk = ts.compute_risk()
@@ -221,11 +219,29 @@ class TestRiskAlgorithm:
     def test_gate_denial_alone_is_small(self):
         """A gate denial is a small positive signal — attack contained."""
         ts = TurnSignals()
-        ts.gate_verdict = "denied"
+        ts.record_gate(False, "any_tool")
         risk = ts.compute_risk()
         # raw = 0.08 → 1 - e^(-0.08) ≈ 0.077
         assert 0.06 < risk < 0.10
         assert risk < RISK_ELEVATED    # containment does not elevate the turn
+
+    def test_trailing_denied_call_cannot_lower_the_risk(self):
+        """Anti-laundering: gate evidence accumulates. A payload that ends the
+        turn with one deliberately denied call (any unknown tool name reaches
+        the pre-gate deny, which records) must not drop a blocking turn below
+        RISK_HIGH — replacing the last gate verdict did exactly that."""
+        ts = TurnSignals()
+        ts.input_verdict = ScanStatus.WARN
+        ts.input_categories = {"tool_injection", "prompt_injection"}
+        ts.input_method_families = {"regex_catalog", "structural_heuristic"}
+        ts.record_gate(True, "send_email")
+        ts.tool_result_verdict = ScanStatus.WARN
+        ts.tool_result_categories = {"tool_injection", "prompt_injection"}
+        before = ts.compute_risk()
+        assert before >= RISK_HIGH
+        ts.record_gate(False, "nonexistent_tool")
+        after = ts.compute_risk()
+        assert after >= before >= RISK_HIGH
 
 
 # ── Gate correlation ─────────────────────────────────────────────────────
@@ -432,8 +448,7 @@ class TestToolResultBlockAtAdjustment:
         signals = TurnSignals()
         signals.input_verdict = ScanStatus.WARN
         signals.input_categories = {"tool_injection"}
-        signals.gate_verdict = "allowed"
-        signals.gate_tool_name = "search_docs"
+        signals.record_gate(True, "search_docs")
         ctx._attach_signals(signals)
 
         from tests.conftest import tool_result_scan_config
@@ -514,8 +529,7 @@ class TestOptionARiskBlock:
         signals = TurnSignals()
         signals.input_verdict = ScanStatus.WARN
         signals.input_categories = {"tool_injection"}
-        signals.gate_verdict = "allowed"
-        signals.gate_tool_name = "send_email"
+        signals.record_gate(True, "send_email")
         signals.tool_result_verdict = ScanStatus.BLOCK
         signals.tool_result_categories = {"tool_injection"}
         ctx._attach_signals(signals)

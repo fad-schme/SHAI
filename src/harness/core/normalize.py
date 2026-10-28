@@ -935,21 +935,26 @@ def _iter_views(
                         return
                     seen.add(digest)
                     next_frontier.append(decoded)
-                    # Scanners see the folded form: a decoded view can carry the
-                    # same homoglyphs, invisibles and spacing the surface fold
-                    # strips, and one encoding layer must not re-open that gap —
-                    # the transform set stays closed under composition. The raw
-                    # decode stays on the frontier so encodings nested inside it
-                    # are still found.
-                    folded_view, _, fold_fired = _fold(decoded)
-                    if folded_view == decoded:
+                    # Scanners see the uncollapsed folded form: a decoded view
+                    # can carry the same homoglyphs and invisibles the surface
+                    # fold strips, and one encoding layer must not re-open that
+                    # gap — the transform set stays closed under composition.
+                    # Whitespace is NOT collapsed here: a decoded document's
+                    # line structure is what the structural scanners
+                    # (exec_config_scan and friends) read, and the surface
+                    # view's collapse exists for prose matching, not for them.
+                    # The raw decode stays on the frontier so encodings nested
+                    # inside it are still found.
+                    _, unfolded, fold_fired = _fold(decoded)
+                    if unfolded == decoded:
                         yield decoded, [name]
                         continue
-                    fold_digest = _digest(folded_view)
+                    fold_digest = _digest(unfolded)
                     if fold_digest in seen:
                         continue
                     seen.add(fold_digest)
-                    yield folded_view, [name, *fold_fired]
+                    fired = [n for n in fold_fired if n != "collapse_whitespace"]
+                    yield unfolded, [name, *fired]
             frontier = next_frontier
             depth += 1
 

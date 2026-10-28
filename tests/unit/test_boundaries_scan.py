@@ -570,7 +570,11 @@ async def test_a_later_redactor_scans_the_text_produced_so_far(emitter, sink, st
     second = _StubRedactor("second", r"123-45-6789", "ssn")
     await _scan(_MAIL_SSN, [_redact(first), _redact(second)],
                 emitter, state, block_at=Severity.CRITICAL)
-    assert first.seen == [_MAIL_SSN]
+    # Two passes for the first redactor: the detection pass over the views and
+    # the chain's own pass over the raw text — the chain always redacts from
+    # the raw form, never a folded view, so redacted_text is an edit of the
+    # exact text the caller handed in.
+    assert first.seen == [_MAIL_SSN, _MAIL_SSN]
     assert "a@example.com" not in second.seen[-1]
     assert "[REDACTED:mail]" in second.seen[-1]
 

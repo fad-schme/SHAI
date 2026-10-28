@@ -111,11 +111,11 @@ class MCPMetadataScanner:
         # Build the surfaces to scan — name, description, arg descriptions
         surfaces = self._extract_surfaces(mcp_tool)
 
+        from harness.core.context import AgentContext
+        ctx = AgentContext(agent_id=f"mcp_metadata:{source_name}")
         for surface_name, text in surfaces:
             if not text:
                 continue
-            from harness.core.context import AgentContext
-            ctx = AgentContext(agent_id=f"mcp_metadata:{source_name}")
             result = await self._scanner.scan(text, ctx)
             for f in result.findings:
                 # Annotate which metadata field the finding came from
@@ -135,33 +135,43 @@ class MCPMetadataScanner:
     def _extract_surfaces(
         self, mcp_tool: dict[str, Any]
     ) -> list[tuple[str, str]]:
-        """Return (surface_name, text) pairs from tool metadata fields."""
-        surfaces: list[tuple[str, str]] = []
+        return extract_surfaces(mcp_tool)
 
-        # Tool name — identifier but can carry payloads in malicious servers
-        name = str(mcp_tool.get("name") or "").strip()
-        if name:
-            surfaces.append(("name", name))
 
-        # Tool description — highest risk surface
-        desc = str(mcp_tool.get("description") or "").strip()
-        if desc:
-            surfaces.append(("description", desc))
+def extract_surfaces(mcp_tool: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return (surface_name, text) pairs from tool metadata fields.
 
-        # Argument schema — inputSchema.properties.*.description
-        schema = mcp_tool.get("inputSchema") or mcp_tool.get("input_schema") or {}
-        if isinstance(schema, dict):
-            for arg_name, arg_def in schema.get("properties", {}).items():
-                if not isinstance(arg_def, dict):
-                    continue
-                arg_desc = str(arg_def.get("description") or "").strip()
-                if arg_desc:
-                    surfaces.append((f"arg:{arg_name}", arg_desc))
+    Module-level: the one definition of what counts as scannable MCP tool
+    metadata. MCPSource uses it to run plain text scanners (the always-on
+    heuristic backstop among them) over the same surfaces this scanner reads,
+    so what the boundary covers cannot depend on which scanner reads it.
+    """
+    surfaces: list[tuple[str, str]] = []
 
-        # Concatenated surface — run the full text as one unit to catch
-        # cross-field payloads split across name + description
-        combined = " ".join(t for _, t in surfaces)
-        if len(surfaces) > 1 and combined:
-            surfaces.append(("combined", combined))
+    # Tool name — identifier but can carry payloads in malicious servers
+    name = str(mcp_tool.get("name") or "").strip()
+    if name:
+        surfaces.append(("name", name))
 
-        return surfaces
+    # Tool description — highest risk surface
+    desc = str(mcp_tool.get("description") or "").strip()
+    if desc:
+        surfaces.append(("description", desc))
+
+    # Argument schema — inputSchema.properties.*.description
+    schema = mcp_tool.get("inputSchema") or mcp_tool.get("input_schema") or {}
+    if isinstance(schema, dict):
+        for arg_name, arg_def in schema.get("properties", {}).items():
+            if not isinstance(arg_def, dict):
+                continue
+            arg_desc = str(arg_def.get("description") or "").strip()
+            if arg_desc:
+                surfaces.append((f"arg:{arg_name}", arg_desc))
+
+    # Concatenated surface — run the full text as one unit to catch
+    # cross-field payloads split across name + description
+    combined = " ".join(t for _, t in surfaces)
+    if len(surfaces) > 1 and combined:
+        surfaces.append(("combined", combined))
+
+    return surfaces

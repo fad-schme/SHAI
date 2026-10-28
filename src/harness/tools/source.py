@@ -575,8 +575,26 @@ class MCPSource:
         for scanner in self._mcp_metadata_scanners:
             adapters.append(getattr(scanner, "name", type(scanner).__name__))
             try:
-                result = await scanner.scan_tool(mcp_tool, source_name=self.name)
-                all_findings.extend(result.findings)
+                scan_tool_fn = getattr(scanner, "scan_tool", None)
+                if scan_tool_fn is not None:
+                    result = await scan_tool_fn(mcp_tool, source_name=self.name)
+                    all_findings.extend(result.findings)
+                else:
+                    # A plain text scanner — the always-on heuristic backstop
+                    # arrives here from wiring._build_text_scanners. It reads
+                    # the same surfaces scan_tool covers (one canonical
+                    # extraction: mcp_metadata_scanner.extract_surfaces).
+                    # Calling scan_tool on it unconditionally raised
+                    # AttributeError on every tool, which the old catch-all
+                    # logged as "skipped" — the backstop was silently dead at
+                    # this boundary.
+                    from harness.adapters.scanners.mcp_metadata_scanner import (
+                        extract_surfaces,
+                    )
+                    scan_ctx = AgentContext(agent_id=f"mcp_metadata:{self.name}")
+                    for _, text in extract_surfaces(mcp_tool):
+                        result = await scanner.scan(text, scan_ctx)
+                        all_findings.extend(result.findings)
             except Exception as e:
                 # Fail closed: a tool whose metadata could not be examined is
                 # refused, the same posture every run_scan boundary takes

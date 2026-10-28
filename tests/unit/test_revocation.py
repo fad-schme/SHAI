@@ -88,11 +88,32 @@ def test_unreadable_file_never_resurrects_a_revoked_agent(tmp_path):
     assert store.revoked_agents() == frozenset({"a1"})
 
 
-def test_unreadable_file_does_not_revoke_everyone(tmp_path):
-    """Failing closed on an unreadable file would deny the whole process."""
+def test_corrupt_file_at_startup_fails_construction(tmp_path):
+    """A present-but-unreadable file at construction raises instead of starting
+    with an empty kill list: the cache holds nothing yet, so keep-last-known
+    would silently un-kill every previously revoked agent on restart — the
+    opposite of the module's own 'a restart must not un-kill' property. (The
+    earlier test here asserted the silent start; that asserted the defect.)"""
+    import pytest
+
+    from harness.core.errors import ConfigError
+
     path = tmp_path / "revoked.json"
     path.write_text("{ not json")
+    with pytest.raises(ConfigError):
+        RevocationStore(path, cache_ttl_seconds=0.0)
+    # A non-dict top level is the same damage, not an empty set.
+    path.write_text("[]")
+    with pytest.raises(ConfigError):
+        RevocationStore(path, cache_ttl_seconds=0.0)
+
+
+def test_unreadable_file_mid_run_does_not_revoke_everyone(tmp_path):
+    """Failing closed on a mid-run read error would deny the whole process;
+    the last known set — here empty, from a missing file — is kept instead."""
+    path = tmp_path / "revoked.json"
     store = RevocationStore(path, cache_ttl_seconds=0.0)
+    path.write_text("{ not json")
     assert not store.is_revoked("anyone")
 
 

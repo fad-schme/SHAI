@@ -44,12 +44,10 @@ import contextvars
 import copy
 import dataclasses
 import logging
-import re
 import threading
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from harness.core.normalize import canonicalize
 from harness.integrations.base import (  # shai_tool re-exported
     BLOCKED_RESULT_MESSAGE,
     execute_gated_tool_call,
@@ -454,36 +452,30 @@ def _with_content(obj: Any, text: str) -> Any:
 #   Command with messages  → every message's text, joined by _MESSAGE_SEP, where a
 #                            message is an object with `content`, a dict with
 #                            "content", a (role, content) tuple or list, or a str;
-#                            non-message update keys are appended to the scanned
-#                            text (they enter graph state) and make the Command
-#                            not rewritable — a redaction then fails closed.
+#                            non-message update keys are appended as one final
+#                            scanned piece (they enter graph state too); a
+#                            redaction must hand that piece back untouched, or
+#                            the result is refused — it has no rewritable home.
 #   str                    → the string itself
-#   dict of only "content" → that entry
-#   any other dict         → str of the WHOLE dict — the framework serialises
-#                            every key into the ToolMessage, so a payload
-#                            outside "content" enters context too; such a dict
-#                            is not rewritable (scanning a projection while
-#                            returning the whole object was an unscanned channel)
+#   dict with "content"    → that entry, plus the remaining keys appended as a
+#                            final scanned piece under the same untouched rule —
+#                            the framework serialises every key into the
+#                            ToolMessage, so a payload outside "content" enters
+#                            context too and must be covered by the scan
+#   dict without "content" → str of the WHOLE dict; not rewritable
 #   object with `content`  → that attribute
 # Any other shape is read as str(result) and is not rewritable.
 #
 # A Command's messages are scanned as one text, so one scan and one audit event
 # cover the whole result. _MESSAGE_SEP joins them and splits a redaction back into
-# per-message pieces. The separator is set off by spaces, and the scan's normalised
-# view collapses whitespace around it, so it is split on `\s*␞\s*`; a redaction
-# pattern that runs to the end of a word cannot cross it; a redaction whose pieces
-# do not number one per message, or a message that itself holds the separator
-# character, cannot be written back and is refused (fail closed), never guessed.
+# per-message pieces. The scan's redacted_text is an edit of the exact raw text
+# (boundaries/_scan.py redacts over the raw form, never a folded view), so the
+# split is on the exact separator string and an untouched piece compares equal
+# to the text that produced it. A redaction whose pieces do not number one per
+# piece, or a text that itself holds the separator character, cannot be written
+# back and is refused (fail closed), never guessed.
 _MESSAGE_SEP = " \u241e "
 _SEP_CHAR = "\u241e"
-_SEP_SPLIT = re.compile(r"\s*\u241e\s*")
-
-
-def _surface_form(text: str) -> str:
-    """The text as the scan's folded surface view carries it, from the one
-    normaliser. A message whose redacted piece equals this held nothing to redact
-    and is returned as it was."""
-    return canonicalize(text, decode=False).views[0]
 
 
 def _message_text(message: Any) -> str:
@@ -517,8 +509,16 @@ def _command_extra(result: Any) -> str | None:
     """A Command's non-message update entries as one scannable string, or None.
 
     They enter graph state and are readable by later model turns, so the scan
-    must cover them; their shapes are arbitrary, so they are never rewritten."""
+    must cover them; their shapes are arbitrary, so they are never rewritten —
+    a redaction must hand the piece back untouched or the result is refused."""
     rest = {k: v for k, v in result.update.items() if k != "messages"}
+    return str(rest) if rest else None
+
+
+def _dict_extra(result: dict) -> str | None:
+    """A dict result's non-content entries as one scannable string, or None.
+    Same contract as _command_extra."""
+    rest = {k: v for k, v in result.items() if k != "content"}
     return str(rest) if rest else None
 
 
@@ -533,9 +533,11 @@ def _extract_result_text(result: Any) -> str | None:
     if isinstance(result, str):
         return result
     if isinstance(result, dict):
-        if set(result) <= {"content"}:
-            return str(result.get("content", ""))
-        return str(result)
+        if "content" not in result:
+            return str(result)
+        content = str(result["content"])
+        extra = _dict_extra(result)
+        return content if extra is None else f"{content}{_MESSAGE_SEP}{extra}"
     if hasattr(result, "content"):
         return str(result.content)
     return str(result)
@@ -548,37 +550,58 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
     """
     messages = _command_messages(result)
     if messages:
-        if _command_extra(result) is not None:
-            # Non-message update keys were part of the scanned text and have
-            # no rewritable home — the caller falls back to a denial.
-            raise _ResultNotRewritable(type(result).__name__)
         texts = [_message_text(m) for m in messages]
-        if len(messages) == 1:
-            pieces = [new_text]
-        else:
-            if any(_SEP_CHAR in t for t in texts):
-                raise _ResultNotRewritable(type(result).__name__)
-            pieces = _SEP_SPLIT.split(new_text)
-            if len(pieces) != len(messages):
-                raise _ResultNotRewritable(type(result).__name__)
+        extra = _command_extra(result)
+        pieces = _split_pieces(new_text, texts, extra, owner=type(result).__name__)
         rewritten = []
         for message, text, piece in zip(messages, texts, pieces, strict=True):
-            keep = piece == text or piece == _surface_form(text)
-            rewritten.append(message if keep else _message_with_text(message, piece))
+            rewritten.append(message if piece == text else _message_with_text(message, piece))
         single = not isinstance(result.update["messages"], (list, tuple))
         return dataclasses.replace(
             result, update={**result.update, "messages": rewritten[0] if single else rewritten})
     if isinstance(result, str):
         return new_text
     if isinstance(result, dict):
-        if set(result) <= {"content"}:
-            return {**result, "content": new_text}
-        # The scan covered the whole dict (see the table above); writing the
-        # redacted whole into "content" would corrupt the shape, so refuse.
-        raise _ResultNotRewritable("dict")
+        if "content" not in result:
+            # The scan covered the whole dict (see the table above); there is
+            # no single field to carry the replacement, so refuse.
+            raise _ResultNotRewritable("dict")
+        if not isinstance(result["content"], str):
+            # Non-string content (a content-blocks list, say) cannot carry the
+            # redacted string without silently changing the field's type for
+            # the framework; refuse, and the caller falls back to the denial.
+            raise _ResultNotRewritable("dict")
+        content = result["content"]
+        pieces = _split_pieces(new_text, [content], _dict_extra(result), owner="dict")
+        return {**result, "content": pieces[0]}
     if hasattr(result, "content"):
         return _with_content(result, new_text)
     raise _ResultNotRewritable(type(result).__name__)
+
+
+def _split_pieces(
+    new_text: str, texts: list[str], extra: str | None, *, owner: str
+) -> list[str]:
+    """Split a redacted joined text back into one piece per scanned text.
+
+    The extra piece (non-content/non-message state) must come back untouched —
+    a redaction landing inside it has no rewritable home, so the result is
+    refused and the caller falls back to a denial. Returns the pieces for
+    `texts` only, extra validated and stripped.
+    """
+    expected = [*texts, extra] if extra is not None else texts
+    if len(expected) == 1:
+        return [new_text]
+    if any(_SEP_CHAR in t for t in expected):
+        raise _ResultNotRewritable(owner)
+    pieces = new_text.split(_MESSAGE_SEP)
+    if len(pieces) != len(expected):
+        raise _ResultNotRewritable(owner)
+    if extra is not None:
+        if pieces[-1] != extra:
+            raise _ResultNotRewritable(owner)
+        pieces = pieces[:-1]
+    return pieces
 
 
 async def _run_in_thread(fn: Any, *args: Any) -> Any:
