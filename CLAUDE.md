@@ -20,6 +20,10 @@ change done, run:
   review.
 - Before opening a PR, run `/pre-pr` (checks + fresh-context review + security
   pass). High-tier changes use `/review-deep`.
+- Project-specific reviewer: any diff touching `src/harness/boundaries/`,
+  `policy/`, `audit/`, `patterns/`, `core/`, signing, or agent loading also
+  gets the shai-dev skill's `security-reviewer` (audits the seven structural
+  invariants). `/pre-pr` runs it alongside the generic `security-diff-reviewer`.
 - Every review finding is fixed or resolved with a written reason; never merge
   with an open security finding.
 - Risk tiers and required human approvals: [docs/RISK_TIERS.md](docs/RISK_TIERS.md).

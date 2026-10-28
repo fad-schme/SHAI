@@ -571,16 +571,22 @@ class MCPSource:
         start = now_ms()
         all_findings = []
         adapters: list[str] = []
+        scan_failed = False
         for scanner in self._mcp_metadata_scanners:
             adapters.append(getattr(scanner, "name", type(scanner).__name__))
             try:
                 result = await scanner.scan_tool(mcp_tool, source_name=self.name)
                 all_findings.extend(result.findings)
             except Exception as e:
-                log.warning("mcp metadata scanner error — skipped",
-                            extra={"source": self.name, "tool": tool_name,
-                                   "scanner": getattr(scanner, "name", "?"),
-                                   "error": str(e)})
+                # Fail closed: a tool whose metadata could not be examined is
+                # refused, the same posture every run_scan boundary takes
+                # under on_error=fail_closed. Type name only — a scanner's
+                # exception text can echo the metadata it choked on.
+                scan_failed = True
+                log.error("mcp metadata scanner failed — tool refused",
+                          extra={"source": self.name, "tool": tool_name,
+                                 "scanner": getattr(scanner, "name", "?"),
+                                 "error_type": type(e).__name__})
 
         # Block if any finding meets or exceeds the configured block_at severity.
         # Severity.__ge__ is the one comparison — a local ladder previously
@@ -590,8 +596,11 @@ class MCPSource:
         reached   = any(f.severity >= block_at for f in all_findings)
         # action=alert registers the tool anyway and records the finding —
         # observe-before-enforce, the same escape hatch every other boundary
-        # offers. Only `block` refuses registration.
-        should_block = reached and self._mcp_metadata_action == ScanAction.BLOCK
+        # offers. Only `block` refuses registration. A scanner FAILURE is not
+        # a finding and gets no alert escape hatch: metadata that could not be
+        # examined refuses the tool unconditionally (fail closed).
+        should_block = (reached and self._mcp_metadata_action == ScanAction.BLOCK) \
+            or scan_failed
         max_sev      = (
             max(all_findings, key=lambda f: f.severity._index()).severity
             if all_findings else None
@@ -633,6 +642,8 @@ class MCPSource:
             # Category and threshold only — the matched metadata is the
             # payload we are refusing and must not be echoed into the trail.
             deny_reason=(
+                "tool metadata scanner failed — tool refused (fail closed)"
+                if scan_failed else
                 f"tool metadata scan refused registration (block_at={block_at})"
                 if should_block else None
             ),

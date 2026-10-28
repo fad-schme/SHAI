@@ -11,6 +11,90 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Decoded views are folded before scanning.** De-obfuscation yielded each
+  base64/hex/url-decoded view raw, so one encoding layer around a homoglyph or
+  letter-spaced payload reached every scanner unfolded and matched nothing. Each
+  decoded view now passes the same fold as the surface form (invisible-character
+  strip, unicode fold, whitespace collapse) before it is scanned; the raw decode
+  still feeds deeper decoding, and a view's transform list names the folds that
+  fired.
+- **Redaction edits the raw text, and an unredactable finding blocks.** A
+  redact-action scanner's replacement text was computed over the folded surface
+  view and substituted wholesale — a multi-line document came back as one
+  whitespace-collapsed, unicode-rewritten line — and a finding that fired only
+  in a decoded view produced no replacement yet passed as ALLOW whenever the
+  same scanner redacted anything else. Each redactor now re-scans the raw text
+  (as transformed by the redactors before it), and under `action: redact` any
+  category at or above `block_at` that the raw pass could not re-find and
+  redact blocks the content, with the uncovered categories named in the reason.
+- **A colliding source tool no longer shadows a registered one.**
+  Agent wiring treated every tool-registry rejection as a tag mismatch and
+  stored the source's tool as a per-agent override that won over the registry
+  entry, so an onboarded MCP manifest declaring a tool named like a local one
+  redirected that agent's calls — and the local tool's argument rules, path
+  declarations and irreversibility — to the MCP definition. Only a tags-only
+  difference (the new `ToolTagConflict`) becomes an override now; any other
+  difference fails `load_agent()` with `ConfigError` where it previously loaded
+  with the silent substitution.
+- **`allowed_urls` matching refuses dot segments and encoded traversal.** The
+  matcher compared paths verbatim, so `https://host/api/%2e%2e/%2e%2e/admin`
+  matched the pattern `https://host/api/*` and a standard server decodes it to
+  `/admin`. A URL whose path still carries a `.` or `..` segment, a backslash
+  or a NUL after up to three percent-decode passes is now denied for both the
+  manifest check and the token binding; clean URLs match exactly as before.
+- **The audit trail carries a signed sequence.** `AuditEvent` and
+  `NetworkAuditEvent` gain `run_id` (one per process run, anchored by the
+  startup attestation) and `seq` (strictly increasing across both event
+  shapes), stamped by the emitter before signing. `shai audit verify` checks
+  that each run's verified records are contiguous and unrepeated, so a
+  deleted, duplicated or spliced line fails verification that per-line HMACs
+  alone passed; a rotated file verifies as a mid-run slice, and the exit code
+  now also fails on a broken sequence. Records written before this change
+  carry no sequence and are reported as such.
+- **A corrupt revocation file fails startup instead of un-killing
+  every agent.** Construction primed the cache through the keep-last-known
+  error path whose "last known" set was empty, and a file whose top level
+  parsed as a list read as nobody-revoked without even a log. A
+  present-but-unreadable or malformed file now raises `ConfigError` at
+  startup; any shape other than `{"revoked": {...}}` is a read error; mid-run
+  refresh failures still keep the last known set.
+- **Gate signals accumulate across the turn.** `TurnSignals.record_gate`
+  replaced the previous call's verdict, so one final, deliberately denied call
+  — an unknown tool name sufficed — overwrote the evidence that an injected
+  call had been allowed and dropped the consolidated turn risk below the
+  `scan_output` block threshold. TurnSignals now keeps `gate_any_denied`,
+  `gate_allowed_tools`, `gate_allowed_tags` and `gate_allowed_with_injection`
+  (`gate_verdict`, `gate_tool_name` and `gate_tool_tags` are gone), and
+  `compute_risk` is monotone in gate activity: more calls never lower the
+  score.
+- **Tool errors reach the model as a type name, never as text.** The LangGraph
+  tool node fed `str(exc)` — for an MCP failure, the remote server's message
+  verbatim — into the ToolMessage with no `scan_tool_result` in between, and
+  logged it raw. The model-visible message is now `Tool error: <TypeName>`,
+  the log carries the type only, and `str(MCPInvocationError)` no longer
+  embeds the server's message (the structured `.message` attribute keeps it
+  for callers that handle it deliberately).
+- **The LangChain middleware scans what the framework serializes, and
+  sanitizes in place.** A dict result was scanned by its `content` entry while
+  the whole dict reached the model: the whole dict is now scanned, and one
+  carrying keys beyond `content` is not rewritable, so a redaction on it takes
+  the existing blocked-result denial. A `Command`'s non-message update entries
+  entered graph state unscanned: they are now part of the scanned text and
+  make the Command not rewritable. A blocked or redacted final response was
+  appended as a new message, leaving the raw one in graph state and
+  checkpoints: it is now replaced by id, with the same mechanics as the input
+  side. A run ending on a tool-calling message skipped `scan_output` and
+  leaked the turn's signals into the next turn: the boundary now always closes
+  the turn, scanning the final AI message's text whether or not it carries
+  tool calls.
+- **A metadata scanner failure refuses the tool.** `MCPMetadataScanner.scan_tool`
+  caught exceptions per surface and continued, so a scanner failure on the
+  description surface read as "clean" and the tool registered. The scanner now
+  propagates; registration refuses the tool unconditionally — a failure gets
+  no `action: alert` escape hatch — and onboarding records a HIGH
+  `metadata.scan_failed` finding that fails the decision.
+
 ### Fixed
 - **The LangChain middleware scans every message in a returned `Command`.** It read
   only the last message of the update, so an earlier message could carry an injection

@@ -276,20 +276,32 @@ def _build_shai_middleware_class() -> type:
                 return message
 
         async def aafter_agent(self, state: Any, runtime: Any = None) -> Any:
-            """scan_output — once after the loop completes."""
-            response = _last_ai_message(state.get("messages", []))
-            if not response:
+            """scan_output — once after the loop completes.
+
+            Runs whenever the turn produced an AI message OR signals are still
+            attached: the boundary computes the consolidated turn risk and
+            clears TurnSignals (Invariant 7). Skipping it on a run that ended
+            on a tool-calling message left that message's text unscanned and
+            leaked the turn's signals into the next turn. A block or redaction
+            REPLACES the final message (same mechanics as the input side) —
+            appending a sanitized copy left the raw text in graph state and
+            checkpoints, where it re-enters the model's context next turn.
+            """
+            messages = state.get("messages", [])
+            final = _last_ai_message(messages)
+            if final is None and self._ctx.turn_signals is None:
                 return None
+            response = str(final.content) if final is not None else ""
             verdict = await self._harness.scan_output(response, self._ctx)
             if verdict.blocked:
                 log.warning("scan_output blocked",
                             extra={"findings": len(verdict.findings),
                                    **self._ctx.to_log_fields()})
-                from langchain_core.messages import AIMessage
-                return {"messages": [AIMessage(content="[Response blocked by security policy]")]}
+                return _replaced_output_update(
+                    messages, final, "[Response blocked by security policy]"
+                )
             if verdict.redacted_text:
-                from langchain_core.messages import AIMessage
-                return {"messages": [AIMessage(content=verdict.redacted_text)]}
+                return _replaced_output_update(messages, final, verdict.redacted_text)
             return None
 
         async def abefore_model(self, state: Any, runtime: Any = None) -> Any: return None
@@ -358,15 +370,40 @@ def _redacted_input_update(messages: list, redacted: str) -> dict:
     return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *rebuilt]}
 
 
-def _last_ai_message(messages: list) -> str | None:
+def _last_ai_message(messages: list):
+    """The final AIMessage, tool-calling or not — its text is what scan_output
+    covers. Returns the message object (its content may be empty), or None
+    when the run produced no AI message at all."""
     try:
         from langchain_core.messages import AIMessage
         for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
-                return str(msg.content)
+            if isinstance(msg, AIMessage):
+                return msg
     except ImportError:
         pass
     return None
+
+
+def _replaced_output_update(messages: list, final: Any, new_text: str) -> dict:
+    """State update that replaces the final AI message's content with new_text.
+
+    Same id-or-rebuild mechanics as _redacted_input_update, so the raw blocked
+    or un-redacted text does not survive in graph state and checkpoints beside
+    the sanitized copy. With no AI message to replace (a consolidated-risk
+    block on a turn that ended without one), the notice is appended instead.
+    """
+    from langchain_core.messages import AIMessage
+    if final is None:
+        return {"messages": [AIMessage(content=new_text)]}
+    replacement = final.model_copy(update={"content": new_text})
+    if final.id is not None:
+        return {"messages": [replacement]}
+    from langchain_core.messages import RemoveMessage
+    from langgraph.graph.message import REMOVE_ALL_MESSAGES
+    index = max(i for i, m in enumerate(messages) if m is final)
+    rebuilt = list(messages)
+    rebuilt[index] = replacement
+    return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *rebuilt]}
 
 
 class _ResultNotRewritable(Exception):
@@ -416,9 +453,17 @@ def _with_content(obj: Any, text: str) -> Any:
 # write or refuse by name:
 #   Command with messages  → every message's text, joined by _MESSAGE_SEP, where a
 #                            message is an object with `content`, a dict with
-#                            "content", a (role, content) tuple or list, or a str
+#                            "content", a (role, content) tuple or list, or a str;
+#                            non-message update keys are appended to the scanned
+#                            text (they enter graph state) and make the Command
+#                            not rewritable — a redaction then fails closed.
 #   str                    → the string itself
-#   dict with "content"    → that entry
+#   dict of only "content" → that entry
+#   any other dict         → str of the WHOLE dict — the framework serialises
+#                            every key into the ToolMessage, so a payload
+#                            outside "content" enters context too; such a dict
+#                            is not rewritable (scanning a projection while
+#                            returning the whole object was an unscanned channel)
 #   object with `content`  → that attribute
 # Any other shape is read as str(result) and is not rewritable.
 #
@@ -468,16 +513,29 @@ def _message_with_text(message: Any, text: str) -> Any:
     raise _ResultNotRewritable(type(message).__name__)
 
 
+def _command_extra(result: Any) -> str | None:
+    """A Command's non-message update entries as one scannable string, or None.
+
+    They enter graph state and are readable by later model turns, so the scan
+    must cover them; their shapes are arbitrary, so they are never rewritten."""
+    rest = {k: v for k, v in result.update.items() if k != "messages"}
+    return str(rest) if rest else None
+
+
 def _extract_result_text(result: Any) -> str | None:
     if result is None:
         return None
     messages = _command_messages(result)
     if messages:
-        return _MESSAGE_SEP.join(_message_text(m) for m in messages)
+        joined = _MESSAGE_SEP.join(_message_text(m) for m in messages)
+        extra = _command_extra(result)
+        return joined if extra is None else f"{joined}{_MESSAGE_SEP}{extra}"
     if isinstance(result, str):
         return result
-    if isinstance(result, dict) and "content" in result:
-        return str(result["content"])
+    if isinstance(result, dict):
+        if set(result) <= {"content"}:
+            return str(result.get("content", ""))
+        return str(result)
     if hasattr(result, "content"):
         return str(result.content)
     return str(result)
@@ -490,6 +548,10 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
     """
     messages = _command_messages(result)
     if messages:
+        if _command_extra(result) is not None:
+            # Non-message update keys were part of the scanned text and have
+            # no rewritable home — the caller falls back to a denial.
+            raise _ResultNotRewritable(type(result).__name__)
         texts = [_message_text(m) for m in messages]
         if len(messages) == 1:
             pieces = [new_text]
@@ -508,8 +570,12 @@ def _replace_result_text(result: Any, new_text: str) -> Any:
             result, update={**result.update, "messages": rewritten[0] if single else rewritten})
     if isinstance(result, str):
         return new_text
-    if isinstance(result, dict) and "content" in result:
-        return {**result, "content": new_text}
+    if isinstance(result, dict):
+        if set(result) <= {"content"}:
+            return {**result, "content": new_text}
+        # The scan covered the whole dict (see the table above); writing the
+        # redacted whole into "content" would corrupt the shape, so refuse.
+        raise _ResultNotRewritable("dict")
     if hasattr(result, "content"):
         return _with_content(result, new_text)
     raise _ResultNotRewritable(type(result).__name__)

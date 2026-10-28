@@ -48,6 +48,12 @@ class AuditEvent(BaseModel, frozen=True):
     # Agent context
     audit_tags: dict[str, str] = {}
     extra:      dict[str, Any] = {}
+    # Trail position, stamped by AuditEmitter: run_id names the emitting
+    # process run (anchored by its startup attestation), seq is strictly
+    # increasing within it. Signed when signing is on, so a verifier can
+    # detect a deleted, duplicated or spliced line by the gap it leaves.
+    run_id:     str | None = None
+    seq:        int | None = None
     signature:  str | None = None  # HMAC-SHA256, stamped by AuditEmitter when configured
 
     @model_validator(mode="after")
@@ -134,6 +140,10 @@ class NetworkAuditEvent(BaseModel, frozen=True):
     bytes_sent:   int
     bytes_recv:   int
     duration_ms:  int
+    # Trail position — same contract as AuditEvent.run_id/seq; one sequence
+    # covers both event shapes, so the trail has a single gap-free ordering.
+    run_id:       str | None = None
+    seq:          int | None = None
     signature:    str | None = None  # HMAC-SHA256, stamped by AuditEmitter when configured
 
 

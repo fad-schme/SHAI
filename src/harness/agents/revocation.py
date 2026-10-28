@@ -21,10 +21,12 @@ Three properties are deliberate:
 
 - **Persistent.** A restart must not un-kill a killed agent. That is the
   opposite of what an operator expects under incident pressure.
-- **A read error never resurrects.** On a failed read the last known set is
-  kept and the error logged. Failing open is a kill switch that silently
-  stopped working; failing closed on an unreadable file would deny every agent
-  in the process.
+- **A read error never resurrects.** On a failed mid-run read the last known
+  set is kept and the error logged. Failing open is a kill switch that
+  silently stopped working; failing closed on an unreadable file would deny
+  every agent in the process. At startup there is no last known set to keep,
+  so a present-but-unreadable file fails construction instead of starting the
+  process with an empty kill list.
 - **Agent-scoped only.** Tool- and source-level denial is what policy rules are
   for; a second way to express it would be a parallel path to gate layer 5.
 
@@ -40,6 +42,8 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+from harness.core.errors import ConfigError
 
 log = logging.getLogger(__name__)
 
@@ -57,9 +61,22 @@ class RevocationStore:
         self._revoked: frozenset[str] = frozenset()
         self._loaded_at: float = 0.0
         if self._path is not None:
-            # Prime the cache so the first gate call does not pay the read, and
-            # so a broken file surfaces at startup rather than mid-incident.
-            self._refresh(force=True)
+            # Prime the cache so the first gate call does not pay the read.
+            # A present-but-unreadable file FAILS construction: the cache holds
+            # the empty set at this point, so keep-last-known would silently
+            # start the process with every revocation forgotten — the opposite
+            # of "a restart must not un-kill". Mid-run refreshes keep the
+            # last-known set instead (see _refresh), where there is a real set
+            # to keep.
+            try:
+                self._revoked = frozenset(self._read_entries())
+            except Exception as e:
+                raise ConfigError(
+                    f"revocation file unreadable at startup: {type(e).__name__} "
+                    f"({self._path}) — refusing to start with an empty kill list",
+                    op="read_revocations",
+                ) from e
+            self._loaded_at = time.monotonic()
 
     @property
     def enabled(self) -> bool:
@@ -121,11 +138,18 @@ class RevocationStore:
         self._loaded_at = now
 
     def _read_entries(self) -> dict[str, dict]:
-        """Parse the file. A missing file is an empty set, not an error."""
+        """Parse the file. A missing file is an empty set, not an error.
+
+        Any other shape than {"revoked": {...}} raises: a file whose top level
+        parses as a list or string is a damaged kill list, and reading it as
+        "nobody is revoked" would un-kill every agent without even a log.
+        """
         if self._path is None or not self._path.exists():
             return {}
         data = json.loads(self._path.read_text(encoding="utf-8"))
-        entries = data.get("revoked", {}) if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise ValueError("revocation file: top level must be an object")
+        entries = data.get("revoked", {})
         if not isinstance(entries, dict):
             raise ValueError("revocation file: 'revoked' must be an object")
         return entries
