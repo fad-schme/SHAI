@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import UTC
 
 import pytest
+
 from harness.adapters.secrets.env import (
     EnvVarProvider,
     Secret,
@@ -11,7 +12,6 @@ from harness.adapters.secrets.env import (
     SecretsProviderError,
     resolve_secret_uri,
 )
-
 from harness.core.errors import ConfigError
 
 # ── EnvVarProvider.resolve() ──────────────────────────────────────────────

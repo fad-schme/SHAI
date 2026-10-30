@@ -945,16 +945,27 @@ def _iter_views(
                     # view's collapse exists for prose matching, not for them.
                     # The raw decode stays on the frontier so encodings nested
                     # inside it are still found.
-                    _, unfolded, fold_fired = _fold(decoded)
+                    collapsed, unfolded, fold_fired = _fold(decoded)
                     if unfolded == decoded:
                         yield decoded, [name]
-                        continue
-                    fold_digest = _digest(unfolded)
-                    if fold_digest in seen:
-                        continue
-                    seen.add(fold_digest)
-                    fired = [n for n in fold_fired if n != "collapse_whitespace"]
-                    yield unfolded, [name, *fired]
+                    else:
+                        fold_digest = _digest(unfolded)
+                        if fold_digest not in seen:
+                            seen.add(fold_digest)
+                            fired = [n for n in fold_fired if n != "collapse_whitespace"]
+                            yield unfolded, [name, *fired]
+                    # A decoded payload can be fragmented too (base64 of
+                    # "i g n o r e ..."): repair it exactly as the surface view
+                    # is, under the same budget. Repaired views are not fed back
+                    # into the frontier; the raw decode already is.
+                    for repair, repaired in _reassemble(collapsed, unfolded):
+                        repaired_digest = _digest(repaired)
+                        if repaired_digest in seen:
+                            continue
+                        if not _charge(repaired):
+                            return
+                        seen.add(repaired_digest)
+                        yield repaired, [name, repair]
             frontier = next_frontier
             depth += 1
 

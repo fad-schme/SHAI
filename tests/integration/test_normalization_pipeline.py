@@ -260,3 +260,23 @@ async def test_ordinary_document_reports_no_exhaustion():
         normalization=NormalizationConfig())
     assert verdict.status == ScanStatus.ALLOW
     assert "normalization_budget_exhausted" not in event.extra
+
+
+# --- One encoding layer over a second obfuscation --------------------------
+# A decoded view is folded and repaired like the surface view, so base64 of a
+# homoglyph or letter-spaced payload does not get past de-obfuscation.
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "inner",
+    [
+        _homoglyph(MARKER),
+        " ".join(MARKER.replace(" ", "")),
+        "   ".join(" ".join(w) for w in MARKER.split()),
+    ],
+    ids=["homoglyph", "letter_spaced", "letter_spaced_word_gaps"],
+)
+async def test_encoded_second_layer_obfuscation_is_blocked(inner):
+    verdict, event = await _scan(_b64(inner), normalization=NormalizationConfig())
+    assert verdict.status == ScanStatus.BLOCK
+    assert MARKER not in str(event.extra)
